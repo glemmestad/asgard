@@ -254,6 +254,17 @@ curl -s -o "$WORK/tools.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY"
 grep -q '"list_services"' "$WORK/tools.out" && grep -q '"request_resource"' "$WORK/tools.out" \
   && ok "MCP tools/list exposes the catalog (list_services, request_resource)" || bad "MCP tools/list missing expected tools"
 grep -q '"seed_plan"' "$WORK/tools.out" && ok "MCP exposes the agent-seed tools (seed_plan)" || bad "seed_plan tool missing from MCP"
+grep -q '"bootstrap"' "$WORK/tools.out" && ok "MCP exposes the bootstrap tool (one-shot seed)" || bad "bootstrap tool missing from MCP"
+# The bootstrap slash-command shortcut is advertised over prompts/list.
+curl -s -o "$WORK/prompts.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d '{"jsonrpc":"2.0","id":9,"method":"prompts/list"}'
+grep -q '"bootstrap"' "$WORK/prompts.out" && ok "MCP prompts/list exposes the bootstrap prompt (slash command)" || { bad "bootstrap prompt missing from prompts/list"; cat "$WORK/prompts.out"; }
+# bootstrap returns the seed files with bodies inlined — AGENTS.md + the Rust add-on in one call.
+BOOT='{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"bootstrap","arguments":{"languages":["rust"],"task":"build a service"}}}'
+curl -s -o "$WORK/boot.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$BOOT"
+grep -q 'AGENTS.md' "$WORK/boot.out" && grep -q 'RUST.md' "$WORK/boot.out" \
+  && ok "MCP bootstrap inlines AGENTS.md + standards in one call" || { bad "bootstrap did not return inlined seed files"; cat "$WORK/boot.out"; }
 grep -q '"guidance_put"' "$WORK/tools.out" && ok "MCP exposes guidance tools (guidance_put)" || bad "guidance_put tool missing from MCP"
 grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe_get)" || bad "recipe_get tool missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \

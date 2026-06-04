@@ -45,9 +45,12 @@ connected. (Codex, Cursor, the MCP Inspector: [Connect an agent](./connect-agent
 
 > **"Pull the Asgard seed into this repo."**
 
-It writes in `AGENTS.md` (the map the next agent reads first) and the `.agent/`
-coding and security standards. From here your agent builds to your company's
-conventions, and the live, versioned standards stay available over MCP.
+In Claude Code there's a shortcut for this exact step — the slash command
+**`/mcp__asgard__bootstrap`** (other clients namespace it differently). Either way
+the agent calls the `bootstrap` tool, which returns `AGENTS.md` (the map the next
+agent reads first) and the `.agent/` coding and security standards in one shot, and
+writes them in. From here your agent builds to your company's conventions, and the
+live, versioned standards stay available over MCP.
 
 ## 4. Register the project
 

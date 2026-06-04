@@ -28,13 +28,19 @@ use asgard_provision::{ProvisionService, RollupDim};
 use asgard_registry::{CostDim, ProjectRegistry, RegisterInput};
 use asgard_workflow::WorkflowEngine;
 
+use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, GetPromptRequestParams, GetPromptResult, Implementation,
+    ListPromptsResult, PaginatedRequestParams, PromptMessage, PromptMessageRole, ProtocolVersion,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler};
+use rmcp::{
+    prompt, prompt_handler, prompt_router, tool, tool_handler, tool_router, ErrorData as McpError,
+    RoleServer, ServerHandler,
+};
 
 /// Per-request authentication principal injected by the `/mcp` auth middleware.
 /// A project virtual key authenticates as exactly one project (today's path); a
@@ -58,6 +64,7 @@ pub struct AsgardMcp {
     /// where the project comes from the authenticated key instead.
     default_project: Option<String>,
     tool_router: ToolRouter<Self>,
+    prompt_router: PromptRouter<Self>,
 }
 
 // --- typed tool inputs (first-class JSON Schemas for agents) -----------------
@@ -278,6 +285,7 @@ impl AsgardMcp {
             provision,
             default_project,
             tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
         }
     }
 
@@ -867,6 +875,29 @@ impl AsgardMcp {
         .to_string())
     }
 
+    /// One-shot seed: the same plan as `seed_plan`, but each file's `body`
+    /// inlined so the agent writes the whole starting point (AGENTS.md + the
+    /// `.agent/` standards) in a single call instead of looping `seed_get`.
+    fn do_bootstrap(&self, a: SeedPlanArgs) -> Result<String, String> {
+        let tier = match a.tier.as_deref() {
+            Some(t) => seed::SeedTier::parse(t)
+                .ok_or_else(|| "tier must be minimal, standard, or strict".to_string())?,
+            None => seed::SeedTier::Standard,
+        };
+        let langs = a.languages.unwrap_or_default();
+        let task = a.task.unwrap_or_default();
+        let files: Vec<_> = seed::plan(&langs, &task, tier)
+            .iter()
+            .map(|m| json!({"path": m.path, "title": m.title, "body": m.body}))
+            .collect();
+        Ok(json!({
+            "tier": tier.as_str(),
+            "files": files,
+            "next": "write each file to its path (create directories as needed), then call register_project",
+        })
+        .to_string())
+    }
+
     fn do_seed_get(&self, id: &str) -> Result<String, String> {
         match seed::get(id) {
             Some(m) => Ok(json!({
@@ -1327,14 +1358,49 @@ impl AsgardMcp {
     async fn seed_get(&self, Parameters(a): Parameters<IdArg>) -> Result<CallToolResult, McpError> {
         wrap(self.do_seed_get(&a.id))
     }
+
+    #[tool(
+        description = "Set up a repo on Asgard in one call: returns the agent-seed plan with every file's body inlined (AGENTS.md + the .agent/ coding and security standards for the repo's languages/work). Write each file to its path, then register_project. One shot — no seed_plan/seed_get loop."
+    )]
+    async fn bootstrap(
+        &self,
+        Parameters(a): Parameters<SeedPlanArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_bootstrap(a))
+    }
+}
+
+#[prompt_router]
+impl AsgardMcp {
+    /// Surfaced as a slash command by MCP clients (e.g. Claude Code's
+    /// `/mcp__asgard__bootstrap`): a one-line shortcut that tells the agent to run
+    /// the seed → register loop. No arguments, so it expands without prompting.
+    #[prompt(
+        name = "bootstrap",
+        description = "Set up the current repo on Asgard: pull the AGENTS.md starting point + coding/security standards, then register the project."
+    )]
+    async fn bootstrap_prompt(&self) -> Vec<PromptMessage> {
+        vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            "Set this repository up on Asgard. Call the `bootstrap` tool to fetch the \
+             AGENTS.md starting point and the `.agent/` coding and security standards, \
+             write each returned file to its path (create directories as needed), then \
+             call `register_project` to register this project — ask me for the owner, \
+             budget, and data classification if you don't already have them.",
+        )]
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
+#[prompt_handler(router = self.prompt_router)]
 impl ServerHandler for AsgardMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::LATEST;
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_prompts()
+            .build();
         info.server_info = Implementation::new("asgard", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
             "Governance control plane. Connect with a user token to register projects \
@@ -1592,11 +1658,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_info_declares_tools() {
+    async fn get_info_declares_tools_and_prompts() {
         let s = server(None).await;
         let info = s.get_info();
         assert_eq!(info.server_info.name, "asgard");
         assert!(info.capabilities.tools.is_some());
+        assert!(info.capabilities.prompts.is_some());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_inlines_agents_md_and_standards() {
+        let s = server(None).await;
+        let out = s
+            .do_bootstrap(SeedPlanArgs {
+                languages: Some(vec!["rust".into()]),
+                task: Some("build a service".into()),
+                tier: None,
+            })
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let files = v["files"].as_array().unwrap();
+        // AGENTS.md is always included, with its body inlined (no second fetch).
+        let agents = files
+            .iter()
+            .find(|f| f["path"] == "AGENTS.md")
+            .expect("AGENTS.md in plan");
+        assert!(agents["body"].as_str().unwrap().contains("AGENTS.md"));
+        // The Rust add-on is pulled in for a Rust repo.
+        assert!(files.iter().any(|f| f["path"] == ".agent/lang/RUST.md"));
     }
 
     #[tokio::test]
