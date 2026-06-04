@@ -75,6 +75,33 @@ pub struct ServiceManifest {
     /// human review — without a rules DSL.
     #[serde(default)]
     pub variants: Option<Variants>,
+    /// Target side of an access grant: the access this resource can hand out, as
+    /// `level → provider-native actions` (e.g. `read: [s3:GetObject, …]`). Only the
+    /// resource knows its own verbs.
+    #[serde(default)]
+    pub access_levels: BTreeMap<String, Vec<String>>,
+    /// Target side: how a grant against this resource is implemented. The mechanism
+    /// is owned by the target service, so a new kind of target (EKS/IRSA, Athena/Lake
+    /// Formation, …) ships its own module with no core change.
+    #[serde(default)]
+    pub grant: Option<GrantCfg>,
+    /// Consumer side: the output key holding the identity a grant attaches access to
+    /// (e.g. `task_role_arn`). Present on resources that can be granted access.
+    #[serde(default)]
+    pub principal_output: Option<String>,
+    /// Consumer side: the kind of principal this resource provides (e.g. `iam-role`).
+    /// Must match the target's `grant.principal_kind`.
+    #[serde(default)]
+    pub principal_kind: Option<String>,
+}
+
+/// How a grant against a target resource is bound. `module` is the connector
+/// payload (for terraform, the TF module path); `principal_kind` is the identity
+/// shape this mechanism accepts (e.g. `iam-role`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantCfg {
+    pub module: String,
+    pub principal_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -475,27 +502,30 @@ mod tests {
     // and 500s every provision.
     #[test]
     fn terraform_module_paths_are_relative_to_modules_dir() {
-        let cat = ServiceCatalog::embedded().unwrap();
-        for m in cat.list() {
-            if m.connector() != "terraform" {
-                continue;
-            }
-            let module = m.connector_config();
-            let module = module
-                .get("module")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| panic!("terraform service '{}' has no config.module", m.id));
+        fn assert_relative(id: &str, module: &str) {
             assert!(
                 !module.starts_with('/'),
-                "service '{}': module '{module}' must be relative to modules_dir, not absolute",
-                m.id
+                "service '{id}': module '{module}' must be relative to modules_dir, not absolute"
             );
             assert!(
                 !module.starts_with("modules/") && !module.starts_with("./modules/"),
-                "service '{}': module '{module}' must not carry a repo-root 'modules/' prefix — \
-                 it resolves against modules_dir (the modules-tree root)",
-                m.id
+                "service '{id}': module '{module}' must not carry a repo-root 'modules/' prefix — \
+                 it resolves against modules_dir (the modules-tree root)"
             );
+        }
+        let cat = ServiceCatalog::embedded().unwrap();
+        for m in cat.list() {
+            // A terraform service may omit config.module when the module is supplied
+            // per-request (e.g. access-grant uses the target's grant.module).
+            if m.connector() == "terraform" {
+                if let Some(module) = m.connector_config().get("module").and_then(|v| v.as_str()) {
+                    assert_relative(&m.id, module);
+                }
+            }
+            // Per-target grant modules resolve the same way and need the same shape.
+            if let Some(g) = &m.grant {
+                assert_relative(&m.id, &g.module);
+            }
         }
     }
 

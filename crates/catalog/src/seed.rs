@@ -97,6 +97,17 @@ pub const SEED: &[SeedModule] = &[
         body: include_str!("../../../seed/AGENTS.md"),
     },
     SeedModule {
+        id: "gitignore",
+        title: ".gitignore — keep secrets out of git",
+        kind: SeedKind::Core,
+        path: ".gitignore",
+        tier: SeedTier::Minimal,
+        languages: &[],
+        keywords: &[],
+        summary: "Excludes .env and credentials (control-plane resources mint secrets locally), plus build output and editor noise. Write this first.",
+        body: include_str!("../../../seed/.gitignore"),
+    },
+    SeedModule {
         id: "workflow",
         title: "Workflow",
         kind: SeedKind::Core,

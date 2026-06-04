@@ -17,5 +17,11 @@ cost:
   estimated_monthly_usd: 5.0
   source:
     type: aws-cost-explorer
+access_levels:
+  read: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation]
+  write: [s3:GetObject, s3:ListBucket, s3:GetBucketLocation, s3:PutObject, s3:DeleteObject]
+grant:
+  module: aws/iam-grant
+  principal_kind: iam-role
 tags: [storage, aws]
 documentation: services/s3-bucket/README.md

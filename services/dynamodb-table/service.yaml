@@ -17,5 +17,11 @@ cost:
   estimated_monthly_usd: 8.0
   source:
     type: aws-cost-explorer
+access_levels:
+  read: [dynamodb:GetItem, dynamodb:BatchGetItem, dynamodb:Query, dynamodb:Scan]
+  write: [dynamodb:GetItem, dynamodb:BatchGetItem, dynamodb:Query, dynamodb:Scan, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:BatchWriteItem]
+grant:
+  module: aws/iam-grant
+  principal_kind: iam-role
 tags: [database, aws]
 documentation: services/dynamodb-table/README.md

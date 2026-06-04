@@ -26,5 +26,8 @@ cost:
   estimated_monthly_usd: 35.0
   source:
     type: aws-cost-explorer
+# Consumer side of access grants: its task role is the identity a grant attaches to.
+principal_output: task_role_arn
+principal_kind: iam-role
 tags: [compute, aws, alb, fargate]
 documentation: services/ecs-service/README.md

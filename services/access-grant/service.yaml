@@ -1,0 +1,24 @@
+id: access-grant
+name: Access Grant
+category: access
+status: live
+description: >-
+  Grant a consumer resource access to a target resource within a project (e.g.
+  an ecs-service reading/writing an s3-bucket). The grant binding is implemented
+  by the target's own mechanism (`grant.module`), so new target kinds need no core
+  change. Your own project's resources are self-service: no approval by default —
+  an operator tightens via policy only for big-blast-radius cases.
+auto_approvable: true
+required_fields: [consumer_resource_id, target_resource_id]
+provisioner:
+  connector: terraform
+  config:
+    # No fixed module: the effective TF module is the target's `grant.module`,
+    # supplied per request by the provision layer.
+    cloud: aws
+cost:
+  model: flat
+  estimated_monthly_usd: 0.0
+  source:
+    type: none
+tags: [access, iam]
