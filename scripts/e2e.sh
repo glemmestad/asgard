@@ -8,6 +8,14 @@
 # Postgres.
 set -uo pipefail
 
+# Hermetic run: the review gate must not depend on the operator's ambient model
+# credentials. Export the inference-only keys EMPTY (not unset) so the binary's
+# dotenv load can't fill them from a developer .env — an empty var counts as "not
+# configured" — so the default boot is genuinely offline (review gate disabled).
+# (Leave LITELLM_*/DATABRICKS_* alone: they double as provisioning-connector inputs.)
+export OPENAI_MASTER_KEY="" ANTHROPIC_MASTER_KEY=""
+unset ASGARD_REVIEW_ALLOW_MOCK 2>/dev/null || true
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8071}"
 BASE="http://127.0.0.1:${PORT}"
@@ -149,17 +157,33 @@ curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: applica
 PSTATE=$(jget "$WORK/prom.json" "['state']")
 RID=$(jget "$WORK/prom.json" "['id']")
 [[ "$PSTATE" == "approved" ]] && ok "clean POC->Light auto-approves" || bad "expected auto-approve, got $PSTATE"
+# With no LLM wired (offline), the review gate is disabled — no reviewer runs.
+RR=$(jget "$WORK/prom.json" "['payload']['reviewers_ran']")
+[[ "$RR" == "[]" ]] && ok "review gate disabled without LLM access (no reviewer ran)" || bad "expected no reviewer offline, got reviewers_ran=$RR"
 curl -fsS -X POST "$BASE/api/requests/${RID}/fulfill" -H 'content-type: application/json' \
   -d '{"actor":"user:default/e2e"}' -o "$WORK/promf.json"
 curl -fsS "$BASE/api/projects/${P2}" -o "$WORK/p2b.json"
 NC=$(jget "$WORK/p2b.json" "['classification']")
 [[ "$NC" == "light-operational" ]] && ok "fulfilment mutates classification to Light" || bad "classification not promoted ($NC)"
-# Light -> Wide always routes to a human even with complete evidence.
+# Light -> Wide with incomplete Wide evidence: the machine evidence gap is
+# self-fixable, so it returns to the submitter (flagged), not straight to a human.
+# (This self-service routing is deterministic and holds even with the LLM gate off.)
 curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: application/json' \
   -d '{"target":"wide-operational"}' -o "$WORK/prom2.json"
 WSTATE=$(jget "$WORK/prom2.json" "['state']")
-WAPP=$(jget "$WORK/prom2.json" "['approver']")
-[[ "$WSTATE" == "requested" && "$WAPP" == "group:default/platform" ]] && ok "Light->Wide routes to platform review" || bad "Wide routing wrong (state=$WSTATE approver=$WAPP)"
+WRID=$(jget "$WORK/prom2.json" "['id']")
+[[ "$WSTATE" == "flagged" ]] && ok "incomplete Wide returns to the submitter (flagged, self-service)" || bad "expected flagged, got state=$WSTATE"
+# Re-running supersedes the flagged attempt rather than piling up open requests.
+curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"wide-operational"}' -o "$WORK/prom2b.json"
+WRID2=$(jget "$WORK/prom2b.json" "['id']")
+OPENW=$(curl -fsS "$BASE/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:${P2}'))")&state=flagged" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))")
+[[ "$WRID2" != "$WRID" && "$OPENW" == "1" ]] && ok "re-running supersedes the prior flagged promotion (one open)" || bad "supersede wrong (rid=$WRID rid2=$WRID2 open=$OPENW)"
+# The submitter forwards the current flagged promotion to a human; Wide -> platform.
+curl -fsS -X POST "$BASE/api/requests/${WRID2}/escalate" -o "$WORK/esc.json"
+ESTATE=$(jget "$WORK/esc.json" "['state']")
+EAPP=$(jget "$WORK/esc.json" "['approver']")
+[[ "$ESTATE" == "requested" && "$EAPP" == "group:default/platform" ]] && ok "escalate forwards a flagged promotion to platform review" || bad "escalate wrong (state=$ESTATE approver=$EAPP)"
 # A two-step jump (Light -> Critical) is rejected.
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/projects/${P2}/promotion" \
   -H 'content-type: application/json' -d '{"target":"critical-path"}')
@@ -174,7 +198,8 @@ DC=$(jget "$WORK/dem.json" "['classification']")
 [[ "$DC" == "poc" ]] && ok "demote moves classification down (Light->POC)" || bad "demote wrong ($DC)"
 curl -fsS "$BASE/api/audit?entity=project:${P2}" -o "$WORK/p2aud.json"
 grep -q 'project.promoted' "$WORK/p2aud.json" && grep -q 'project.demoted' "$WORK/p2aud.json" \
-  && ok "promotion + demotion are audited" || bad "promotion/demotion audit records missing"
+  && grep -q 'project.promotion_flagged' "$WORK/p2aud.json" \
+  && ok "promotion + demotion + review-flag are audited" || bad "promotion/demotion/flag audit records missing"
 
 # 5d. Review-date engine (WS3): a project past its review deadline is flagged
 # expired by the sweep (lifecycle untouched — expiry blocks nothing); the first
@@ -245,7 +270,8 @@ grep -q '"seed_plan"' "$WORK/tools.out" && ok "MCP exposes the agent-seed tools 
 grep -q '"guidance_put"' "$WORK/tools.out" && ok "MCP exposes guidance tools (guidance_put)" || bad "guidance_put tool missing from MCP"
 grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe_get)" || bad "recipe_get tool missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \
-  && ok "MCP exposes promotion tools (request_promotion, promotion_status)" || bad "promotion tools missing from MCP"
+  && grep -q '"escalate_promotion"' "$WORK/tools.out" \
+  && ok "MCP exposes promotion tools (request_promotion, promotion_status, escalate_promotion)" || bad "promotion tools missing from MCP"
 # Control plane issues credentials but does not run inference: gateway_credential
 # stays, gateway_chat is gone (the project LLM key is used out-of-band).
 grep -q '"gateway_credential"' "$WORK/tools.out" && ok "MCP exposes gateway_credential (mint the project LLM key)" || bad "gateway_credential tool missing from MCP"

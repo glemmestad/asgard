@@ -33,6 +33,9 @@ use asgard_registry::{
     ClassificationRequirements, GovernanceConfig, GroupAllowlist, GroupEntry, ProjectRegistry,
     RegistrationPolicy, ReviewConfig,
 };
+use asgard_reviewer::{
+    LlmJudge, ReviewService, ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
+};
 use asgard_storage::Db;
 use asgard_workflow::WorkflowEngine;
 
@@ -206,6 +209,22 @@ struct Config {
     governance: GovernanceCfg,
     #[serde(default)]
     provisioning: Option<ProvisioningCfg>,
+    /// Operator overlay for reviewer manifests: files named `reviewer.yaml` under
+    /// here add or override the embedded reviewers (e.g. disable the built-in
+    /// `llm-judge`, or add an external `webhook` reviewer). No recompile.
+    #[serde(default)]
+    reviewers_dir: Option<PathBuf>,
+}
+
+impl Config {
+    /// Reviewer overlay dir: config value, else the `ASGARD_REVIEWERS_DIR` env var.
+    fn reviewers_dir(&self) -> Option<PathBuf> {
+        self.reviewers_dir.clone().or_else(|| {
+            std::env::var("ASGARD_REVIEWERS_DIR")
+                .ok()
+                .map(PathBuf::from)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -549,6 +568,11 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         .first()
         .map(|m| m.model_ref.clone())
         .unwrap_or_else(|| "model:default/mock".to_string());
+    // The review gate needs a real model to judge anything. It's enabled only when a
+    // real inference backend is active (an OpenAI/Anthropic key, or an enabled
+    // openai-compatible gateway module like LiteLLM) — the offline mock does not
+    // count. `ASGARD_REVIEW_ALLOW_MOCK=1` forces it on for dev/tests (mock judge).
+    let has_real_llm = !inf_models.is_empty();
     let mut model_registry = ModelRegistry::from_catalog(&core.catalog).await?;
     model_registry.insert(default_mock_model());
     for m in inf_models {
@@ -563,25 +587,10 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         guardrail_mode(),
     ));
     let workflow = Arc::new(WorkflowEngine::new(core.db.clone(), core.policy.clone()));
-    let registry = ProjectRegistry::new(
-        core.db.clone(),
-        core.gateway_repo.clone(),
-        core.catalog.clone(),
-        build_allowlist(&config),
-        build_registration_policy(&config),
-    )
-    .with_requirements(build_requirements(&config))
-    .with_review_config(build_review_config(&config))
-    .with_governance_config(build_governance_config(&config));
-    let provision = build_provision(core.db.clone(), &config);
-    maybe_seed_admin(&core.identity).await;
-    if let Err(e) = registry.seed_knowledge().await {
-        tracing::warn!("seeding starter guidance/recipes failed: {e}");
-    }
 
-    // A platform-owned system project + gateway key so the dashboard's cost Q&A
-    // works without a human pasting a key. Spend is attributed and governed like
-    // any other project's calls.
+    // A platform-owned system project + gateway key so the dashboard's cost Q&A and
+    // the built-in review judge work without a human pasting a key. Spend is
+    // attributed and governed like any other project's calls.
     let _ = core
         .gateway_repo
         .ensure_project("proj-asgard-system", 0.0, "internal")
@@ -592,6 +601,52 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         .await
         .ok()
         .map(|k| k.plaintext);
+
+    let review_enabled = has_real_llm || review_allow_mock();
+    let mut registry = ProjectRegistry::new(
+        core.db.clone(),
+        core.gateway_repo.clone(),
+        core.catalog.clone(),
+        build_allowlist(&config),
+        build_registration_policy(&config),
+    )
+    .with_requirements(build_requirements(&config))
+    .with_review_config(build_review_config(&config))
+    .with_governance_config(build_governance_config(&config));
+
+    // The machine-review panel: built-in `llm-judge` (in-process, system-key) plus
+    // external `webhook` delegation, dispatched by manifest `kind`. Attached only
+    // when a real LLM is reachable; otherwise promotion stays a pure presence check.
+    if review_enabled {
+        let reviewer_catalog = ReviewerCatalog::load(config.reviewers_dir().as_deref())
+            .unwrap_or_else(|e| {
+                tracing::warn!("reviewer catalog load failed: {e}; using embedded defaults");
+                ReviewerCatalog::embedded().unwrap_or_default()
+            });
+        let mut reviewer_registry = ReviewerRegistry::new();
+        reviewer_registry.register(
+            "llm-judge",
+            Arc::new(LlmJudge::new(gateway.clone(), system_cost_key.clone())),
+        );
+        reviewer_registry.register("webhook", Arc::new(WebhookReviewer::new()));
+        let review_service = Arc::new(ReviewService::new(
+            reviewer_catalog,
+            reviewer_registry,
+            cost_qa_model.clone(),
+        ));
+        registry = registry.with_reviewer_panel(review_service);
+        tracing::info!("review gate enabled (model: {cost_qa_model})");
+    } else {
+        tracing::info!(
+            "review gate DISABLED: no LLM access — set an OpenAI/Anthropic key or enable an \
+             LLM gateway module (LiteLLM/etc.) to turn it on; promotion uses the presence check"
+        );
+    }
+    let provision = build_provision(core.db.clone(), &config);
+    maybe_seed_admin(&core.identity).await;
+    if let Err(e) = registry.seed_knowledge().await {
+        tracing::warn!("seeding starter guidance/recipes failed: {e}");
+    }
 
     let oidc = build_oidc();
     let state = AppState::new(
@@ -814,6 +869,15 @@ fn build_registration_policy(config: &Config) -> RegistrationPolicy {
 
 fn build_requirements(config: &Config) -> ClassificationRequirements {
     ClassificationRequirements::from_overrides(config.classification_requirements.clone())
+}
+
+/// Dev/test escape hatch: run the review gate against the mock model when no real
+/// LLM is wired. Off by default — production review needs real LLM access.
+fn review_allow_mock() -> bool {
+    matches!(
+        std::env::var("ASGARD_REVIEW_ALLOW_MOCK").as_deref(),
+        Ok("1") | Ok("true")
+    )
 }
 
 fn build_review_config(config: &Config) -> ReviewConfig {
@@ -1155,12 +1219,20 @@ fn build_inference(
 
     for m in catalog.list() {
         let Some(inf) = &m.inference else { continue };
-        let key = std::env::var(&inf.api_key_env).ok();
-        let base = inf.base_url.clone().or_else(|| {
-            inf.base_url_env
-                .as_ref()
-                .and_then(|e| std::env::var(e).ok())
-        });
+        // An empty env var is "not configured", not "configured blank" — a stray
+        // `OPENAI_MASTER_KEY=` must not silently activate a provider.
+        let key = std::env::var(&inf.api_key_env)
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        let base = inf
+            .base_url
+            .clone()
+            .or_else(|| {
+                inf.base_url_env
+                    .as_ref()
+                    .and_then(|e| std::env::var(e).ok())
+            })
+            .filter(|b| !b.trim().is_empty());
         let active = match inf.kind.as_str() {
             "openai" | "anthropic" => key.is_some(),
             // openai-compatible covers LiteLLM, vLLM, Databricks Model Serving, … —

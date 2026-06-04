@@ -18,6 +18,7 @@ pub mod governance;
 pub mod guidance;
 mod knowledge_seed;
 pub mod promotion;
+pub mod promotion_reviewer;
 pub mod recipes;
 pub mod review;
 pub mod standards;
@@ -28,6 +29,7 @@ pub use evidence::Evidence;
 pub use governance::{GovernanceConfig, GovernanceMetrics, Metric, PromotionSample};
 pub use guidance::Guidance;
 pub use promotion::{ClassificationRequirements, EvidenceVerdict, PromotionChecklist};
+pub use promotion_reviewer::{ReviewerOutcome, ReviewerPanel};
 pub use recipes::Recipe;
 pub use review::{ExtendOutcome, ReviewConfig, ReviewState, SweepSummary};
 pub use standards::Standard;
@@ -36,9 +38,10 @@ pub use versions::Version;
 use asgard_catalog::{CatalogRepo, Entity, Lifecycle, Manifest, Metadata, Origin};
 use asgard_gateway::GatewayRepo;
 use asgard_storage::Db;
-use asgard_workflow::{NewRequest, State, WorkflowEngine, WorkflowRequest};
+use asgard_workflow::{NewRequest, RequestFilter, State, WorkflowEngine, WorkflowRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::sync::Arc;
 
 pub const CLASSIFICATIONS: &[&str] = &[
     "poc",
@@ -225,6 +228,7 @@ pub struct ProjectRegistry {
     requirements: ClassificationRequirements,
     review: ReviewConfig,
     governance: GovernanceConfig,
+    reviewer_panel: Option<Arc<dyn ReviewerPanel>>,
 }
 
 impl ProjectRegistry {
@@ -244,6 +248,7 @@ impl ProjectRegistry {
             requirements: ClassificationRequirements::default(),
             review: ReviewConfig::default(),
             governance: GovernanceConfig::default(),
+            reviewer_panel: None,
         }
     }
 
@@ -266,6 +271,13 @@ impl ProjectRegistry {
     /// Default is the policy doc's 2; mirrors `with_review_config`.
     pub fn with_governance_config(mut self, governance: GovernanceConfig) -> Self {
         self.governance = governance;
+        self
+    }
+
+    /// Attach the machine-review panel run on `request_promotion`. Default `None`
+    /// preserves the pre-review presence-check behavior exactly.
+    pub fn with_reviewer_panel(mut self, panel: Arc<dyn ReviewerPanel>) -> Self {
+        self.reviewer_panel = Some(panel);
         self
     }
 
@@ -593,27 +605,160 @@ impl ProjectRegistry {
         promotion::validate_step(&reg.classification, target)?;
         let verdict = promotion::evaluate(&reg, target, &self.requirements);
         let risk_accepted = !reg.evidence.risk_acceptance_url.trim().is_empty();
+
+        // Run the pluggable reviewer panel (no-op identity when none is wired).
+        let outcome = match &self.reviewer_panel {
+            Some(p) => p.review(&reg, target, &verdict).await,
+            None => ReviewerOutcome::empty(),
+        };
+
+        // Reviewers are escalate-only: they may ADD exception signals, never clear
+        // `missing` or flip `evidence_complete`.
+        let mut exception_signals = verdict.exception_signals.clone();
+        exception_signals.extend(outcome.added_exception_signals.iter().cloned());
+        let has_exception = !exception_signals.is_empty();
+
+        let subject = format!("project:{project_id}");
+        // Re-running supersedes the stale attempt rather than piling up duplicate
+        // open rows; human decisions (approved/rejected/fulfilled) are left alone.
+        for open in self.open_promotions(workflow, &subject).await? {
+            let _ = workflow.cancel(&open.id, actor).await;
+        }
+
         let payload = serde_json::json!({
             "project_id": project_id,
             "from_classification": reg.classification,
             "target_classification": target,
             "evidence_complete": verdict.evidence_complete,
-            "has_exception": !verdict.exception_signals.is_empty(),
+            "has_exception": has_exception,
             "is_critical": target == "critical-path",
             "risk_accepted": risk_accepted,
             "missing": verdict.missing,
-            "exception_signals": verdict.exception_signals,
+            "exception_signals": exception_signals,
+            "review_passed": outcome.passed,
+            "review_findings": outcome.findings,
+            "review_summary": outcome.summary,
+            "reviewers_ran": outcome.reviewer_ids,
         });
-        let req = workflow
+        let mut req = workflow
             .submit(NewRequest {
                 kind: "promotion".into(),
                 requester: actor.to_string(),
-                subject: format!("project:{project_id}"),
+                subject: subject.clone(),
                 payload,
                 sla_seconds: Some(7 * 24 * 3600),
             })
             .await?;
+
+        // Self-fixable findings → return to the submitter (fix-and-retry or
+        // escalate) instead of dumping a human approver with it. A clean
+        // Wide+/Critical stays `Requested` (human mandatory by tier, no findings).
+        if req.state == State::Requested && has_exception {
+            let summary = if outcome.summary.trim().is_empty() {
+                "promotion blocked by review findings".to_string()
+            } else {
+                outcome.summary.clone()
+            };
+            req = workflow.flag(&req.id, actor, &summary).await?;
+        }
+
+        self.persist_reviews(&req.id, project_id, &outcome).await;
+        if req.state == State::Flagged {
+            let _ = asgard_storage::audit::append(
+                &self.db,
+                &asgard_storage::audit::AuditRecord::new(actor, "project.promotion_flagged")
+                    .entity(format!("project:{project_id}"))
+                    .outcome("flagged")
+                    .reason(req.reason.clone().unwrap_or_default())
+                    .data(serde_json::json!({
+                        "request_id": req.id,
+                        "target": target,
+                        "findings": outcome.findings,
+                        "reviewers": outcome.reviewer_ids,
+                    })),
+            )
+            .await;
+        }
         Ok(req)
+    }
+
+    /// Open (`Requested`/`Flagged`) promotion requests for a project subject.
+    async fn open_promotions(
+        &self,
+        workflow: &WorkflowEngine,
+        subject: &str,
+    ) -> Result<Vec<WorkflowRequest>, RegistryError> {
+        let all = workflow
+            .list(&RequestFilter {
+                subject: Some(subject.to_string()),
+                ..Default::default()
+            })
+            .await?;
+        Ok(all
+            .into_iter()
+            .filter(|r| {
+                r.kind == "promotion" && matches!(r.state, State::Requested | State::Flagged)
+            })
+            .collect())
+    }
+
+    /// The reviewer verdicts recorded for a request (every attempt), newest-attempt
+    /// rows last. Surfaced to the submitter and admins.
+    pub async fn promotion_reviews(
+        &self,
+        request_id: &str,
+    ) -> Result<Vec<serde_json::Value>, RegistryError> {
+        let rows = sqlx::query(&self.db.q(
+            "SELECT reviewer_id, kind, disposition, verdict_json, model, cost_usd, created_at \
+             FROM promotion_reviews WHERE request_id = ? ORDER BY created_at",
+        ))
+        .bind(request_id)
+        .fetch_all(self.db.pool())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let vj: String = r.get("verdict_json");
+                serde_json::json!({
+                    "reviewer_id": r.get::<String, _>("reviewer_id"),
+                    "kind": r.get::<String, _>("kind"),
+                    "disposition": r.get::<String, _>("disposition"),
+                    "model": r.get::<String, _>("model"),
+                    "cost_usd": r.get::<f64, _>("cost_usd"),
+                    "created_at": r.get::<String, _>("created_at"),
+                    "verdict": serde_json::from_str::<serde_json::Value>(&vj)
+                        .unwrap_or(serde_json::Value::Null),
+                })
+            })
+            .collect())
+    }
+
+    /// Persist one row per reviewer verdict for audit (best-effort; a write
+    /// failure must not fail the promotion itself).
+    async fn persist_reviews(&self, request_id: &str, project_id: &str, outcome: &ReviewerOutcome) {
+        for v in &outcome.verdicts_json {
+            let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let cost = v.get("cost_usd").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let res = sqlx::query(&self.db.q(
+                "INSERT INTO promotion_reviews (id, request_id, project_id, reviewer_id, kind, disposition, verdict_json, model, cost_usd, created_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ))
+            .bind(asgard_storage::new_uid())
+            .bind(request_id)
+            .bind(project_id)
+            .bind(s("reviewer_id"))
+            .bind(s("kind"))
+            .bind(s("disposition"))
+            .bind(v.to_string())
+            .bind(s("model"))
+            .bind(cost)
+            .bind(asgard_storage::now())
+            .execute(self.db.pool())
+            .await;
+            if let Err(e) = res {
+                tracing::warn!("persist promotion review failed: {e}");
+            }
+        }
     }
 
     /// Fulfill an approved promotion: mutate `classification`, clear the now-met
@@ -1567,6 +1712,19 @@ mod tests {
         i
     }
 
+    fn wide_ready_input() -> RegisterInput {
+        let mut i = light_ready_input();
+        let ev = &mut i.evidence;
+        ev.security_review_status = "approved".into();
+        ev.architecture_summary_url = "https://arch".into();
+        ev.critical_dependencies = vec!["postgres".into()];
+        ev.incident_path = "pagerduty".into();
+        ev.slo_or_service_target = "99.9".into();
+        ev.rpo_rto = "1h/4h".into();
+        ev.decommission_path = "documented".into();
+        i
+    }
+
     #[tokio::test]
     async fn promotion_to_light_auto_approves_and_fulfills() {
         let (r, wf) = registry_and_workflow().await;
@@ -1597,37 +1755,141 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn promotion_with_missing_evidence_routes_to_human() {
+    async fn promotion_with_missing_evidence_returns_to_submitter() {
         let (r, wf) = registry_and_workflow().await;
-        // Default input has no evidence → Light requirements unmet.
+        // Default input has no evidence → Light requirements unmet (self-fixable).
         let reg = r.register(input(), "u").await.unwrap();
         let req = r
             .request_promotion(&wf, &reg.project_id, "light-operational", "u")
             .await
             .unwrap();
-        assert_eq!(req.state, State::Requested, "missing evidence must route");
+        assert_eq!(
+            req.state,
+            State::Flagged,
+            "missing evidence is self-fixable → return to submitter, not a human"
+        );
+        // The approver Cedar assigned is preserved for a later escalation.
         assert_eq!(req.approver.as_deref(), Some("group:default/platform"));
-        // Not fulfillable until approved.
+        // Not fulfillable while flagged.
         assert!(r.fulfill_promotion(&wf, &req.id, "u").await.is_err());
+        // Submitter escalates → now a human owns it.
+        let esc = wf.escalate(&req.id, "u").await.unwrap();
+        assert_eq!(esc.state, State::Requested);
     }
 
     #[tokio::test]
-    async fn promotion_to_wide_always_routes_even_when_complete() {
+    async fn clean_wide_routes_to_human_no_findings() {
         let (r, wf) = registry_and_workflow().await;
-        let reg = r.register(light_ready_input(), "u").await.unwrap();
-        // Move to light first (auto).
+        let reg = r.register(wide_ready_input(), "u").await.unwrap();
+        // Move to light first (auto). Fulfilling clears requested_classification.
         let req = r
             .request_promotion(&wf, &reg.project_id, "light-operational", "u")
             .await
             .unwrap();
         r.fulfill_promotion(&wf, &req.id, "u").await.unwrap();
-        // Light -> Wide always routes to a human regardless of evidence.
+        // Re-declare the next target so Wide evidence is complete.
+        let cur = r.get(&reg.project_id).await.unwrap().unwrap();
+        let mut ev = cur.evidence.clone();
+        ev.requested_classification = "wide-operational".into();
+        r.update_evidence(&reg.project_id, ev, "u").await.unwrap();
+        // Clean Light -> Wide: no findings, but Wide always needs a human by tier.
         let wreq = r
             .request_promotion(&wf, &reg.project_id, "wide-operational", "u")
             .await
             .unwrap();
-        assert_eq!(wreq.state, State::Requested);
+        assert_eq!(
+            wreq.state,
+            State::Requested,
+            "clean wide has no findings → straight to the human approver, not flagged"
+        );
         assert_eq!(wreq.approver.as_deref(), Some("group:default/platform"));
+    }
+
+    struct ConcernPanel;
+    #[async_trait::async_trait]
+    impl ReviewerPanel for ConcernPanel {
+        async fn review(&self, _: &Registration, _: &str, _: &EvidenceVerdict) -> ReviewerOutcome {
+            ReviewerOutcome {
+                passed: false,
+                added_exception_signals: vec![
+                    "llm-judge: ci_status_url 'N/A' is a placeholder, not evidence".into(),
+                ],
+                findings: vec!["ci_status_url 'N/A' is a placeholder, not evidence".into()],
+                summary: "1 reviewer concern".into(),
+                reviewer_ids: vec!["llm-judge".into()],
+                verdicts_json: vec![serde_json::json!({
+                    "reviewer_id": "llm-judge", "kind": "llm-judge", "disposition": "concern",
+                    "model": "model:default/mock", "cost_usd": 0.0,
+                })],
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reviewer_concern_flags_clean_light_and_alerts() {
+        let (r, wf) = registry_and_workflow().await;
+        let r = r.with_reviewer_panel(std::sync::Arc::new(ConcernPanel));
+        // Evidence is complete for Light, so only the reviewer's concern blocks it.
+        let reg = r.register(light_ready_input(), "u").await.unwrap();
+        let req = r
+            .request_promotion(
+                &wf,
+                &reg.project_id,
+                "light-operational",
+                "user:default/alice",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            req.state,
+            State::Flagged,
+            "a reviewer concern returns an otherwise-clean Light promotion to the submitter"
+        );
+        assert_eq!(req.payload["review_passed"], serde_json::json!(false));
+        assert!(!req.payload["review_findings"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(req.payload["reviewers_ran"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "llm-judge"));
+        // The verdict is persisted for audit.
+        let n: i64 = sqlx::query_scalar(
+            &r.db
+                .q("SELECT COUNT(*) FROM promotion_reviews WHERE request_id = ?"),
+        )
+        .bind(&req.id)
+        .fetch_one(r.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn re_request_supersedes_open_promotion() {
+        let (r, wf) = registry_and_workflow().await;
+        let r = r.with_reviewer_panel(std::sync::Arc::new(ConcernPanel));
+        let reg = r.register(light_ready_input(), "u").await.unwrap();
+        let first = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        assert_eq!(first.state, State::Flagged);
+        let second = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        // The stale flagged attempt is superseded; exactly one open promotion remains.
+        let first_after = wf.get(&first.id).await.unwrap().unwrap();
+        assert_eq!(first_after.state, State::Cancelled);
+        let open = r
+            .open_promotions(&wf, &format!("project:{}", reg.project_id))
+            .await
+            .unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, second.id);
     }
 
     #[tokio::test]

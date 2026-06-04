@@ -16,6 +16,7 @@ asgard-policy.workspace = true
 asgard-gateway.workspace = true
 asgard-workflow.workspace = true
 asgard-registry.workspace = true
+asgard-reviewer.workspace = true
 asgard-provision.workspace = true
 asgard-eval.workspace = true
 asgard-identity.workspace = true

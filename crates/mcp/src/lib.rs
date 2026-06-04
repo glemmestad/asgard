@@ -233,6 +233,12 @@ pub struct PromotionArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct EscalatePromotionArgs {
+    /// The flagged promotion request id (from `request_promotion`'s response).
+    pub request_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeprovisionArgs {
     pub resource_id: String,
     pub requester: Option<String>,
@@ -765,6 +771,15 @@ impl AsgardMcp {
         Ok(serde_json::to_string(&req).unwrap_or_default())
     }
 
+    async fn do_escalate_promotion(&self, request_id: &str, actor: &str) -> Result<String, String> {
+        let req = self
+            .workflow
+            .escalate(request_id, actor)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_string(&req).unwrap_or_default())
+    }
+
     async fn do_promotion_status(&self, pid: &str) -> Result<String, String> {
         let checklist = self
             .registry
@@ -1206,7 +1221,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Request a one-step classification promotion (e.g. poc → light-operational). A clean Light target with complete evidence and no exception auto-approves; Wide/Critical targets and any exception route to a human reviewer. Returns the workflow request (approved or pending)."
+        description = "Request a one-step classification promotion (e.g. poc → light-operational). A clean Light target auto-approves. If the review finds fixable problems the request is returned to you as 'flagged' with `review_findings` — fix the evidence/repo and call this again to re-run (it supersedes the prior attempt), or escalate_promotion to forward it to a human. Clean Wide/Critical targets need a human by tier. Returns the workflow request."
     )]
     async fn request_promotion(
         &self,
@@ -1223,6 +1238,50 @@ impl AsgardMcp {
             None => DEFAULT_REQUESTER.to_string(),
         };
         wrap(self.do_request_promotion(&pid, &a.target, &actor).await)
+    }
+
+    #[tool(
+        description = "Forward a flagged promotion to a human reviewer instead of fixing-and-retrying. Pass the flagged request_id from request_promotion. Use when you can't (or choose not to) resolve the review findings yourself."
+    )]
+    async fn escalate_promotion(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<EscalatePromotionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let req = match self.workflow.get(&a.request_id).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return deny(format!("request {} not found", a.request_id)),
+            Err(e) => return deny(e.to_string()),
+        };
+        let project_id = req
+            .subject
+            .strip_prefix("project:")
+            .unwrap_or_default()
+            .to_string();
+        match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => {
+                if let Err(e) = self.authorize_user(&email, &role, &project_id).await {
+                    return deny(e);
+                }
+                wrap(
+                    self.do_escalate_promotion(&a.request_id, &format!("user:{email}"))
+                        .await,
+                )
+            }
+            Some(McpAuth::Project { project_id: pid }) => {
+                if pid != project_id {
+                    return deny("cross-project access denied".into());
+                }
+                wrap(
+                    self.do_escalate_promotion(&a.request_id, &format!("project:{pid}"))
+                        .await,
+                )
+            }
+            None => wrap(
+                self.do_escalate_promotion(&a.request_id, DEFAULT_REQUESTER)
+                    .await,
+            ),
+        }
     }
 
     #[tool(

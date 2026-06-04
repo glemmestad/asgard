@@ -29,6 +29,10 @@ pub enum WorkflowError {
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Requested,
+    /// Blocked by review findings and returned to the submitter to fix-and-retry
+    /// or escalate. A resting state owned by the submitter, not yet a human's
+    /// queue — distinct from `Requested` (pending a human approver).
+    Flagged,
     Approved,
     Rejected,
     Fulfilled,
@@ -39,6 +43,7 @@ impl State {
     pub fn as_str(&self) -> &'static str {
         match self {
             State::Requested => "requested",
+            State::Flagged => "flagged",
             State::Approved => "approved",
             State::Rejected => "rejected",
             State::Fulfilled => "fulfilled",
@@ -47,6 +52,7 @@ impl State {
     }
     pub fn parse(s: &str) -> State {
         match s {
+            "flagged" => State::Flagged,
             "approved" => State::Approved,
             "rejected" => State::Rejected,
             "fulfilled" => State::Fulfilled,
@@ -63,6 +69,10 @@ fn can_transition(from: State, to: State) -> bool {
         (Requested, Approved)
             | (Requested, Rejected)
             | (Requested, Cancelled)
+            | (Requested, Flagged)
+            | (Flagged, Requested)
+            | (Flagged, Approved)
+            | (Flagged, Cancelled)
             | (Approved, Fulfilled)
             | (Approved, Cancelled)
     )
@@ -96,6 +106,7 @@ pub struct NewRequest {
 pub struct RequestFilter {
     pub state: Option<State>,
     pub requester: Option<String>,
+    pub subject: Option<String>,
     pub limit: Option<i64>,
 }
 
@@ -212,6 +223,9 @@ impl WorkflowEngine {
         if filter.requester.is_some() {
             sql.push_str(" AND requester = ?");
         }
+        if filter.subject.is_some() {
+            sql.push_str(" AND subject = ?");
+        }
         sql.push_str(" ORDER BY created_at DESC");
         sql.push_str(&format!(" LIMIT {}", filter.limit.unwrap_or(500)));
 
@@ -222,6 +236,9 @@ impl WorkflowEngine {
         }
         if let Some(r) = &filter.requester {
             q = q.bind(r);
+        }
+        if let Some(s) = &filter.subject {
+            q = q.bind(s);
         }
         let rows = q.fetch_all(self.db.pool()).await?;
         rows.into_iter().map(row_to_request).collect()
@@ -258,6 +275,30 @@ impl WorkflowEngine {
             State::Cancelled,
             None,
             Some("cancelled by requester"),
+            actor,
+        )
+        .await
+    }
+
+    /// Return a request to the submitter (review findings to fix-or-escalate). The
+    /// approver group Cedar assigned is left intact for a later [`escalate`].
+    pub async fn flag(
+        &self,
+        id: &str,
+        actor: &str,
+        summary: &str,
+    ) -> Result<WorkflowRequest, WorkflowError> {
+        self.transition(id, State::Flagged, None, Some(summary), actor)
+            .await
+    }
+
+    /// Submitter forwards a flagged request to its human approver.
+    pub async fn escalate(&self, id: &str, actor: &str) -> Result<WorkflowRequest, WorkflowError> {
+        self.transition(
+            id,
+            State::Requested,
+            None,
+            Some("escalated to human review by submitter"),
             actor,
         )
         .await
@@ -405,6 +446,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.state, State::Rejected);
+    }
+
+    #[tokio::test]
+    async fn flag_then_escalate_then_fulfill() {
+        let e = engine().await;
+        let r = e
+            .submit(NewRequest {
+                kind: "promotion".into(),
+                requester: "user:default/alice".into(),
+                subject: "project:proj-2026-0001".into(),
+                payload: serde_json::json!({"target_classification": "wide-operational"}),
+                sla_seconds: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(r.state, State::Requested);
+        let approver = r.approver.clone();
+
+        // Findings → returned to submitter; approver preserved for escalation.
+        let flagged = e.flag(&r.id, "system", "fix the eval url").await.unwrap();
+        assert_eq!(flagged.state, State::Flagged);
+        assert_eq!(flagged.approver, approver);
+        assert_eq!(flagged.reason.as_deref(), Some("fix the eval url"));
+
+        // Submitter escalates → human queue.
+        let escalated = e.escalate(&r.id, "user:default/alice").await.unwrap();
+        assert_eq!(escalated.state, State::Requested);
+
+        let approved = e.approve(&r.id, "user:default/plat", None).await.unwrap();
+        assert_eq!(approved.state, State::Approved);
+        let fulfilled = e.fulfill(&r.id, "system").await.unwrap();
+        assert_eq!(fulfilled.state, State::Fulfilled);
+    }
+
+    #[tokio::test]
+    async fn admin_authorizes_flagged_directly_and_subject_filter() {
+        let e = engine().await;
+        let r = e
+            .submit(NewRequest {
+                kind: "promotion".into(),
+                requester: "user:default/alice".into(),
+                subject: "project:proj-2026-0002".into(),
+                payload: serde_json::json!({"target_classification": "wide-operational"}),
+                sla_seconds: None,
+            })
+            .await
+            .unwrap();
+        e.flag(&r.id, "system", "concern").await.unwrap();
+        // Admin override: Flagged → Approved directly.
+        let approved = e
+            .approve(&r.id, "user:default/admin", Some("override"))
+            .await
+            .unwrap();
+        assert_eq!(approved.state, State::Approved);
+
+        let by_subject = e
+            .list(&RequestFilter {
+                subject: Some("project:proj-2026-0002".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(by_subject.len(), 1);
+        assert_eq!(by_subject[0].id, r.id);
     }
 
     #[tokio::test]

@@ -455,6 +455,32 @@
         <div id="promote-out" style="margin-top:8px"></div>
       </div>`;
     }
+    // A promotion the review agent returned to the submitter: show the findings and
+    // the self-service choices — fix-and-re-run, forward to a human, or (admin)
+    // authorize anyway. The promotion stays un-promoted until one of these resolves it.
+    function flaggedCard(req){
+      if (!req) return '';
+      const pl = req.payload || {};
+      const findings = pl.review_findings || [];
+      const reviewers = (pl.reviewers_ran || []).join(', ');
+      const rows = findings.length
+        ? findings.map(s => `<div class="row" style="gap:8px;align-items:center">${pill('finding','amber')} <span style="font-size:13px">${esc(s)}</span></div>`).join('')
+        : `<div class="muted" style="font-size:13px">Returned for review — open the request for details.</div>`;
+      return `<div class="card" style="margin-top:12px;border-color:var(--amber)">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div><b>Review found issues to fix</b> ${pill('flagged','amber')}</div>
+          <div class="muted" style="font-size:11px">${reviewers?`reviewed by ${esc(reviewers)}`:''}</div>
+        </div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">Fix these (use <b>Edit evidence</b> above or update your repo), then re-run the review — or forward it to a human.</p>
+        <div style="margin-top:10px;display:grid;gap:6px">${rows}</div>
+        <div class="row" style="margin-top:12px;gap:8px">
+          <button class="act" id="rerun-btn">Re-run review</button>
+          <button class="act" id="escalate-btn">Forward to human</button>
+          ${isAdmin() ? `<button class="act" id="authorize-btn">Authorize anyway</button>` : ''}
+        </div>
+        <div id="flag-out" style="margin-top:8px"></div>
+      </div>`;
+    }
     // WS3 review-date: deadline, expiry flag, and an extend control. Expiry is a
     // flag (blocks nothing); only render when there's a deadline or it's expired.
     function reviewCard(p, decommissioned){
@@ -1485,9 +1511,10 @@
 
       async function showDetail(id) {
         root().innerHTML = loading('Loading project…');
-        let p, resources = [], checklist = null;
-        try { [p, resources, checklist] = await Promise.all([api(`/api/projects/${enc(id)}`), api(`/api/projects/${enc(id)}/resources`), api(`/api/projects/${enc(id)}/promotion`).catch(() => null)]); }
+        let p, resources = [], checklist = null, openReqs = [];
+        try { [p, resources, checklist, openReqs] = await Promise.all([api(`/api/projects/${enc(id)}`), api(`/api/projects/${enc(id)}/resources`), api(`/api/projects/${enc(id)}/promotion`).catch(() => null), api(`/api/requests?subject=${enc('project:'+id)}`).catch(() => [])]); }
         catch (e) { root().innerHTML = errBanner(e); return; }
+        const flagged = (openReqs || []).find(r => r.kind === 'promotion' && r.state === 'flagged') || null;
         const cap = Number(p.budget_usd||0), spent = Number(p.spent_usd||0);
         const decommissioned = p.lifecycle === 'decommissioned';
         const actions = decommissioned
@@ -1519,6 +1546,7 @@
           </div>
           ${reviewCard(p, decommissioned)}
           ${promotionCard(checklist, decommissioned)}
+          ${flaggedCard(flagged)}
           ${decommissioned ? '' : demoteControl(p)}
           <h3 style="margin:18px 0 8px">Resources</h3>
           <p class="muted" style="font-size:12px;margin:0 0 10px">Kill suspends billable resources to stop charges (reversible); decommission destroys them, including data (irreversible). Only <code>provisioned</code> resources accrue cost.</p>
@@ -1544,21 +1572,43 @@
             catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
           };
         };
-        const promoteBtn = root().querySelector('#promote-btn');
-        if (promoteBtn && checklist && checklist.next_tier) promoteBtn.onclick = async () => {
-          const out = document.getElementById('promote-out'); out.innerHTML = '';
-          promoteBtn.disabled = true;
+        // One promotion path, reused by the promote button and the flagged re-run:
+        // a clean Light result auto-approves (we fulfil it); findings come back
+        // flagged; everything else parks for a human.
+        async function doPromote(target, outId, btn) {
+          const out = document.getElementById(outId); if (out) out.innerHTML = '';
+          if (btn) btn.disabled = true;
           try {
-            const req = await api(`/api/projects/${enc(id)}/promotion`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({target:checklist.next_tier})});
+            const req = await api(`/api/projects/${enc(id)}/promotion`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({target})});
             if (req.state === 'approved') {
-              // Auto-approved (clean Light) — fulfil it so the tier actually moves.
               await api(`/api/requests/${enc(req.id)}/fulfill`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({actor:'user:default/ui'})});
-              out.innerHTML = `<span class="ok">Promoted to ${esc(checklist.next_tier)}.</span>`;
+              if (out) out.innerHTML = `<span class="ok">Promoted to ${esc(target)}.</span>`;
+            } else if (req.state === 'flagged') {
+              if (out) out.innerHTML = `<span class="muted" style="font-size:13px">Still needs changes — ${((req.payload||{}).review_findings||[]).length} finding(s) remain.</span>`;
             } else {
-              out.innerHTML = `<span class="muted" style="font-size:13px">Submitted for review (request <code>${esc(req.id)}</code>${req.approver?`, approver ${esc(req.approver)}`:''}).</span>`;
+              if (out) out.innerHTML = `<span class="muted" style="font-size:13px">Submitted for review (request <code>${esc(req.id)}</code>${req.approver?`, approver ${esc(req.approver)}`:''}).</span>`;
             }
             setTimeout(() => showDetail(id), 900);
-          } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; promoteBtn.disabled = false; }
+          } catch (e) { if (out) out.innerHTML = `<span class="err">${esc(e.message)}</span>`; if (btn) btn.disabled = false; }
+        }
+        const promoteBtn = root().querySelector('#promote-btn');
+        if (promoteBtn && checklist && checklist.next_tier) promoteBtn.onclick = () => doPromote(checklist.next_tier, 'promote-out', promoteBtn);
+        const rerunBtn = root().querySelector('#rerun-btn');
+        if (rerunBtn && flagged) rerunBtn.onclick = () => doPromote((flagged.payload||{}).target_classification || (checklist && checklist.next_tier), 'flag-out', rerunBtn);
+        const escalateBtn = root().querySelector('#escalate-btn');
+        if (escalateBtn && flagged) escalateBtn.onclick = async () => {
+          const out = document.getElementById('flag-out'); out.innerHTML = ''; escalateBtn.disabled = true;
+          try { await api(`/api/requests/${enc(flagged.id)}/escalate`, {method:'POST'}); showDetail(id); }
+          catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; escalateBtn.disabled = false; }
+        };
+        const authorizeBtn = root().querySelector('#authorize-btn');
+        if (authorizeBtn && flagged) authorizeBtn.onclick = async () => {
+          const out = document.getElementById('flag-out'); out.innerHTML = ''; authorizeBtn.disabled = true;
+          try {
+            await api(`/api/requests/${enc(flagged.id)}/approve`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({actor:'user:default/ui', reason:'admin override'})});
+            await api(`/api/requests/${enc(flagged.id)}/fulfill`, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({actor:'user:default/ui'})});
+            showDetail(id);
+          } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; authorizeBtn.disabled = false; }
         };
         const demoteBtn = root().querySelector('#demote-btn');
         if (demoteBtn) demoteBtn.onclick = async () => {
