@@ -45,10 +45,6 @@ ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite:///tmp/asgard.db" \
   ./target/debug/asgard serve --bind 127.0.0.1:8080    # http://localhost:8080
 ```
 
-> **CI (GitHub Actions) is blocked at the account level** — every merge shows
-> `startup_failure` regardless of code. Local gates are the proof path. Don't
-> chase the CI red; prove green locally.
-
 ## Crate map (`crates/`)
 
 - **storage** — `Db` over SQLite+Postgres via sqlx `Any`. `Db::q(sql)` rewrites
