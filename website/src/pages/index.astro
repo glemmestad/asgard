@@ -1,0 +1,38 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Hero from '../components/Hero.astro';
+import Why from '../components/Why.astro';
+import Loop from '../components/Loop.astro';
+import Pillars from '../components/Pillars.astro';
+import Agents from '../components/Agents.astro';
+import Surface from '../components/Surface.astro';
+import Extend from '../components/Extend.astro';
+import OpenCore from '../components/OpenCore.astro';
+import Deploy from '../components/Deploy.astro';
+import Faq from '../components/Faq.astro';
+import CTA from '../components/CTA.astro';
+import Footer from '../components/Footer.astro';
+---
+<Base>
+  <Nav />
+  <main>
+    <Hero />
+    <Why />
+    <hr class="hairline container-rule" />
+    <Loop />
+    <Pillars />
+    <Agents />
+    <Surface />
+    <Extend />
+    <OpenCore />
+    <Deploy />
+    <Faq />
+    <CTA />
+  </main>
+  <Footer />
+</Base>
+
+<style>
+  .container-rule { max-width: var(--maxw); margin-inline: auto; }
+</style>

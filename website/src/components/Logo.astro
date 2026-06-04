@@ -1,0 +1,31 @@
+---
+interface Props { size?: number; withWordmark?: boolean; }
+const { size = 28, withWordmark = true } = Astro.props;
+---
+<a href="/" class="logo" aria-label="Asgard home">
+  <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="lg" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
+        <stop stop-color="#5eead4" />
+        <stop offset="0.55" stop-color="#2dd4bf" />
+        <stop offset="1" stop-color="#0f9b8e" />
+      </linearGradient>
+    </defs>
+    <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="url(#lg)" />
+    <path d="M8 22.5 C8 14, 24 14, 24 22.5" stroke="#04201d" stroke-width="2.4" stroke-linecap="round" fill="none" />
+    <path d="M16 9.5 L16 22.5" stroke="#04201d" stroke-width="2.4" stroke-linecap="round" />
+    <circle cx="16" cy="9.5" r="2" fill="#04201d" />
+  </svg>
+  {withWordmark && <span class="wordmark">Asgard</span>}
+</a>
+
+<style>
+  .logo { display: inline-flex; align-items: center; gap: 10px; }
+  .wordmark {
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+</style>

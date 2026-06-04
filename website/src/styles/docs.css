@@ -1,0 +1,126 @@
+/* ============================================================
+   Docs — sidebar + prose + admonitions. Light, technical.
+   ============================================================ */
+
+.docs {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) 200px;
+  gap: 44px;
+  align-items: start;
+  padding-top: 40px;
+  padding-bottom: 96px;
+}
+
+.side-label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+
+.side-sticky { position: sticky; top: 86px; }
+
+.docs-side nav { display: flex; flex-direction: column; gap: 2px; }
+.side-link {
+  font-size: 14px;
+  color: var(--muted);
+  padding: 6px 10px;
+  border-radius: 7px;
+  border-left: 2px solid transparent;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.side-link:hover { color: var(--fg); background: var(--panel-2); }
+.side-link.on {
+  color: var(--teal-2);
+  background: rgba(13, 148, 136, 0.06);
+  border-left-color: var(--teal);
+  font-weight: 600;
+}
+
+.docs-toc nav { display: flex; flex-direction: column; gap: 8px; }
+.toc-link { font-size: 13px; color: var(--muted); line-height: 1.4; }
+.toc-link:hover { color: var(--teal-2); }
+
+/* ---------- prose ---------- */
+.prose { max-width: 760px; color: var(--fg-dim); font-size: 16px; line-height: 1.7; }
+.prose > :first-child { margin-top: 0; }
+
+.prose h1 {
+  font-family: var(--display); font-weight: 800; letter-spacing: -0.025em;
+  font-size: clamp(30px, 4vw, 40px); line-height: 1.1; color: var(--fg); margin: 0 0 8px;
+}
+.prose h2 {
+  font-family: var(--display); font-weight: 700; letter-spacing: -0.02em;
+  font-size: 24px; color: var(--fg); margin: 44px 0 14px; padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.prose h3 { font-family: var(--display); font-weight: 700; font-size: 18px; color: var(--fg); margin: 28px 0 10px; }
+.prose h4 { font-size: 15px; color: var(--fg); margin: 22px 0 8px; }
+.prose p { margin: 14px 0; }
+.prose a { color: var(--teal-2); text-decoration: none; border-bottom: 1px solid rgba(13, 148, 136, 0.3); }
+.prose a:hover { border-bottom-color: var(--teal); }
+.prose strong { color: var(--fg); font-weight: 600; }
+.prose ul, .prose ol { margin: 14px 0; padding-left: 22px; }
+.prose li { margin: 6px 0; }
+.prose li::marker { color: var(--muted-2); }
+.prose hr { border: 0; border-top: 1px solid var(--line); margin: 32px 0; }
+.prose blockquote {
+  margin: 18px 0; padding: 2px 18px; border-left: 3px solid var(--line-2);
+  color: var(--muted);
+}
+
+/* inline code */
+.prose :not(pre) > code {
+  font-family: var(--mono); font-size: 0.86em;
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 6px; color: var(--teal-2);
+}
+
+/* fenced code (Shiki github-dark) */
+.prose pre {
+  margin: 18px 0; padding: 16px 18px; border-radius: var(--radius);
+  border: 1px solid #1c2027; overflow-x: auto; font-size: 13.5px; line-height: 1.6;
+}
+.prose pre code { font-family: var(--mono); background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* tables */
+.prose table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px; }
+.prose th, .prose td { text-align: left; padding: 9px 12px; border: 1px solid var(--line); }
+.prose th { background: var(--panel-2); font-weight: 600; color: var(--fg); }
+
+/* ---------- admonitions ---------- */
+.admo {
+  margin: 20px 0; padding: 14px 16px 4px; border-radius: var(--radius);
+  border: 1px solid var(--line); border-left-width: 3px; background: var(--panel-2);
+  font-size: 15px;
+}
+.admo .admo-title {
+  font-weight: 700; color: var(--fg); margin: 0 0 6px; font-size: 14px;
+  display: flex; align-items: center; gap: 7px;
+}
+.admo .admo-title::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--muted-2); }
+.admo p { margin: 8px 0; }
+.admo-tip { border-left-color: var(--teal); }
+.admo-tip .admo-title::before { background: var(--teal); }
+.admo-note, .admo-info { border-left-color: var(--blue); }
+.admo-note .admo-title::before, .admo-info .admo-title::before { background: var(--blue); }
+.admo-caution, .admo-warning { border-left-color: var(--amber); }
+.admo-caution .admo-title::before, .admo-warning .admo-title::before { background: var(--amber); }
+.admo-danger { border-left-color: var(--red); }
+.admo-danger .admo-title::before { background: var(--red); }
+
+@media (max-width: 1040px) {
+  .docs { grid-template-columns: 200px minmax(0, 1fr); }
+  .docs-toc { display: none; }
+}
+@media (max-width: 760px) {
+  .docs { grid-template-columns: 1fr; gap: 8px; }
+  .docs-side { position: static; border-bottom: 1px solid var(--line); padding-bottom: 16px; margin-bottom: 8px; }
+  .side-sticky { position: static; }
+  .docs-side nav { flex-flow: row wrap; gap: 6px; }
+  .side-link { border-left: 0; border: 1px solid var(--line); }
+  .side-link.on { border-color: rgba(13, 148, 136, 0.4); }
+}

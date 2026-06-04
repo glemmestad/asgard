@@ -1,0 +1,71 @@
+---
+const principles = [
+  { t: 'One static binary', d: 'Rust, embedded UI. No sidecars.' },
+  { t: 'SQLite → Postgres', d: 'Identical behavior. Switch one URL to scale out.' },
+  { t: 'K8s optional', d: 'docker run and systemd are first-class. Helm ships too.' },
+];
+---
+<section class="deploy section-pad" id="deploy">
+  <div class="container">
+    <div class="deploy-grid">
+      <div class="deploy-copy">
+        <span class="eyebrow" data-reveal>Productive in an afternoon</span>
+        <h2 data-reveal>One binary. Zero external services to start.</h2>
+        <p class="lede" data-reveal>
+          The SQLite path needs nothing else running. Boot it, connect an agent, and you’re governing
+          AI development. Move to Postgres and stateless replicas only when you outgrow a single node.
+        </p>
+        <div class="prin" data-reveal>
+          {principles.map((p) => (
+            <div class="prin-item">
+              <b>{p.t}</b>
+              <span>{p.d}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div class="deploy-code" data-reveal>
+        <div class="code">
+          <div class="code-bar">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="code-title">quickstart</span>
+          </div>
+          <pre><span class="c"># 1 · run it, SQLite, no external services</span>
+<span class="p">$</span> docker run -p 8080:8080 <span class="o">asgard</span> serve
+
+<span class="c"># 2 · register the project (the gate)</span>
+<span class="p">$</span> asgard project register \
+    --name <span class="s">"Fraud Detection"</span> --owner <span class="s">you@corp.example</span> \
+    --manager <span class="s">lead@corp.example</span> --group <span class="s">platform</span> \
+    --classification <span class="s">poc</span> --budget-usd <span class="o">100</span>
+  <span class="g">→ minted proj-2026-0042</span>
+
+<span class="c"># 3 · point your agent at the MCP front door</span>
+<span class="p">$</span> open http://localhost:8080  <span class="c"># Getting Started → copy MCP snippet</span></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .deploy-grid { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 56px; align-items: center; }
+  .deploy-copy { display: flex; flex-direction: column; gap: 20px; }
+  .deploy-copy h2 { font-size: clamp(28px, 3.8vw, 46px); }
+  .prin { display: flex; flex-direction: column; gap: 14px; margin-top: 6px; }
+  .prin-item { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; border-left: 2px solid var(--line-2); }
+  .prin-item b { font-size: 15px; color: var(--fg); font-weight: 600; }
+  .prin-item span { font-size: 13.5px; color: var(--muted); }
+
+  .deploy-code pre { white-space: pre; }
+  .deploy-code .c { color: var(--c-comment); }
+  .deploy-code .p { color: var(--c-prompt); }
+  .deploy-code .s { color: var(--c-str); }
+  .deploy-code .o { color: var(--c-amber); }
+  .deploy-code .g { color: var(--c-out); }
+
+  @media (max-width: 900px) {
+    .deploy-grid { grid-template-columns: 1fr; gap: 36px; }
+  }
+</style>

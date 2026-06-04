@@ -1,0 +1,73 @@
+---
+const points = [
+  { t: 'Any cloud, any service', d: 'The terraform connector is the universal path. AWS, Databricks, Auth0, same manifest, same cost plumbing.' },
+  { t: 'Any model backend', d: 'OpenAI & Anthropic built in. LiteLLM, Databricks Model Serving, vLLM, each an enableable plugin, never core code.' },
+  { t: 'Cost reads itself', d: 'The manifest also declares how the service’s cost is attributed, so spend flows into the same rollup automatically.' },
+];
+---
+<section class="extend section-pad" id="extend">
+  <div class="container">
+    <div class="extend-grid">
+      <div class="extend-code" data-reveal>
+        <div class="code">
+          <div class="code-bar">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="code-title">services/s3-bucket/service.yaml</span>
+          </div>
+          <pre><span class="k">id</span>: s3-bucket
+<span class="k">category</span>: storage
+<span class="k">classification_min</span>: poc
+<span class="k">auto_approvable</span>: <span class="o">true</span>
+<span class="k">required_fields</span>: [name]
+<span class="k">provisioner</span>:
+  <span class="k">connector</span>: <span class="s">terraform</span>
+  <span class="k">config</span>: &#123; <span class="k">module</span>: <span class="s">aws/s3-bucket</span> &#125;
+<span class="k">cost</span>:
+  <span class="k">source</span>: &#123; <span class="k">type</span>: <span class="s">aws-cost-explorer</span> &#125;
+<span class="k">secret_outputs</span>: [bucket_arn]</pre>
+        </div>
+        <p class="caption">Drop this file in. No recompile. The agent can provision it on the next call.</p>
+      </div>
+
+      <div class="extend-copy">
+        <span class="eyebrow" data-reveal>Extensible by manifest</span>
+        <h2 data-reveal>A new service is a file,<br />not a code change.</h2>
+        <p class="lede" data-reveal>
+          Everything an agent can provision is one YAML plus a Terraform module. The manifest declares
+          how it’s provisioned <em>and</em> how its cost is attributed, so the catalog grows without
+          touching the binary.
+        </p>
+        <ul class="points">
+          {points.map((p, i) => (
+            <li data-reveal style={`transition-delay:${i * 70}ms`}>
+              <span class="bullet" aria-hidden="true"></span>
+              <div><b>{p.t}.</b> {p.d}</div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .extend-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  .extend-code .o { color: var(--c-amber); }
+  .extend-code .k { color: var(--c-key); }
+  .extend-code .s { color: var(--c-str); }
+  .extend-code pre { white-space: pre; }
+  .caption { margin: 16px 2px 0; font-size: 13px; color: var(--muted); }
+
+  .extend-copy { display: flex; flex-direction: column; gap: 20px; }
+  .extend-copy h2 { font-size: clamp(28px, 3.8vw, 46px); }
+  .extend-copy em { font-style: normal; color: var(--teal-2); }
+  .points { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+  .points li { display: flex; gap: 13px; font-size: 15px; color: var(--muted); line-height: 1.55; }
+  .points b { color: var(--fg); font-weight: 600; }
+  .bullet { flex: none; width: 8px; height: 8px; border-radius: 50%; margin-top: 8px; background: var(--bifrost); }
+
+  @media (max-width: 900px) {
+    .extend-grid { grid-template-columns: 1fr; gap: 36px; }
+    .extend-code { order: 2; }
+  }
+</style>

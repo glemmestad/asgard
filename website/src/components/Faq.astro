@@ -1,0 +1,50 @@
+---
+import { faqs } from '../data/site';
+---
+<section class="faq section-pad" id="faq">
+  <div class="container faq-inner">
+    <div class="faq-head">
+      <span class="eyebrow" data-reveal>Questions</span>
+      <h2 data-reveal>The short answers.</h2>
+    </div>
+    <div class="faq-list">
+      {faqs.map((f, i) => (
+        <details class="qa" data-reveal style={`transition-delay:${i * 50}ms`} open={i === 0}>
+          <summary>
+            <span>{f.q}</span>
+            <span class="chev" aria-hidden="true"></span>
+          </summary>
+          <p>{f.a}</p>
+        </details>
+      ))}
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq-inner { display: grid; grid-template-columns: 0.7fr 1.3fr; gap: 48px; align-items: start; }
+  .faq-head h2 { font-size: clamp(28px, 3.6vw, 44px); margin-top: 14px; }
+
+  .faq-list { display: flex; flex-direction: column; }
+  .qa { border-bottom: 1px solid var(--line); padding: 4px 0; }
+  .qa summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 20px 2px; font-family: var(--display); font-weight: 600; font-size: 18px;
+    color: var(--fg);
+  }
+  .qa summary::-webkit-details-marker { display: none; }
+  .qa .chev {
+    flex: none; width: 12px; height: 12px; position: relative; transition: transform 0.25s var(--ease);
+  }
+  .qa .chev::before, .qa .chev::after {
+    content: ''; position: absolute; top: 50%; left: 50%; width: 11px; height: 2px; border-radius: 2px;
+    background: var(--teal); transform: translate(-50%, -50%);
+  }
+  .qa .chev::after { transform: translate(-50%, -50%) rotate(90deg); transition: opacity 0.25s; }
+  .qa[open] .chev::after { opacity: 0; }
+  .qa p { margin: 0 0 22px; padding-right: 28px; color: var(--muted); font-size: 15px; line-height: 1.65; }
+
+  @media (max-width: 760px) {
+    .faq-inner { grid-template-columns: 1fr; gap: 20px; }
+  }
+</style>
