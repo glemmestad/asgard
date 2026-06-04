@@ -67,6 +67,8 @@ pub enum ProvisionError {
     RefNotFound(String),
     #[error("backend error: {0}")]
     Backend(String),
+    #[error("state conflict: {0}")]
+    Conflict(String),
     #[error("not permitted: {0}")]
     NotPermitted(String),
     #[error("request not found: {0}")]

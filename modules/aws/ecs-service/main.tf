@@ -300,6 +300,11 @@ resource "aws_ecs_service" "this" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  # Keep this fraction of tasks serving through a rolling deploy. With
+  # desired_count > 1 (safe on Postgres) capacity stays up while tasks are
+  # replaced; the default 100 matches ECS's own default for desired_count = 1.
+  deployment_minimum_healthy_percent = var.min_healthy_percent
+
   network_configuration {
     subnets          = var.subnet_ids
     security_groups  = local.task_sg

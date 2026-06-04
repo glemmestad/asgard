@@ -1,4 +1,4 @@
-use crate::{Db, StorageError};
+use crate::{Backend, Db, StorageError};
 
 /// Ordered (version, sql) pairs embedded at build time.
 const MIGRATIONS: &[(i64, &str)] = &[
@@ -26,21 +26,48 @@ const MIGRATIONS: &[(i64, &str)] = &[
     ),
     (17, include_str!("../migrations/0017_pat_suffix.sql")),
     (18, include_str!("../migrations/0018_tf_state.sql")),
+    (19, include_str!("../migrations/0019_leases.sql")),
+    (20, include_str!("../migrations/0020_tf_state_version.sql")),
+    (
+        21,
+        include_str!("../migrations/0021_cost_anomaly_unique.sql"),
+    ),
 ];
 
 pub async fn run(db: &Db) -> Result<(), StorageError> {
-    let pool = db.pool();
+    // Serialize concurrent boots against one Postgres so N replicas don't race
+    // check-then-DDL (ALTER ADD COLUMN is not idempotent, so the loser would
+    // error). pg_advisory_lock is session-scoped: hold one connection for the
+    // whole run and release it explicitly before the connection returns to the
+    // pool. No-op on SQLite, where a single process and single connection already
+    // serialize boots.
+    let mut conn = db.pool().acquire().await?;
+    if db.backend() == Backend::Postgres {
+        sqlx::query("SELECT pg_advisory_lock(8472)")
+            .execute(conn.as_mut())
+            .await?;
+    }
+    let result = apply_all(db, conn.as_mut()).await;
+    if db.backend() == Backend::Postgres {
+        let _ = sqlx::query("SELECT pg_advisory_unlock(8472)")
+            .execute(conn.as_mut())
+            .await;
+    }
+    result
+}
+
+async fn apply_all(db: &Db, conn: &mut sqlx::AnyConnection) -> Result<(), StorageError> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
     )
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
 
     for (version, sql) in MIGRATIONS {
         let already: Option<i64> =
             sqlx::query_scalar(&db.q("SELECT version FROM _migrations WHERE version = ?"))
                 .bind(*version)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *conn)
                 .await?;
         if already.is_some() {
             continue;
@@ -50,7 +77,7 @@ pub async fn run(db: &Db) -> Result<(), StorageError> {
         // multi-statement execution across backends. Our DDL contains no
         // semicolons inside literals, so a simple split is safe.
         for stmt in split_statements(sql) {
-            sqlx::query(&stmt).execute(pool).await.map_err(|e| {
+            sqlx::query(&stmt).execute(&mut *conn).await.map_err(|e| {
                 StorageError::Migration(format!("v{version} stmt failed: {e}\n--\n{stmt}"))
             })?;
         }
@@ -58,7 +85,7 @@ pub async fn run(db: &Db) -> Result<(), StorageError> {
         sqlx::query(&db.q("INSERT INTO _migrations (version, applied_at) VALUES (?, ?)"))
             .bind(*version)
             .bind(crate::now())
-            .execute(pool)
+            .execute(&mut *conn)
             .await?;
     }
     Ok(())

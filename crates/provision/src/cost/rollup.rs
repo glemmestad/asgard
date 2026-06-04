@@ -353,7 +353,10 @@ impl CostRollupRepo {
         sqlx::query(&self.db.q(
             "INSERT INTO cost_anomaly \
              (id, project_id, day, service, expected_usd, actual_usd, z_score, severity, created_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(project_id, day, service) DO UPDATE SET \
+             expected_usd = excluded.expected_usd, actual_usd = excluded.actual_usd, \
+             z_score = excluded.z_score, severity = excluded.severity, created_at = excluded.created_at",
         ))
         .bind(asgard_storage::new_uid())
         .bind(&a.project_id)

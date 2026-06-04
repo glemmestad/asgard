@@ -33,7 +33,7 @@ use asgard_registry::{
     ClassificationRequirements, GovernanceConfig, GroupAllowlist, GroupEntry, ProjectRegistry,
     RegistrationPolicy, ReviewConfig,
 };
-use asgard_storage::Db;
+use asgard_storage::{leases::Leases, Db};
 use asgard_workflow::WorkflowEngine;
 
 #[derive(RustEmbed)]
@@ -180,6 +180,11 @@ struct Config {
     sources: Vec<SourceCfg>,
     #[serde(default)]
     reconcile_secs: Option<u64>,
+    /// Lease TTL (seconds) for cross-instance coordination — the leader-leased
+    /// background loops and the per-resource Terraform lock. Absent = 600. Only
+    /// relevant when running more than one replica (Postgres).
+    #[serde(default)]
+    lease_ttl_secs: Option<u64>,
     /// Operator-configured cost-centers a project may register against. Empty =
     /// open mode (any group accepted, recorded as-is).
     #[serde(default)]
@@ -573,7 +578,9 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     .with_requirements(build_requirements(&config))
     .with_review_config(build_review_config(&config))
     .with_governance_config(build_governance_config(&config));
-    let provision = build_provision(core.db.clone(), &config);
+    let lease_ttl = config.lease_ttl_secs.unwrap_or(600) as i64;
+    let leases = Leases::new(core.db.clone(), asgard_storage::new_uid());
+    let provision = build_provision(core.db.clone(), &config, Some((leases.clone(), lease_ttl)));
     maybe_seed_admin(&core.identity).await;
     if let Err(e) = registry.seed_knowledge().await {
         tracing::warn!("seeding starter guidance/recipes failed: {e}");
@@ -625,10 +632,18 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             config.sources.clone(),
             git_token.clone(),
         );
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                reconcile_all(&cat, &reg, &srcs, tok.clone()).await;
+                if lease
+                    .try_acquire("loop:reconcile", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    reconcile_all(&cat, &reg, &srcs, tok.clone()).await;
+                    let _ = lease.release("loop:reconcile").await;
+                }
             }
         });
     }
@@ -637,13 +652,21 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     {
         let prov = state.provision.clone();
         let secs = config.reconcile_secs.unwrap_or(120).max(60);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                match prov.rotate_due_secrets().await {
-                    Ok(n) if n > 0 => tracing::info!("rotated {n} due secret(s)"),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("secret rotation sweep failed: {e}"),
+                if lease
+                    .try_acquire("loop:rotation", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    match prov.rotate_due_secrets().await {
+                        Ok(n) if n > 0 => tracing::info!("rotated {n} due secret(s)"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("secret rotation sweep failed: {e}"),
+                    }
+                    let _ = lease.release("loop:rotation").await;
                 }
             }
         });
@@ -660,22 +683,30 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             .and_then(|p| p.rollup_secs)
             .unwrap_or(3600)
             .max(1);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
-                let day = chrono::Utc::now()
-                    .date_naive()
-                    .format("%Y-%m-%d")
-                    .to_string();
-                match prov.roll_up_costs(&reg, &day).await {
-                    Ok(s) => tracing::info!(
-                        "cost rollup {}: {} project(s), {} row(s), {} forecast(s), {} anomaly(ies)",
-                        s.day,
-                        s.projects,
-                        s.rows,
-                        s.forecasts,
-                        s.anomalies
-                    ),
-                    Err(e) => tracing::warn!("cost rollup failed: {e}"),
+                if lease
+                    .try_acquire("loop:rollup", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    let day = chrono::Utc::now()
+                        .date_naive()
+                        .format("%Y-%m-%d")
+                        .to_string();
+                    match prov.roll_up_costs(&reg, &day).await {
+                        Ok(s) => tracing::info!(
+                            "cost rollup {}: {} project(s), {} row(s), {} forecast(s), {} anomaly(ies)",
+                            s.day,
+                            s.projects,
+                            s.rows,
+                            s.forecasts,
+                            s.anomalies
+                        ),
+                        Err(e) => tracing::warn!("cost rollup failed: {e}"),
+                    }
+                    let _ = lease.release("loop:rollup").await;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
             }
@@ -687,17 +718,25 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     {
         let reg = state.registry.clone();
         let secs = config.review.sweep_secs.unwrap_or(86_400).max(1);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                match reg.sweep("system").await {
-                    Ok(s) => tracing::info!(
-                        "review sweep: {} checked, {} newly expired, {} lapsed exception(s)",
-                        s.checked,
-                        s.newly_expired.len(),
-                        s.expired_exceptions.len()
-                    ),
-                    Err(e) => tracing::warn!("review sweep failed: {e}"),
+                if lease
+                    .try_acquire("loop:review", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    match reg.sweep("system").await {
+                        Ok(s) => tracing::info!(
+                            "review sweep: {} checked, {} newly expired, {} lapsed exception(s)",
+                            s.checked,
+                            s.newly_expired.len(),
+                            s.expired_exceptions.len()
+                        ),
+                        Err(e) => tracing::warn!("review sweep failed: {e}"),
+                    }
+                    let _ = lease.release("loop:review").await;
                 }
             }
         });
@@ -781,7 +820,7 @@ async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Re
     .with_requirements(build_requirements(&config))
     .with_review_config(build_review_config(&config))
     .with_governance_config(build_governance_config(&config));
-    let provision = build_provision(core.db.clone(), &config);
+    let provision = build_provision(core.db.clone(), &config, None);
     let project = std::env::var("ASGARD_PROJECT").ok();
     let server = asgard_mcp::AsgardMcp::new(
         core.catalog,
@@ -830,7 +869,7 @@ fn build_governance_config(config: &Config) -> GovernanceConfig {
 /// gateway cost source, the builtin secret store, plus the `terraform` connector
 /// (the universal provisioning path, incl. all AWS resources), the AWS cost
 /// sources, and the guardrails the operator configures in asgard.yaml.
-fn build_provision(db: Db, config: &Config) -> ProvisionService {
+fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> ProvisionService {
     let mut svc = ProvisionService::new(ProvisionRepo::new(db.clone()));
     // The exec connector is harmless without a manifest command, so it's always
     // available; gateway spend is always a cost source.
@@ -921,13 +960,12 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
             db.clone(),
             master_key.unwrap_or(DEV_SECRET_KEY),
         ));
-        svc.register_backend(
-            "terraform",
-            Arc::new(
-                TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
-                    .with_state(tf_state),
-            ),
-        );
+        let mut connector = TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
+            .with_state(tf_state);
+        if let Some((leases, ttl)) = &leases {
+            connector = connector.with_leases(leases.clone(), *ttl);
+        }
+        svc.register_backend("terraform", Arc::new(connector));
         tracing::info!(
             "terraform connector registered (modules={}, durable state in DB)",
             tf.modules_dir.display()

@@ -50,7 +50,7 @@ groups:
 requirements, review windows, the `maintainer_min` metric threshold — is optional
 with policy-doc defaults; see the operator guide's `asgard.yaml` reference.)
 
-## Step 3 — Boot (single replica)
+## Step 3 — Boot
 
 ```bash
 ASGARD_DATABASE_URL="$DB" \
@@ -58,7 +58,9 @@ ASGARD_SECRET_KEY="$ASGARD_SECRET_KEY" \
 ASGARD_ADMIN_PASSWORD="${ASGARD_ADMIN_PASSWORD:-}" \
 asgard serve --bind 0.0.0.0:8080 --config ./asgard.yaml
 ```
-Run exactly **one** replica (the background rollup/rotation loops assume a single writer).
+On **Postgres**, `desired_count > 1` is safe — the background loops are leader-leased
+and Terraform applies take per-resource locks (failover bounded by `lease_ttl_secs`,
+default 600s). On **SQLite**, run exactly one replica (a local file with one writer).
 
 **Verify:** `curl -fsS http://localhost:8080/healthz` returns `ok` (liveness) and
 `curl -fsS http://localhost:8080/readyz` returns `ready` (DB reachable). If
@@ -202,8 +204,8 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
      "grants": { "secrets_read": ["<DB_SECRET_ARN>", "<KEY_SECRET_ARN>"], "kms_decrypt": ["<KMS_ARN>"] }
    }
    ```
-   Run exactly one replica (`desired_count: 1`) — the rollup/rotation loops assume a
-   single writer.
+   `desired_count: 1` is the safe default; on Postgres you can raise it — the loops
+   are leader-leased and provisioning takes per-resource locks.
 
    **Verify:** the request reaches `fulfilled`; `curl -fsS "$URL/readyz"` returns
    `ready` over https; the ECS target is `healthy`; the task-role policy contains

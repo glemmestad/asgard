@@ -186,14 +186,16 @@ points to; the same schema works on SQLite and Postgres.
 > uses. The database is the single system of record: back it up and you've backed up
 > everything — projects, keys, cost, and the encrypted secret store.
 
-> **Run one replica — this is a hard invariant, not a suggestion.** The cost-rollup
-> and secret-rotation background loops assume a single writer and Asgard does **not**
-> do leader election (by design). There is no guard against running two: an
-> accidental scale-out (`desired_count: 2`, an HPA, a rolling deploy that overlaps
-> old+new) silently **double-counts cost deltas and races secret rotation** — the
-> data corrupts quietly, with no error. Pin `desired_count: 1`, disable autoscaling
-> on the service, and scale vertically. The request path is stateless; only these
-> background loops require the single-writer guarantee.
+> **Scaling — `desired_count > 1` is safe on Postgres.** The background loops (cost
+> rollup, secret rotation, catalog reconcile, review sweep) are leader-leased: each
+> tick runs on whichever replica wins a short DB lease, so exactly one replica does
+> it. Terraform applies take a per-resource lease plus an optimistic version check on
+> the stored state, so two replicas can't race one resource. Failover is bounded by
+> the lease TTL (`lease_ttl_secs`, default 600s), and lease correctness assumes
+> replica clocks are within a fraction of the TTL of each other (true under NTP). Run
+> as many replicas as you like against one **Postgres**; the request path is
+> stateless. **SQLite stays single-process** — it's a local file with one writer, so
+> keep `desired_count: 1` there.
 
 ## Step 2 — The master key
 
@@ -435,8 +437,8 @@ the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
 > Postgres as everything else), encrypted with the master key. So `work_dir` is
 > just scratch and may be ephemeral — back up the database and you've backed up
 > your infrastructure state along with everything else. No S3, no remote backend,
-> no extra dependency. (The single-replica invariant keeps the single writer
-> honest; see "Run one replica".)
+> no extra dependency. (Each apply takes a per-resource lease and a version check on
+> the stored state, so multiple replicas can't corrupt it; see "Scaling".)
 
 **Config file (full control).** Or arm it from `asgard.yaml` when you want the other
 provisioning knobs (auto-approve, services overlay, AWS cost sources) in one place:

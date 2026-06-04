@@ -21,6 +21,8 @@ cleanup() {
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
   [[ -n "${SERVER2_PID:-}" ]] && kill "$SERVER2_PID" 2>/dev/null
   [[ -n "${SERVER3_PID:-}" ]] && kill "$SERVER3_PID" 2>/dev/null
+  [[ -n "${SERVER4_PID:-}" ]] && kill "$SERVER4_PID" 2>/dev/null
+  [[ -n "${SERVER5_PID:-}" ]] && kill "$SERVER5_PID" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -81,6 +83,16 @@ curl -fsS "$BASE/api/auth/me" -o "$WORK/me.json" 2>/dev/null \
   && grep -q '"username":"admin"' "$WORK/me.json" \
   && ok "dev-insecure: /api/auth/me returns synthetic admin (UI skips login)" \
   || bad "dev-insecure /api/auth/me did not return a synthetic admin"
+
+# 0c. Background loops are leader-leased: a tick runs only when its cross-instance
+# DB lease is acquired. The cost-rollup loop logging at startup proves acquisition
+# works on this backend — on Postgres this exercises the conditional-upsert lease
+# SQL end-to-end (the loop swallows errors, so a broken lease would silently skip
+# and this line would never appear).
+for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server.log" && break; sleep 0.2; done
+grep -q "cost rollup" "$WORK/server.log" \
+  && ok "leader-leased rollup loop ran (cross-instance lease acquired)" \
+  || bad "cost-rollup loop did not run — lease acquisition may have failed"
 
 # 1. Catalog ingestion: both agents present.
 curl -fsS "$BASE/api/catalog/entities?kind=Agent" -o "$WORK/agents.json"
@@ -743,6 +755,26 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE4/api/auth/login" -H
   -d '{"username":"admin","password":"e2e-admin-pw"}')
 [[ "$CODE" == "403" ]] && ok "disable-local-login: POST /api/auth/login is refused (403)" || bad "expected 403 for local login when disabled, got $CODE"
 kill "$SERVER4_PID" 2>/dev/null
+
+# 23. Horizontal scale-out (Postgres only): a second replica boots against the
+# same database and serves, proving N>1 is safe — the leader-leased loops and the
+# migration advisory lock coexist on a shared DB. SQLite is single-process by
+# design (one file, one writer), so this is skipped there.
+if [[ "$DB_URL" == postgres* ]]; then
+  PORT5=$((PORT+4)); BASE5="http://127.0.0.1:${PORT5}"
+  ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="$DB_URL" \
+    "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/asgard.yaml" >"$WORK/server5.log" 2>&1 &
+  SERVER5_PID=$!
+  for _ in $(seq 1 50); do curl -fsS "$BASE5/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+  curl -fsS "$BASE5/readyz" >/dev/null 2>&1 \
+    && ok "second replica is ready against the same Postgres (N>1 safe)" \
+    || { bad "second replica did not become ready on shared Postgres"; cat "$WORK/server5.log"; }
+  for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server5.log" && break; sleep 0.2; done
+  grep -q "cost rollup" "$WORK/server5.log" \
+    && ok "second replica's leased loops run against the shared DB" \
+    || bad "second replica's rollup loop did not run on shared DB"
+  kill "$SERVER5_PID" 2>/dev/null
+fi
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [[ "$FAIL" == "0" ]]

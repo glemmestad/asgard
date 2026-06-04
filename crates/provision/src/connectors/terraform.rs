@@ -21,7 +21,42 @@ use serde_json::{Map, Value};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
+use asgard_storage::leases::Leases;
+
 use crate::{Plan, ProvisionError, ProvisionRequest, Provisioned, Provisioner, TfStateStore};
+
+/// Renews a held lease in the background while a long terraform run executes, and
+/// stops on drop. We never block on an async release in `Drop`: a graceful path
+/// releases the lease explicitly, and a crash leaves it to expire by TTL.
+struct RenewGuard {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl RenewGuard {
+    fn spawn(leases: Leases, name: String, ttl_secs: i64) -> Self {
+        let handle = tokio::spawn(async move {
+            let period = std::time::Duration::from_secs((ttl_secs / 3).max(1) as u64);
+            loop {
+                tokio::time::sleep(period).await;
+                if !matches!(leases.renew(&name, ttl_secs).await, Ok(true)) {
+                    // Lost the lease (paused past the TTL) or a DB hiccup: stop
+                    // renewing. The tf_state version CAS still guards the persist.
+                    tracing::error!(
+                        "tf lease {name} renew failed or lost; relying on state version CAS"
+                    );
+                    break;
+                }
+            }
+        });
+        RenewGuard { handle }
+    }
+}
+
+impl Drop for RenewGuard {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
 
 pub struct TerraformConnector {
     bin: String,
@@ -32,10 +67,17 @@ pub struct TerraformConnector {
     /// survives an ephemeral `work_root`. `None` keeps state local to `work_root`
     /// (the zero-dependency default used in tests).
     state: Option<Arc<TfStateStore>>,
-    /// Per-state-id locks: serialize hydrate→run→persist for one resource so
-    /// concurrent requests can't clobber its state. Asgard already mandates a
-    /// single replica; this guards the in-process case.
+    /// Per-state-id locks: serialize hydrate→run→persist for one resource within
+    /// this process. The cross-instance `leases` lock below then only ever has to
+    /// contend across processes.
     locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Cross-instance lock so two replicas can't run an apply against one
+    /// resource's state at once. `None` keeps the in-process lock only (MCP stdio
+    /// and tests, which are never a server replica).
+    leases: Option<Leases>,
+    /// TTL for the per-resource lease, renewed at a third of this while an apply
+    /// runs (so a multi-minute apply keeps the lock) and freed by expiry on crash.
+    tf_lease_ttl: i64,
 }
 
 impl TerraformConnector {
@@ -46,6 +88,8 @@ impl TerraformConnector {
             work_root,
             state: None,
             locks: Mutex::new(HashMap::new()),
+            leases: None,
+            tf_lease_ttl: 600,
         }
     }
 
@@ -54,6 +98,47 @@ impl TerraformConnector {
     pub fn with_state(mut self, store: Arc<TfStateStore>) -> Self {
         self.state = Some(store);
         self
+    }
+
+    /// Attach a cross-instance lease so multiple replicas serialize applies for
+    /// the same resource (on top of the in-process lock). `ttl_secs` is the lease
+    /// lifetime, renewed while an apply runs.
+    pub fn with_leases(mut self, leases: Leases, ttl_secs: i64) -> Self {
+        self.leases = Some(leases);
+        self.tf_lease_ttl = ttl_secs;
+        self
+    }
+
+    /// Acquire the cross-instance lease for `id` and return a guard that renews it
+    /// until dropped. `Ok(None)` when no leases are wired. Errors if another
+    /// replica holds it (retryable — the request stays Approved).
+    async fn acquire_remote(&self, id: &str) -> Result<Option<RenewGuard>, ProvisionError> {
+        let Some(leases) = &self.leases else {
+            return Ok(None);
+        };
+        let name = format!("tf:{id}");
+        let held = leases
+            .try_acquire(&name, self.tf_lease_ttl)
+            .await
+            .map_err(|e| ProvisionError::Backend(format!("tf lease: {e}")))?;
+        if !held {
+            return Err(ProvisionError::Conflict(format!(
+                "resource {id} is being provisioned by another instance; retry shortly"
+            )));
+        }
+        Ok(Some(RenewGuard::spawn(
+            leases.clone(),
+            name,
+            self.tf_lease_ttl,
+        )))
+    }
+
+    /// Release the cross-instance lease for `id` so the next acquirer needn't wait
+    /// out the TTL (no-op without leases).
+    async fn release_remote(&self, id: &str) {
+        if let Some(leases) = &self.leases {
+            let _ = leases.release(&format!("tf:{id}")).await;
+        }
     }
 
     fn state_id(req: &ProvisionRequest) -> String {
@@ -70,27 +155,45 @@ impl TerraformConnector {
         m.lock_owned().await
     }
 
-    /// Write the DB-held state into the working dir before a run (no-op without a
-    /// store or any stored state).
-    async fn hydrate(&self, id: &str, wd: &Path) -> Result<(), ProvisionError> {
+    /// Write the DB-held state into the working dir before a run and return its
+    /// version for the persist-time CAS (no-op / `None` without a store or any
+    /// stored state).
+    async fn hydrate(&self, id: &str, wd: &Path) -> Result<Option<i64>, ProvisionError> {
         let Some(store) = &self.state else {
-            return Ok(());
+            return Ok(None);
         };
-        if let Some(bytes) = store.load(id).await? {
+        if let Some((bytes, version)) = store.load(id).await? {
             std::fs::write(wd.join("terraform.tfstate"), bytes)
                 .map_err(|e| ProvisionError::Backend(format!("write tf state: {e}")))?;
+            Ok(Some(version))
+        } else {
+            Ok(None)
         }
-        Ok(())
     }
 
-    /// Snapshot the working dir's state back into the DB after a run (no-op
-    /// without a store; an absent state file is treated as empty and skipped).
-    async fn persist(&self, id: &str, wd: &Path) -> Result<(), ProvisionError> {
+    /// Snapshot the working dir's state back into the DB after a run, as a
+    /// compare-and-swap on the `expected` version hydrate returned (no-op without a
+    /// store; an absent state file is treated as empty and skipped). A `Conflict`
+    /// means another instance advanced the state — we log loudly and write nothing.
+    async fn persist(
+        &self,
+        id: &str,
+        wd: &Path,
+        expected: Option<i64>,
+    ) -> Result<(), ProvisionError> {
         let Some(store) = &self.state else {
             return Ok(());
         };
         match std::fs::read(wd.join("terraform.tfstate")) {
-            Ok(bytes) => store.save(id, &bytes).await,
+            Ok(bytes) => match store.save_cas(id, &bytes, expected).await {
+                Err(ProvisionError::Conflict(msg)) => {
+                    tracing::error!(
+                        "tf state {id} not persisted: {msg}; another instance advanced it (local apply may be drift)"
+                    );
+                    Err(ProvisionError::Conflict(msg))
+                }
+                other => other,
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(ProvisionError::Backend(format!("read tf state: {e}"))),
         }
@@ -103,7 +206,7 @@ impl TerraformConnector {
         req: &ProvisionRequest,
         plan: &Plan,
         overrides: &Value,
-    ) -> Result<PathBuf, ProvisionError> {
+    ) -> Result<(PathBuf, Option<i64>), ProvisionError> {
         let module = self.module_path(&req.config)?;
         let wd = self.work_dir(req);
         copy_module(&module, &wd)?;
@@ -113,10 +216,10 @@ impl TerraformConnector {
             serde_json::to_vec_pretty(&vars).unwrap_or_default(),
         )
         .map_err(|e| ProvisionError::Backend(format!("write tfvars: {e}")))?;
-        self.hydrate(&Self::state_id(req), &wd).await?;
+        let version = self.hydrate(&Self::state_id(req), &wd).await?;
         self.run(&wd, &["init", "-input=false", "-no-color"])
             .await?;
-        Ok(wd)
+        Ok((wd, version))
     }
 
     fn module_path(&self, config: &Value) -> Result<PathBuf, ProvisionError> {
@@ -141,10 +244,8 @@ impl TerraformConnector {
             .join(&req.name)
     }
 
-    /// Materialize the working dir and `terraform apply` the module with the spec
-    /// tfvars layered with `overrides` (empty for a normal apply; the suspend vars
-    /// for a stop). Captures `output -json`. The same path provisions, suspends,
-    /// and resumes — only the override layer differs.
+    /// Take both locks (in-process, then cross-instance) around an apply and
+    /// release the cross-instance lease afterwards on every path.
     async fn apply_with(
         &self,
         req: &ProvisionRequest,
@@ -153,7 +254,25 @@ impl TerraformConnector {
     ) -> Result<Provisioned, ProvisionError> {
         let id = Self::state_id(req);
         let _guard = self.lock_for(&id).await;
-        let wd = self.prepare(req, plan, overrides).await?;
+        let renew = self.acquire_remote(&id).await?;
+        let result = self.apply_inner(req, plan, overrides, &id).await;
+        drop(renew);
+        self.release_remote(&id).await;
+        result
+    }
+
+    /// Materialize the working dir and `terraform apply` the module with the spec
+    /// tfvars layered with `overrides` (empty for a normal apply; the suspend vars
+    /// for a stop). Captures `output -json`. The same path provisions, suspends,
+    /// and resumes — only the override layer differs.
+    async fn apply_inner(
+        &self,
+        req: &ProvisionRequest,
+        plan: &Plan,
+        overrides: &Value,
+        id: &str,
+    ) -> Result<Provisioned, ProvisionError> {
+        let (wd, version) = self.prepare(req, plan, overrides).await?;
         let applied = self
             .run(
                 &wd,
@@ -163,7 +282,7 @@ impl TerraformConnector {
         // Persist whatever state exists — even after a partial-apply failure —
         // before surfacing the apply error, or we'd lose track of created
         // resources and orphan them.
-        if let Err(e) = self.persist(&id, &wd).await {
+        if let Err(e) = self.persist(id, &wd, version).await {
             applied?;
             return Err(e);
         }
@@ -187,6 +306,34 @@ impl TerraformConnector {
             resource_ids: vec![],
             sensitive_keys,
         })
+    }
+
+    /// Rebuild the working dir, `terraform destroy`, and drop the stored state.
+    async fn destroy_inner(&self, req: &ProvisionRequest, id: &str) -> Result<(), ProvisionError> {
+        let has_stored = match &self.state {
+            Some(s) => s.exists(id).await?,
+            None => false,
+        };
+        // Nothing was ever provisioned: no local working dir and no stored state.
+        if !self.work_dir(req).exists() && !has_stored {
+            return Ok(());
+        }
+        // Rebuild the working dir from the module + hydrated state — after a
+        // restart the dir is gone but the state lives in the DB.
+        let plan = self.plan(req).await?;
+        let (wd, version) = self.prepare(req, &plan, &Value::Null).await?;
+        let destroyed = self
+            .run(
+                &wd,
+                &["destroy", "-auto-approve", "-input=false", "-no-color"],
+            )
+            .await;
+        let _ = self.persist(id, &wd, version).await;
+        destroyed?;
+        if let Some(s) = &self.state {
+            let _ = s.delete(id).await;
+        }
+        Ok(())
     }
 
     async fn run(&self, dir: &Path, args: &[&str]) -> Result<std::process::Output, ProvisionError> {
@@ -299,30 +446,11 @@ impl Provisioner for TerraformConnector {
     ) -> Result<(), ProvisionError> {
         let id = Self::state_id(req);
         let _guard = self.lock_for(&id).await;
-        let has_stored = match &self.state {
-            Some(s) => s.exists(&id).await?,
-            None => false,
-        };
-        // Nothing was ever provisioned: no local working dir and no stored state.
-        if !self.work_dir(req).exists() && !has_stored {
-            return Ok(());
-        }
-        // Rebuild the working dir from the module + hydrated state — after a
-        // restart the dir is gone but the state lives in the DB.
-        let plan = self.plan(req).await?;
-        let wd = self.prepare(req, &plan, &Value::Null).await?;
-        let destroyed = self
-            .run(
-                &wd,
-                &["destroy", "-auto-approve", "-input=false", "-no-color"],
-            )
-            .await;
-        let _ = self.persist(&id, &wd).await;
-        destroyed?;
-        if let Some(s) = &self.state {
-            let _ = s.delete(&id).await;
-        }
-        Ok(())
+        let renew = self.acquire_remote(&id).await?;
+        let result = self.destroy_inner(req, &id).await;
+        drop(renew);
+        self.release_remote(&id).await;
+        result
     }
 
     /// Suspend by re-applying the module with `config.stop_tfvars` layered over
@@ -424,16 +552,45 @@ mod tests {
         std::fs::write(wd.join("terraform.tfstate"), b"{\"serial\":7}").unwrap();
 
         // Snapshot into the DB, then simulate compute replacement: wipe the dir.
-        conn.persist(&id, &wd).await.unwrap();
+        conn.persist(&id, &wd, None).await.unwrap();
         std::fs::remove_dir_all(&wd).unwrap();
         std::fs::create_dir_all(&wd).unwrap();
         assert!(!wd.join("terraform.tfstate").exists());
 
         // Re-hydrate from the DB restores the exact state.
-        conn.hydrate(&id, &wd).await.unwrap();
+        assert_eq!(conn.hydrate(&id, &wd).await.unwrap(), Some(1));
         assert_eq!(
             std::fs::read(wd.join("terraform.tfstate")).unwrap(),
             b"{\"serial\":7}"
         );
+    }
+
+    /// When another replica holds a resource's lease, this connector refuses to
+    /// apply rather than racing its state — no terraform needed, the lock is
+    /// checked before the working dir is touched.
+    #[tokio::test]
+    async fn cross_instance_lease_blocks_concurrent_apply() {
+        use asgard_storage::leases::Leases;
+        use asgard_storage::Db;
+
+        let dbpath =
+            std::env::temp_dir().join(format!("asgard-tflease-{}.db", asgard_storage::new_uid()));
+        let db = Db::connect(&format!("sqlite://{}", dbpath.display()))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+
+        let r = req();
+        let id = TerraformConnector::state_id(&r);
+        let other = Leases::new(db.clone(), "instance-a");
+        assert!(other.try_acquire(&format!("tf:{id}"), 60).await.unwrap());
+
+        let conn =
+            TerraformConnector::new("terraform", PathBuf::from("/modules"), std::env::temp_dir())
+                .with_leases(Leases::new(db.clone(), "instance-b"), 60);
+        assert!(matches!(
+            conn.apply(&r, &plan()).await,
+            Err(ProvisionError::Conflict(_))
+        ));
     }
 }

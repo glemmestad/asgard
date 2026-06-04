@@ -48,6 +48,11 @@ variable "desired_count" {
   default = 1
 }
 
+variable "min_healthy_percent" {
+  type    = number
+  default = 100
+}
+
 variable "container_port" {
   type    = number
   default = 8080

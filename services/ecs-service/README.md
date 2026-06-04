@@ -38,7 +38,8 @@ The platform never creates a VPC. Supply an existing one:
 | `subnet_ids` | yes | | list of subnet ids |
 | `security_group_ids` | no | `[]` | extra task SGs; empty ⇒ module creates one |
 | `cpu` / `memory` | no | `512` / `1024` | Fargate sizes (strings) |
-| `desired_count` | no | `1` | task count |
+| `desired_count` | no | `1` | task count (safe to raise above 1 on Postgres) |
+| `min_healthy_percent` | no | `100` | min % of tasks kept serving during a rolling deploy |
 | `container_port` | no | `8080` | app listen port |
 | `health_path` | no | `/` | ALB health check path |
 | `env` | no | `{}` | plain env map |
