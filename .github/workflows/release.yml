@@ -3,10 +3,33 @@ name: Release
 on:
   push:
     branches: [main]
-    tags: ['v*']
 
 jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      published: ${{ steps.semrel.outputs.new_release_published }}
+      version: ${{ steps.semrel.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: semrel
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   image:
+    needs: release
+    if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -27,9 +50,9 @@ jobs:
         with:
           images: ghcr.io/glemmestad/asgard
           tags: |
-            type=ref,event=tag
+            type=raw,value=v${{ needs.release.outputs.version }}
+            type=raw,value=latest
             type=sha,format=short
-            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
 
       - uses: docker/build-push-action@v6
         with:
