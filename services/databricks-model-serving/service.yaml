@@ -16,7 +16,7 @@ required_fields: [name, entity_name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/databricks/model-serving
+    module: databricks/model-serving
     cloud: databricks
 cost:
   model: usage

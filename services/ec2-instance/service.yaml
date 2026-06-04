@@ -10,7 +10,7 @@ required_fields: [name, instance_type]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/ec2-instance
+    module: aws/ec2-instance
     cloud: aws
     # Kill suspends the instance to halt charges by re-applying it stopped; un-kill
     # re-applies the original spec (running).

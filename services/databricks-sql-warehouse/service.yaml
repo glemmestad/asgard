@@ -16,7 +16,7 @@ required_fields: [name, cluster_size]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/databricks/sql-warehouse
+    module: databricks/sql-warehouse
     cloud: databricks
 cost:
   model: usage

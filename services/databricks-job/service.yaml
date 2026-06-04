@@ -14,7 +14,7 @@ required_fields: [name, notebook_path]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/databricks/job
+    module: databricks/job
     cloud: databricks
 cost:
   model: usage
