@@ -356,12 +356,10 @@ struct TargetCfg {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct AutoApproveCfg {
+    /// classification → monthly self-service ceiling (USD). A classification
+    /// absent from the map never auto-approves.
     #[serde(default)]
-    classifications: Vec<String>,
-    #[serde(default)]
-    max_resource_monthly_usd: f64,
-    #[serde(default)]
-    max_project_monthly_usd: f64,
+    ceilings: std::collections::BTreeMap<String, f64>,
 }
 
 /// AWS **cost** configuration (Cost Explorer reads). AWS *provisioning* is the
@@ -1017,19 +1015,17 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
         p.forecast_window_days.unwrap_or(0),
         p.anomaly_z.unwrap_or(0.0),
     );
-    if let Some(aa) = &p.auto_approve {
-        let mut auto = AutoApprovePolicy::default();
-        if !aa.classifications.is_empty() {
-            auto.classifications = aa.classifications.clone();
-        }
-        if aa.max_resource_monthly_usd > 0.0 {
-            auto.max_resource_monthly_usd = aa.max_resource_monthly_usd;
-        }
-        if aa.max_project_monthly_usd > 0.0 {
-            auto.max_project_monthly_usd = aa.max_project_monthly_usd;
-        }
-        svc.set_auto_approve(auto);
+    // Self-service ceilings: defaults, overridden by an asgard.yaml block, then by
+    // ASGARD_AUTO_APPROVE_CEILINGS (per-tier merge) so an image-only deploy can
+    // tune them without a config file or a recompile.
+    let mut auto = AutoApprovePolicy::default();
+    if let Some(aa) = p.auto_approve.as_ref().filter(|aa| !aa.ceilings.is_empty()) {
+        auto.ceilings = aa.ceilings.clone();
     }
+    if let Some(env_ceilings) = auto_approve_ceilings_from_env() {
+        auto.ceilings.extend(env_ceilings);
+    }
+    svc.set_auto_approve(auto);
     // AWS cost sources (provisioning is handled by the terraform connector). The
     // Cost Explorer reads are independent of any provisioning arming.
     if let Some(aws) = &p.aws {
@@ -1061,6 +1057,23 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
 /// `ASGARD_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
 /// to anything not listed is refused). A config-file `provisioning:` block, when
 /// present, takes precedence over this entirely.
+/// `ASGARD_AUTO_APPROVE_CEILINGS` is a comma-separated `classification=usd` list,
+/// e.g. `poc=500,light-operational=2500`. Merged onto the defaults per tier.
+fn auto_approve_ceilings_from_env() -> Option<std::collections::BTreeMap<String, f64>> {
+    let raw = std::env::var("ASGARD_AUTO_APPROVE_CEILINGS").ok()?;
+    let map: std::collections::BTreeMap<String, f64> = raw
+        .split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .filter_map(|(k, v)| {
+            v.trim()
+                .parse::<f64>()
+                .ok()
+                .map(|n| (k.trim().to_string(), n))
+        })
+        .collect();
+    (!map.is_empty()).then_some(map)
+}
+
 fn provisioning_from_env() -> Option<ProvisioningCfg> {
     let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok()?;
     Some(provisioning_cfg_from_parts(

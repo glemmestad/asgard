@@ -21,7 +21,7 @@ pub const STATE_LOSS_POSTURES: &[&str] = &["stateless", "recoverable", "durable-
 /// The evidence record, flattened into the project intake/record wire types so
 /// the JSON stays a flat field set (matching the schema and UI) while Rust keeps
 /// one struct. Multi-value fields persist as JSON-text columns.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 pub struct Evidence {
     #[serde(default)]

@@ -677,19 +677,58 @@ async fn get_project(
         .ok_or_else(|| ApiError::NotFound(format!("project {project_id}")))
 }
 
+#[derive(Deserialize)]
+struct UpdateProjectBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    budget_usd: Option<f64>,
+    #[serde(flatten)]
+    evidence: asgard_registry::Evidence,
+}
+
 async fn update_project(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
-    Json(evidence): Json<asgard_registry::Evidence>,
-) -> Result<Json<asgard_registry::Registration>, ApiError> {
+    Json(b): Json<UpdateProjectBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let user = require_project_authority(&st, &headers, &project_id).await?;
     let email = user.email.unwrap_or_default();
     let actor = format!("user:default/{}", email.split('@').next().unwrap_or("api"));
-    Ok(Json(
+    // Evidence is PUT, but only when supplied — a name/budget-only edit keeps it.
+    if b.evidence != asgard_registry::Evidence::default() {
         st.registry
-            .update_evidence(&project_id, evidence, &actor)
-            .await?,
+            .update_evidence(&project_id, b.evidence, &actor)
+            .await?;
+    }
+    let ceiling = st
+        .registry
+        .get(&project_id)
+        .await?
+        .and_then(|r| st.provision.auto_approve_ceiling(&r.classification));
+    let (reg, budget) = st
+        .registry
+        .update_project(
+            &st.workflow,
+            &project_id,
+            asgard_registry::ProjectUpdate {
+                name: b.name,
+                description: b.description,
+                budget_usd: b.budget_usd,
+            },
+            ceiling,
+            &actor,
+        )
+        .await?;
+    let budget_review = match budget {
+        asgard_registry::BudgetOutcome::PendingReview(req) => Some(req),
+        _ => None,
+    };
+    Ok(Json(
+        serde_json::json!({ "project": reg, "budget_review": budget_review }),
     ))
 }
 
@@ -1819,6 +1858,12 @@ async fn fulfill_request(
         let r = st
             .registry
             .fulfill_promotion(&st.workflow, &id, &b.actor)
+            .await?;
+        Ok(Json(serde_json::to_value(r).unwrap_or_default()))
+    } else if req.kind == "budget" {
+        let r = st
+            .registry
+            .fulfill_budget(&st.workflow, &id, &b.actor)
             .await?;
         Ok(Json(serde_json::to_value(r).unwrap_or_default()))
     } else {

@@ -421,13 +421,21 @@ the `terraform` connector registers on boot:
 ```bash
 ASGARD_TF_MODULES_DIR=/modules                       # bundled in the official image
 ASGARD_TF_WORK_DIR=/data/asgard-tf                   # scratch only; can be ephemeral
-ASGARD_TF_ALLOWED=auth0:your-tenant                  # cloud:account allowlist
+# ASGARD_TF_ALLOWED=aws:1234567890                   # OPTIONAL multi-account guardrail
 ```
 
-`ASGARD_TF_ALLOWED` is a `cloud:account` allowlist (the *target*, not a service id —
-services are gated by the catalog). The **first entry also becomes the default
-target**, so a single-cloud deploy provisions without each `request_resource`
-naming `cloud`/`account`. Use the form `auth0:<tenant>` (or `aws:<account-id>`).
+`ASGARD_TF_MODULES_DIR` is the switch that arms real provisioning — set it and the
+`terraform` connector registers; omit it and every terraform-backed service silently
+falls back to the dry-run **stub** (a "fulfilled" request that built nothing). The
+provider credentials Terraform uses are inherited from Asgard's own environment (the
+IAM role / instance profile it runs under, plus `AUTH0_*`, etc.).
+
+`ASGARD_TF_ALLOWED` is an **optional** `cloud:account` allowlist — a multi-account
+*hardening* guardrail, not a per-resource list and not required to provision. On a
+single-account deploy the IAM role Asgard runs under is the real boundary; leave this
+unset and it provisions into the ambient account. Set it (`aws:<account-id>`,
+`auth0:<tenant>`) only to constrain which accounts Asgard may target when it can
+assume into several; the first entry is the default target.
 
 This is the recommended path for a container deploy — no `asgard.yaml` needed for
 the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
@@ -508,7 +516,8 @@ plaintext, or the audit log.
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |
 | `ASGARD_TF_MODULES_DIR` | Arms the `terraform` connector **without a config file** — point it at the bundled modules (`/modules`). Presence is what registers the connector. | (off) |
 | `ASGARD_TF_WORK_DIR` | Scratch dir for Terraform working dirs. **State itself is kept (encrypted) in the DB**, so this may be ephemeral. | system temp |
-| `ASGARD_TF_ALLOWED` | Comma-separated `cloud:account` allowlist for env-armed provisioning, e.g. `auth0:your-tenant,aws:1234567890`. A request to anything not listed is refused; the **first entry is also the default target**. | — |
+| `ASGARD_TF_ALLOWED` | **Optional** `cloud:account` allowlist (e.g. `aws:1234567890,auth0:your-tenant`) — a multi-account *hardening* guardrail, not a per-resource list. The real boundary on a single-account deploy is the IAM role Asgard runs under; leave this unset and it provisions into the ambient account. Set it to constrain which cloud accounts Asgard may target when it can assume into several. First entry is the default target. | — |
+| `ASGARD_AUTO_APPROVE_CEILINGS` | Per-classification monthly self-service ceilings, `classification=usd` comma list, e.g. `poc=500,light-operational=2500,wide-operational=10000,critical-path=25000`. A request whose project-total infra stays under its tier's ceiling auto-approves; above it routes to human review. Merged per-tier onto the defaults. | poc=500, light-op=2500, wide-op=10000, critical-path=25000 |
 | `ASGARD_GIT_TOKEN` | Token for catalog source repos (GitHub/GitLab), if configured. | — |
 | `ASGARD_GUARDRAIL_MODE` | `enforce` (default) or `monitor`. | `enforce` |
 

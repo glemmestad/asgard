@@ -9,7 +9,7 @@ description: >-
   where several services register target groups against one ALB rather than each
   ecs-service owning its own. Takes an existing VPC; optional HTTPS via an ACM
   certificate.
-auto_approvable: false
+auto_approvable: true
 required_fields: [name, vpc_id, subnet_ids]
 provisioner:
   connector: terraform

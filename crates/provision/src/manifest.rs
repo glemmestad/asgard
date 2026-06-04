@@ -478,18 +478,20 @@ mod tests {
             inf.chat_path.as_deref(),
             Some("/serving-endpoints/{model}/invocations")
         );
-        // Cost-bearing Databricks compute gates to human review; UC volume is self-service.
-        assert!(!cat.get("databricks-sql-warehouse").unwrap().auto_approvable);
-        assert!(!cat.get("databricks-model-serving").unwrap().auto_approvable);
+        // Cost-bearing services are self-service by default; the classification
+        // floor + budget caps gate them, not a blanket review. Only credential-
+        // minting (litellm-key) keeps a hard human gate.
+        assert!(cat.get("databricks-sql-warehouse").unwrap().auto_approvable);
+        assert!(cat.get("databricks-model-serving").unwrap().auto_approvable);
         assert!(cat.get("databricks-uc-volume").unwrap().auto_approvable);
         let s3 = cat.get("s3-bucket").unwrap();
         assert_eq!(s3.connector(), "terraform");
         assert_eq!(s3.cost.estimated_monthly_usd, 5.0);
         assert!(s3.auto_approvable);
-        assert!(!cat.get("rds-postgres").unwrap().auto_approvable);
-        // Cost-bearing, IAM-shaping primitives must gate to human review.
-        assert!(!cat.get("ecs-service").unwrap().auto_approvable);
-        assert!(!cat.get("alb").unwrap().auto_approvable);
+        assert!(cat.get("rds-postgres").unwrap().auto_approvable);
+        // Cost-bearing primitives are self-service; budget + classification gate them.
+        assert!(cat.get("ecs-service").unwrap().auto_approvable);
+        assert!(cat.get("alb").unwrap().auto_approvable);
         let ecs = cat.get("ecs-service").unwrap();
         assert_eq!(ecs.connector(), "terraform");
         assert!(ecs.required_fields.contains(&"vpc_id".to_string()));

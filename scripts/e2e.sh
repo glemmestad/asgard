@@ -133,8 +133,8 @@ MN=$(python3 -c "import json;print(len(json.load(open('$WORK/reg.json')).get('ma
 curl -fsS -X PATCH "$BASE/api/projects/${PID}" -H 'content-type: application/json' \
   -d '{"security_review_status":"approved","runbook_url":"https://runbook.example","critical_dependencies":["postgres","redis"]}' \
   -o "$WORK/patch.json"
-SR=$(jget "$WORK/patch.json" "['security_review_status']")
-CDN=$(python3 -c "import json;print(len(json.load(open('$WORK/patch.json')).get('critical_dependencies',[])))" 2>/dev/null)
+SR=$(jget "$WORK/patch.json" "['project']['security_review_status']")
+CDN=$(python3 -c "import json;print(len(json.load(open('$WORK/patch.json'))['project'].get('critical_dependencies',[])))" 2>/dev/null)
 [[ "$SR" == "approved" && "$CDN" == "2" ]] && ok "evidence PATCH replaces the record (enum + list persisted)" || bad "evidence PATCH wrong (status=$SR deps=$CDN)"
 curl -fsS "$BASE/api/projects/${PID}" -o "$WORK/reget.json"
 RB=$(jget "$WORK/reget.json" "['runbook_url']")
@@ -388,12 +388,14 @@ DS=$(jget "$WORK/deprov.json" "['state']")
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/projects/proj-2026-9999/resources/${RID}")
 [[ "$CODE" == "404" ]] && ok "deprovision rejects wrong-project resource (404)" || bad "expected 404, got $CODE"
 
-# 12. Provisioning: a review-tier resource is parked for human approval.
+# 12. Provisioning: a cost-bearing resource (rds-postgres, $120/mo) self-services
+# within the POC classification ceiling — no human gate. Credential-minting and
+# over-ceiling spend still route to review (12a below + the budget path).
 curl -fsS -X POST "$BASE/api/projects/${PID}/resources" -H 'content-type: application/json' \
   -d '{"resource_type":"rds-postgres","name":"maindb","spec":{"name":"maindb"}}' \
   -o "$WORK/res2.json"
 PA=$(jget "$WORK/res2.json" "['pending_approval']")
-[[ "$PA" == "True" ]] && ok "review-tier resource awaits approval" || bad "review-tier should be pending ($PA)"
+[[ "$PA" == "False" ]] && ok "cost-bearing rds-postgres self-services within the ceiling" || bad "rds-postgres should self-serve ($PA)"
 
 # 12a. Per-project LiteLLM key: a governed credential. Parks for approval
 # (auto_approvable:false), then approve+fulfill drives the full request lifecycle.

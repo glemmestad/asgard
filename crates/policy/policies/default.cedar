@@ -99,6 +99,12 @@ when {
 @approval("group:default/platform")
 permit (principal, action == Action::"extend", resource);
 
+// A budget increase above the classification's self-service ceiling is a human
+// decision (platform review). The registry files this request only when the
+// requested amount exceeds the ceiling, so it always routes to a human.
+@approval("group:default/platform")
+permit (principal, action == Action::"set_budget", resource);
+
 // Reads are always allowed.
 permit (principal, action == Action::"read", resource);
 

@@ -4,8 +4,8 @@ category: database
 status: live
 classification_min: poc
 classification_max: critical-path
-description: Managed PostgreSQL database (always requires human approval).
-auto_approvable: false
+description: Managed PostgreSQL database. Self-service at low classifications when within budget; classification + cost caps gate it, not a blanket review.
+auto_approvable: true
 required_fields: [name]
 provisioner:
   connector: terraform

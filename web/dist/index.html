@@ -491,6 +491,7 @@
       mcp:      { label: 'MCP Catalog', ic: '⧇', render: renderMcpCatalog },
       standards:{ label: 'Standards', ic: '§', render: renderStandards },
       projects: { label: 'Projects', ic: '◧', render: renderProjects },
+      approvals:{ label: 'Approvals', ic: '✔', render: renderApprovals, need: 'admin' },
       costdash: { label: 'Cost dashboard', ic: '◴', render: renderCostDash, full: true },
       governance:{ label: 'Governance', ic: '◎', render: renderGovernanceDash },
       cost:     { label: 'Cost report', ic: '∑', render: renderCost },
@@ -1728,11 +1729,12 @@
           </div>
           <div class="meta" style="margin:10px 0">${pill(p.classification)} ${pill(p.group,'blue')}
             <span class="muted" style="font-size:12px">${esc(p.cost_center)}</span></div>
-          <div class="card" style="margin-top:12px">
-            <div class="row" style="gap:24px;flex-wrap:wrap">
+          <div class="card" style="margin-top:12px" id="p-identity">
+            <div class="row" style="gap:24px;flex-wrap:wrap;align-items:flex-start">
               <div><div class="muted" style="font-size:11px">owner</div>${esc(p.owner)}</div>
               <div><div class="muted" style="font-size:11px">manager</div>${esc(p.manager)}</div>
               <div><div class="muted" style="font-size:11px">spend / budget</div><span class="num">${money(spent)} / ${cap>0?money(cap):'no cap'}</span></div>
+              ${decommissioned ? '' : `<button class="act" id="id-edit" style="margin-left:auto">✎ Name / budget</button>`}
             </div>
           </div>
           <div class="row" style="justify-content:space-between;align-items:center;margin:18px 0 8px">
@@ -1753,6 +1755,28 @@
           <div class="row">${actions}</div>`;
         root().querySelector('.crumb').onclick = () => showList();
         root().querySelectorAll('.pbtn').forEach(b => b.onclick = () => doAction(id, b.dataset.kind));
+        const idEdit = root().querySelector('#id-edit');
+        if (idEdit) idEdit.onclick = () => {
+          const card = document.getElementById('p-identity');
+          card.innerHTML = `<div class="row" style="gap:12px;flex-wrap:wrap;align-items:flex-end">
+              <div style="flex:1;min-width:180px"><div class="muted" style="font-size:11px">name</div><input id="id-name" value="${esc(p.name)}" style="width:100%" /></div>
+              <div><div class="muted" style="font-size:11px">monthly budget (USD)</div><input id="id-budget" type="number" min="0" step="1" value="${Number(p.budget_usd||0)}" style="width:140px" /></div>
+              <button class="act" id="id-save">Save</button>
+              <button class="act" id="id-cancel" style="background:var(--chip);color:var(--fg);border:1px solid var(--line2)">Cancel</button>
+            </div>
+            <p class="muted" style="font-size:11px;margin:8px 0 0">The project id stays <code>${esc(p.project_id)}</code> — only the label changes. A budget above the ${esc(p.classification)} self-service ceiling routes to Approvals.</p>
+            <div id="id-out" style="margin-top:6px"></div>`;
+          document.getElementById('id-cancel').onclick = () => showDetail(id);
+          document.getElementById('id-save').onclick = async () => {
+            const body = { name: document.getElementById('id-name').value.trim(), budget_usd: Number(document.getElementById('id-budget').value) };
+            const out = document.getElementById('id-out'); out.innerHTML = '';
+            try {
+              const r = await api(`/api/projects/${enc(id)}`, {method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify(body)});
+              if (r && r.budget_review) { out.innerHTML = `<span class="muted" style="font-size:12px">Name saved. The budget exceeds the self-service ceiling — sent to Approvals for review.</span>`; setTimeout(() => showDetail(id), 1800); }
+              else showDetail(id);
+            } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+          };
+        };
         const evEdit = root().querySelector('#ev-edit');
         if (evEdit) evEdit.onclick = () => {
           document.getElementById('p-evidence').innerHTML = evidenceForm(p);
@@ -1955,6 +1979,53 @@
         } catch (e) { out.innerHTML = errBanner(e); }
       };
       document.getElementById('go').onclick = run; run();
+    }
+
+    async function renderApprovals() {
+      const v = document.getElementById('view');
+      let view = 'requested';
+      const FACETS = [['requested', 'Pending'], ['approved', 'Awaiting provision'], ['', 'All']];
+      const facet = (k, l) => `<button data-af="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${esc(l)}</button>`;
+      const actor = () => meEmail || 'admin';
+      v.innerHTML = `<h1 class="pagehead">Approvals</h1>
+        <p class="pagesub">The exception queue. In-policy requests (within budget, at an auto-approvable classification) provision without stopping here — only the residue lands: over budget, above the self-service tier, or credential-minting. Approve, then provision.</p>
+        <div class="row" id="af" style="gap:6px;margin-bottom:14px;flex-wrap:wrap">${FACETS.map(([k, l]) => facet(k, l)).join('')}</div>
+        <div id="rows">${loading('Loading requests…')}</div>`;
+      const wireFacets = () => v.querySelectorAll('[data-af]').forEach(b => b.onclick = () => { view = b.dataset.af; v.querySelector('#af').innerHTML = FACETS.map(([k, l]) => facet(k, l)).join(''); wireFacets(); run(); });
+      async function run() {
+        const out = document.getElementById('rows');
+        out.innerHTML = loading('Loading requests…');
+        try {
+          const reqs = await api('/api/requests' + (view ? `?state=${view}` : ''));
+          if (!reqs.length) { out.innerHTML = empty(view === 'requested' ? 'Nothing waiting on a human. Self-service is doing its job.' : 'No requests in this state.'); return; }
+          out.innerHTML = reqs.map(r => {
+            const p = r.payload || {};
+            const meta = [p.resource_type && `type <code>${esc(p.resource_type)}</code>`, p.cloud && `cloud <code>${esc(p.cloud)}</code>`, p.provision_tier && `tier <code>${esc(p.provision_tier)}</code>`].filter(Boolean).join(' · ');
+            const acts = r.state === 'requested'
+              ? `<button class="act" data-approve="${esc(r.id)}">Approve</button><button class="act" data-reject="${esc(r.id)}" style="background:var(--chip);color:var(--fg);border:1px solid var(--line2)">Reject</button>`
+              : r.state === 'approved'
+                ? `<button class="act" data-fulfill="${esc(r.id)}">${r.kind.startsWith('provision') ? 'Provision now' : 'Apply'}</button>`
+                : '';
+            return `<div class="card" style="margin-bottom:10px">
+              <div class="row" style="justify-content:space-between;align-items:flex-start">
+                <div><div class="ttl">${esc(r.subject)} ${pill(r.state)}</div>
+                  <div class="muted" style="font-size:12px;margin-top:4px">${esc(r.kind)}${meta ? ' · ' + meta : ''}</div>
+                  <div class="muted" style="font-size:11px;margin-top:4px">by <code>${esc(r.requester)}</code> · ${esc((r.created_at || '').slice(0, 16).replace('T', ' '))}${r.sla_due_at ? ` · SLA due ${esc(r.sla_due_at.slice(0, 10))}` : ''}${r.approver ? ` · by ${esc(r.approver)}` : ''}</div>
+                  ${r.reason ? `<div class="muted" style="font-size:12px;margin-top:4px">${esc(r.reason)}</div>` : ''}</div>
+                <div class="row" style="gap:6px">${acts}</div>
+              </div>
+              <span class="muted" style="font-size:11px"><code>${esc(r.id)}</code></span></div>`;
+          }).join('');
+          const act = async (id, path, body) => { try { await api(`/api/requests/${encodeURIComponent(id)}/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }); run(); } catch (e) { alert(e.message); } };
+          out.querySelectorAll('[data-approve]').forEach(b => b.onclick = () => act(b.dataset.approve, 'approve', { actor: actor() }));
+          out.querySelectorAll('[data-fulfill]').forEach(b => b.onclick = () => act(b.dataset.fulfill, 'fulfill', { actor: actor() }));
+          out.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => {
+            if (!await confirmAction({ title: 'Reject request', message: 'Deny this request? The requester will have to resubmit.', confirmLabel: 'Reject' })) return;
+            act(b.dataset.reject, 'reject', { actor: actor() });
+          });
+        } catch (e) { out.innerHTML = errBanner(e); }
+      }
+      wireFacets(); run();
     }
 
     function renderAbout() {
