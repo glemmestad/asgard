@@ -488,6 +488,7 @@
       catalog:  { label: 'Catalog', ic: '▦', render: renderCatalog },
       guidance: { label: 'Guidance', ic: '◰', render: renderGuidance },
       recipes:  { label: 'Recipes', ic: '⧉', render: renderRecipes },
+      mcp:      { label: 'MCP Catalog', ic: '⧇', render: renderMcpCatalog },
       standards:{ label: 'Standards', ic: '§', render: renderStandards },
       projects: { label: 'Projects', ic: '◧', render: renderProjects },
       costdash: { label: 'Cost dashboard', ic: '◴', render: renderCostDash, full: true },
@@ -504,6 +505,7 @@
     // (used by the governance scorecard's offender drill-in).
     let focusProject = null;
     let currentRole = 'member';
+    let meEmail = '';
     let APP_CFG = {};
     const isAdmin = () => currentRole === 'admin';
     // Cost views are visible to everyone — each is scoped server-side to the
@@ -848,6 +850,213 @@
         const ap = document.getElementById('r-approve');
         if (ap) ap.onclick = async () => { try { await api(`/api/recipes/${encodeURIComponent(slug)}/approve`, { method: 'POST' }); await load(''); showDetail(slug); } catch (e) { alert(e.message); } };
         wireHistory(root(), 'recipes', slug, r.body || spec.description || r.summary || '');
+      }
+
+      showList('');
+    }
+
+    // ---------- MCP Catalog (user-publishable MCP servers; share + govern) ----------
+    // One stored structured install spec → per-client snippets. Mirrors the
+    // getting-started connect block so the three clients render consistently.
+    function renderInstall(install, name) {
+      install = install || {};
+      const t = install.transport === 'remote' ? 'remote' : 'stdio';
+      const id = (name || 'server').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'server';
+      let claude, codex, cursor;
+      if (t === 'remote') {
+        const url = install.url || 'https://host/mcp';
+        claude = `claude mcp add --transport http ${id} ${url}`;
+        codex = `[mcp_servers.${id}]\nurl = "${url}"`;
+        cursor = JSON.stringify({ mcpServers: { [id]: { url } } }, null, 2);
+      } else {
+        const cmd = install.command || '';
+        const args = Array.isArray(install.args) ? install.args : [];
+        const env = Array.isArray(install.env) ? install.env : [];
+        claude = `claude mcp add ${id}` + env.map(k => ` --env ${k}=$${k}`).join('') + ` -- ${cmd}${args.length ? ' ' + args.join(' ') : ''}`;
+        const toml = [`[mcp_servers.${id}]`, `command = ${JSON.stringify(cmd)}`, `args = ${JSON.stringify(args)}`];
+        if (env.length) toml.push(`env = { ${env.map(k => `${k} = ${JSON.stringify('${' + k + '}')}`).join(', ')} }`);
+        codex = toml.join('\n');
+        const block = { command: cmd, args };
+        if (env.length) { block.env = {}; env.forEach(k => block.env[k] = '${' + k + '}'); }
+        cursor = JSON.stringify({ mcpServers: { [id]: block } }, null, 2);
+      }
+      return `<div class="muted" style="font-size:12px;margin-top:6px">Claude Code</div>${snip(claude)}
+        <div class="muted" style="font-size:12px;margin-top:10px">Codex (<code>~/.codex/config.toml</code>)</div>${snip(codex)}
+        <div class="muted" style="font-size:12px;margin-top:10px">Cursor / other (mcp.json)</div>${snip(cursor)}`;
+    }
+
+    async function renderMcpCatalog() {
+      const v = document.getElementById('view');
+      v.innerHTML = `<h1 class="pagehead">MCP Catalog</h1>
+        <p class="pagesub">MCP servers people in the org have published and shared. <strong>Company-approved</strong> entries are vetted by an admin; <strong>user-submitted</strong> ones are listed as-is with the owner as the contact. Publish your own — ownership and timestamps are logged so stale ones can be pruned.</p>
+        <div id="m-root">${loading('Loading catalog…')}</div>`;
+      const root = () => document.getElementById('m-root');
+      const VIEWS = [['all', 'All'], ['approved', 'Company-approved'], ['community', 'User-submitted'], ['disabled', 'Disabled'], ['archived', 'Archived']];
+      let view = 'all', all = [];
+      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
+      const tierBadge = (m) => m.status === 'approved' ? pill('company-approved', 'green') : pill('user-submitted', 'blue');
+      const stateBadge = (m) => (m.state && m.state !== 'active') ? pill(m.state, m.state === 'archived' ? 'red' : 'amber') : '';
+      const transportPill = (m) => { const t = (m.install || {}).transport; return t ? pill(t, '') : ''; };
+
+      async function load(q) {
+        const p = new URLSearchParams();
+        if (view === 'approved') p.set('status', 'approved');
+        else if (view === 'community') p.set('status', 'community');
+        // active is the default; disabled/archived are owner/admin management views.
+        p.set('state', (view === 'disabled' || view === 'archived') ? view : 'active');
+        if (q) p.set('q', q);
+        all = await api('/api/mcp-servers?' + p.toString());
+      }
+      try { await load(''); } catch (e) { root().innerHTML = errBanner(e); return; }
+
+      const gv = (id) => (document.getElementById(id)?.value ?? '').trim();
+      function buildInstall() {
+        if (gv('mc-transport') === 'remote') return { transport: 'remote', url: gv('mc-url') };
+        const o = { transport: 'stdio', command: gv('mc-command'), args: gv('mc-args').split(/\s+/).filter(Boolean) };
+        const env = gv('mc-env').split(/[\s,]+/).filter(Boolean);
+        if (env.length) o.env = env;
+        return o;
+      }
+      function readForm() {
+        return {
+          name: gv('mc-name'),
+          summary: gv('mc-summary'),
+          install: buildInstall(),
+          repository: gv('mc-repo'),
+          homepage: gv('mc-home'),
+          version: gv('mc-version'),
+          tags: gv('mc-tags').split(',').map(s => s.trim()).filter(Boolean),
+          readme: document.getElementById('mc-readme')?.value ?? '',
+        };
+      }
+      function formHtml(m) {
+        m = m || {}; const ins = m.install || {}; const t = ins.transport === 'remote' ? 'remote' : 'stdio';
+        const args = Array.isArray(ins.args) ? ins.args.join(' ') : '';
+        const env = Array.isArray(ins.env) ? ins.env.join(' ') : '';
+        const saveLabel = m.id ? 'Save changes' : (isAdmin() ? 'Publish (company-approved)' : 'Publish (listed as user-submitted)');
+        return `<div class="row" style="margin-top:10px">
+            <input id="mc-name" placeholder="name" value="${esc(m.name || '')}" style="flex:1;min-width:200px" />
+            <input id="mc-version" placeholder="version (optional)" value="${esc(m.version || '')}" style="width:140px" />
+            <input id="mc-tags" placeholder="tags (comma-separated)" value="${esc((m.tags || []).join(', '))}" />
+          </div>
+          <input id="mc-summary" placeholder="one-line blurb — what it does" value="${esc(m.summary || '')}" style="width:100%;margin-top:8px" />
+          <div class="row" style="margin-top:8px;align-items:center;gap:8px">
+            <span class="muted" style="font-size:12px">Install</span>
+            <select id="mc-transport"><option value="stdio"${t === 'stdio' ? ' selected' : ''}>stdio (local command)</option><option value="remote"${t === 'remote' ? ' selected' : ''}>remote (HTTP URL)</option></select>
+          </div>
+          <div id="mc-stdio" style="display:${t === 'remote' ? 'none' : 'block'}">
+            <div class="row" style="margin-top:8px">
+              <input id="mc-command" placeholder="command (e.g. npx, docker)" value="${esc(ins.command || '')}" style="width:200px" />
+              <input id="mc-args" placeholder="args (space-separated)" value="${esc(args)}" style="flex:1;min-width:220px" />
+            </div>
+            <input id="mc-env" placeholder="env var names (space/comma-separated, optional)" value="${esc(env)}" style="width:100%;margin-top:8px" />
+          </div>
+          <div id="mc-remote" style="display:${t === 'remote' ? 'block' : 'none'}">
+            <input id="mc-url" placeholder="https://host/mcp" value="${esc(ins.url || '')}" style="width:100%;margin-top:8px" />
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input id="mc-repo" placeholder="repository URL (optional)" value="${esc(m.repository || '')}" style="flex:1;min-width:200px" />
+            <input id="mc-home" placeholder="homepage / docs URL (optional)" value="${esc(m.homepage || '')}" style="flex:1;min-width:200px" />
+          </div>
+          <textarea id="mc-readme" placeholder="README / getting-started (markdown, optional)" style="width:100%;margin-top:8px;min-height:120px;background:var(--code);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);font-size:12px">${esc(m.readme || '')}</textarea>
+          <div class="row" style="margin-top:8px"><button class="act" id="mc-save">${saveLabel}</button><span id="mc-saveout" class="muted" style="font-size:12px"></span></div>`;
+      }
+      function wireForm(scope, existingId, onDone) {
+        const sel = scope.querySelector('#mc-transport');
+        if (sel) sel.onchange = () => {
+          const remote = sel.value === 'remote';
+          scope.querySelector('#mc-stdio').style.display = remote ? 'none' : 'block';
+          scope.querySelector('#mc-remote').style.display = remote ? 'block' : 'none';
+        };
+        const btn = scope.querySelector('#mc-save');
+        if (!btn) return;
+        btn.onclick = async () => {
+          const out = scope.querySelector('#mc-saveout');
+          const body = readForm();
+          if (!body.name) { out.innerHTML = errBanner('Name is required.'); return; }
+          try {
+            if (existingId) await api(`/api/mcp-servers/${encodeURIComponent(existingId)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+            else await api('/api/mcp-servers', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+            await onDone();
+          } catch (e) { out.innerHTML = errBanner(e); }
+        };
+      }
+
+      const publishBox = () => `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;color:var(--muted)">✎ Publish an MCP server ${isAdmin() ? '' : '(listed as user-submitted, with you as the contact)'}</summary>${formHtml(null)}</details>`;
+
+      function showList(q) {
+        const ql = (q || '').toLowerCase();
+        const list = !ql ? all : all.filter(m => (m.name + ' ' + m.summary + ' ' + (m.tags || []).join(' ') + ' ' + (m.readme || '')).toLowerCase().includes(ql));
+        const cards = list.map(m => `<div class="card lcard" data-id="${esc(m.id)}">
+            <div class="row" style="justify-content:space-between">
+              <div class="ttl">${esc(m.name)} ${tierBadge(m)} ${stateBadge(m)}</div>
+              <div>${(m.tags || []).map(t => pill(t, 'blue')).join(' ')}</div>
+            </div>
+            ${m.summary ? `<p class="muted" style="font-size:12px;margin:6px 0 6px">${esc(m.summary)}</p>` : ''}
+            <div class="muted" style="font-size:11px">${transportPill(m)} by ${esc(m.owner || '—')}</div>
+          </div>`).join('');
+        const emptyMsg = ql ? 'No MCP servers match.' : (view === 'disabled' ? 'No disabled entries.' : view === 'archived' ? 'No archived entries.' : 'No MCP servers yet. Publish one above, or have your agent do it via mcp_catalog_publish.');
+        root().innerHTML = `<div class="row" style="margin-bottom:10px"><input id="m-q" placeholder="search the catalog… (Enter searches every entry)" value="${esc(q || '')}" style="flex:1;max-width:360px" /></div>
+          <div class="row" style="gap:6px;margin-bottom:12px;flex-wrap:wrap">${VIEWS.map(([k, l]) => facet(k, l)).join('')}</div>
+          ${publishBox()}
+          ${list.length ? cards : empty(emptyMsg)}`;
+        const qi = document.getElementById('m-q');
+        qi.oninput = () => showList(qi.value);
+        qi.onkeydown = async (e) => { if (e.key === 'Enter') { try { await load(qi.value); showList(qi.value); } catch (err) { alert(err.message); } } };
+        root().querySelectorAll('[data-view]').forEach(c => c.onclick = async () => { view = c.dataset.view; try { await load(''); showList(''); } catch (e) { alert(e.message); } });
+        root().querySelectorAll('.lcard').forEach(c => c.onclick = () => showDetail(c.dataset.id));
+        wireForm(root(), null, async () => { await load(''); showList(''); });
+      }
+
+      async function showDetail(id) {
+        let m;
+        try { m = await api('/api/mcp-servers/' + encodeURIComponent(id)); }
+        catch { return showList(''); }
+        const admin = isAdmin();
+        const mine = admin || (!!meEmail && m.owner === meEmail);
+        const links = [
+          m.repository ? `<a href="${esc(m.repository)}" target="_blank" rel="noopener">repository ↗</a>` : '',
+          m.homepage ? `<a href="${esc(m.homepage)}" target="_blank" rel="noopener">homepage ↗</a>` : '',
+        ].filter(Boolean).join(' · ');
+        const actions = [];
+        if (admin && m.status === 'community') actions.push(`<button class="act" data-act="approve">Approve (company)</button>`);
+        if (admin && m.status === 'approved') actions.push(`<button class="pbtn" data-act="unapprove">Unapprove</button>`);
+        if (mine && m.state === 'active') actions.push(`<button class="pbtn" data-act="disable">Disable</button>`);
+        if (mine && m.state === 'disabled') actions.push(`<button class="act" data-act="enable">Enable</button>`);
+        if (mine && m.state !== 'archived') actions.push(`<button class="pbtn" data-act="archive">Archive</button>`);
+        if (mine && m.state === 'archived') actions.push(`<button class="act" data-act="unarchive">Unarchive</button>`);
+        if (mine) actions.push(`<button class="danger" data-act="delete">Delete</button>`);
+        root().innerHTML = `<button class="crumb">← all MCP servers</button>
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <h2 style="margin:0 0 4px">${esc(m.name)} ${tierBadge(m)} ${stateBadge(m)}</h2>
+            <div>${(m.tags || []).map(t => pill(t, 'blue')).join(' ')}</div>
+          </div>
+          <div class="muted" style="font-size:11px;margin-bottom:6px">by ${esc(m.owner || '—')} · updated ${esc((m.updated_at || '').slice(0, 10))}${m.version ? ` · v${esc(m.version)}` : ''} · <code>${esc(m.id)}</code></div>
+          ${m.summary ? `<p style="margin:0 0 8px">${esc(m.summary)}</p>` : ''}
+          ${links ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${links}</div>` : ''}
+          ${actions.length ? `<div class="row" id="mc-actions" style="gap:8px;margin:6px 0 4px;flex-wrap:wrap">${actions.join('')}</div><div id="mc-actout" style="margin-bottom:6px"></div>` : ''}
+          <h5 style="margin:14px 0 4px">Install</h5>
+          ${renderInstall(m.install, m.name)}
+          ${m.readme ? `<div class="md" style="margin-top:14px">${mdToHtml(m.readme)}</div>` : ''}
+          ${mine ? `<details class="card" style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted)">✎ Edit this entry</summary>${formHtml(m)}</details>` : ''}
+          ${historyBox()}`;
+        root().querySelector('.crumb').onclick = () => showList('');
+        wireCopy(root());
+        root().querySelectorAll('#mc-actions [data-act]').forEach(b => b.onclick = async () => {
+          const act = b.dataset.act;
+          const out = document.getElementById('mc-actout');
+          try {
+            if (act === 'delete') {
+              if (!await confirmAction({ title: 'Delete this catalog entry?', message: 'Removes the MCP server from the catalog for everyone. This cannot be undone — to retire it reversibly, archive it instead.', confirmLabel: 'Delete' })) return;
+              await api(`/api/mcp-servers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+              await load(''); return showList('');
+            }
+            await api(`/api/mcp-servers/${encodeURIComponent(id)}/${act}`, { method: 'POST' });
+            await showDetail(id);
+          } catch (e) { if (out) out.innerHTML = errBanner(e); }
+        });
+        if (mine) wireForm(root(), id, () => showDetail(id));
+        wireHistory(root(), 'mcp_server', id, m.readme || '');
       }
 
       showList('');
@@ -1840,6 +2049,7 @@
       catch { return showLogin(); }
       sessionStorage.removeItem('asg_sso_ts');
       currentRole = (me && me.role) || 'member';
+      meEmail = (me && me.email) || '';
       active = 'start';
       document.getElementById('aside').style.display = '';
       const avatar = document.getElementById('avatar');

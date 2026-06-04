@@ -25,7 +25,7 @@ use asgard_catalog::{seed, CatalogRepo, ListFilter};
 use asgard_gateway::{Gateway, GatewayRepo};
 use asgard_identity::{IdentityService, Role, PAT_PREFIX};
 use asgard_provision::{ProvisionService, RollupDim};
-use asgard_registry::{CostDim, ProjectRegistry, RegisterInput};
+use asgard_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput};
 use asgard_workflow::WorkflowEngine;
 
 use rmcp::handler::server::router::prompt::PromptRouter;
@@ -128,6 +128,44 @@ pub struct UpdateProjectArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdArg {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogGetArgs {
+    /// The catalog entry id (see mcp_catalog_list).
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogPublishArgs {
+    /// Provide to update an existing entry you own; omit to publish a new one.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub summary: String,
+    /// Optional rich getting-started / README (markdown).
+    #[serde(default)]
+    pub readme: String,
+    /// Structured install: { transport: "stdio"|"remote", command, args, env, url }.
+    /// stdio uses command/args/env (env is a list of variable names); remote uses url.
+    #[serde(default)]
+    pub install: serde_json::Value,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogStateArgs {
+    pub id: String,
+    /// `active`, `disabled` (temporarily hide), or `archived` (retire).
+    pub state: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -625,6 +663,104 @@ impl AsgardMcp {
         serde_json::to_string(&r).map_err(|e| e.to_string())
     }
 
+    async fn do_mcp_catalog_list(&self) -> Result<String, String> {
+        // Agents browse the live catalog (active entries, both trust tiers).
+        let list = self
+            .registry
+            .mcp_server_list(None, None, Some("active"))
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&list).map_err(|e| e.to_string())
+    }
+
+    async fn do_mcp_catalog_get(&self, id: &str) -> Result<String, String> {
+        match self
+            .registry
+            .mcp_server_get(id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(m) => serde_json::to_string(&m).map_err(|e| e.to_string()),
+            None => Err(format!(
+                "unknown catalog entry '{id}'; call mcp_catalog_list for ids"
+            )),
+        }
+    }
+
+    /// Publish (or update) a catalog entry as the authenticated user. An admin's
+    /// publish lands company-approved; everyone else's is user-submitted.
+    async fn do_mcp_catalog_publish(
+        &self,
+        email: &str,
+        role: &str,
+        a: McpCatalogPublishArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let input = McpServerInput {
+            name: a.name,
+            summary: a.summary,
+            readme: a.readme,
+            install: a.install,
+            repository: a.repository,
+            homepage: a.homepage,
+            version: a.version,
+            tags: a.tags,
+        };
+        let m = match a.id.filter(|s| !s.is_empty()) {
+            Some(id) => {
+                let existing = self
+                    .registry
+                    .mcp_server_get(&id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown catalog entry '{id}'"))?;
+                if existing.owner != email && !admin {
+                    return Err("only the owner or an admin can edit this catalog entry".into());
+                }
+                self.registry
+                    .mcp_server_update(&id, &input, email)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown catalog entry '{id}'"))?
+            }
+            None => self
+                .registry
+                .mcp_server_create(email, &input, admin)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
+        serde_json::to_string(&m).map_err(|e| e.to_string())
+    }
+
+    async fn do_mcp_catalog_set_state(
+        &self,
+        email: &str,
+        role: &str,
+        a: McpCatalogStateArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let existing = self
+            .registry
+            .mcp_server_get(&a.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown catalog entry '{}'", a.id))?;
+        if existing.owner != email && !admin {
+            return Err("only the owner or an admin can change this catalog entry's state".into());
+        }
+        let action = if a.state == "active" {
+            "enabled"
+        } else {
+            &a.state
+        };
+        self.registry
+            .mcp_server_set_state(&a.id, &a.state, action, email)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&serde_json::json!({"ok": true, "id": a.id, "state": a.state}))
+            .map_err(|e| e.to_string())
+    }
+
     async fn do_cost_report(&self, a: CostReportArgs) -> Result<String, String> {
         let by = CostDim::parse(a.by.as_deref().unwrap_or("project")).ok_or_else(|| {
             "by must be one of: project, owner, manager, group, classification, model, provider"
@@ -1120,6 +1256,61 @@ impl AsgardMcp {
         Parameters(a): Parameters<RecipePutArgs>,
     ) -> Result<CallToolResult, McpError> {
         wrap(self.do_recipe_put(a).await)
+    }
+
+    #[tool(
+        description = "List the MCP catalog — MCP servers other people have published and shared in this org. Each entry returns name, summary, structured install spec, tags, owner (contact), and tier (company-approved vs user-submitted). Use it to find an MCP server to install."
+    )]
+    async fn mcp_catalog_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.do_mcp_catalog_list().await)
+    }
+
+    #[tool(
+        description = "Fetch one MCP catalog entry by id (see mcp_catalog_list) — full README plus the structured install spec to wire it into your client."
+    )]
+    async fn mcp_catalog_get(
+        &self,
+        Parameters(a): Parameters<McpCatalogGetArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_mcp_catalog_get(&a.id).await)
+    }
+
+    #[tool(
+        description = "Publish an MCP server to the catalog so others can discover and install it (or update one you own by passing its id). install = { transport: stdio|remote, command, args, env, url }. Requires a user token (asg_pat_…) — the entry is owned by you as the contact point; a project key cannot publish. Your submission is listed as user-submitted until an admin promotes it to company-approved."
+    )]
+    async fn mcp_catalog_publish(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<McpCatalogPublishArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => {
+                return deny(
+                    "publishing to the MCP catalog requires a user token (asg_pat_…); a project key has no owner identity".into(),
+                )
+            }
+        };
+        wrap(self.do_mcp_catalog_publish(&email, &role, a).await)
+    }
+
+    #[tool(
+        description = "Change the lifecycle of an MCP catalog entry you own: disabled (temporarily hide), archived (retire — kept for audit, prunable), or active (restore). Requires a user token; owner or admin only."
+    )]
+    async fn mcp_catalog_set_state(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<McpCatalogStateArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => {
+                return deny(
+                    "changing a catalog entry's state requires a user token (asg_pat_…)".into(),
+                )
+            }
+        };
+        wrap(self.do_mcp_catalog_set_state(&email, &role, a).await)
     }
 
     #[tool(

@@ -17,6 +17,7 @@ pub mod evidence;
 pub mod governance;
 pub mod guidance;
 mod knowledge_seed;
+pub mod mcp_servers;
 pub mod promotion;
 pub mod recipes;
 pub mod review;
@@ -27,6 +28,7 @@ pub use cost::{CostDim, CostReport, CostRow};
 pub use evidence::Evidence;
 pub use governance::{GovernanceConfig, GovernanceMetrics, Metric, PromotionSample};
 pub use guidance::Guidance;
+pub use mcp_servers::{McpServer, McpServerInput};
 pub use promotion::{ClassificationRequirements, EvidenceVerdict, PromotionChecklist};
 pub use recipes::Recipe;
 pub use review::{ExtendOutcome, ReviewConfig, ReviewState, SweepSummary};
@@ -1037,6 +1039,92 @@ impl ProjectRegistry {
         Ok(())
     }
 
+    /// MCP catalog entries. `state` defaults to `active` (the public catalog);
+    /// `status` filters by trust tier without hiding either. See [`mcp_servers`].
+    pub async fn mcp_server_list(
+        &self,
+        q: Option<&str>,
+        status: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<Vec<McpServer>, RegistryError> {
+        mcp_servers::list(&self.db, q, status, state).await
+    }
+
+    pub async fn mcp_server_get(&self, id: &str) -> Result<Option<McpServer>, RegistryError> {
+        mcp_servers::get(&self.db, id).await
+    }
+
+    /// Publish a new catalog entry owned by `owner`. `approved` mints it as the
+    /// company tier (admins / the boot seed); otherwise `community`. Audited.
+    pub async fn mcp_server_create(
+        &self,
+        owner: &str,
+        input: &McpServerInput,
+        approved: bool,
+    ) -> Result<McpServer, RegistryError> {
+        let m = mcp_servers::create(&self.db, owner, input, approved).await?;
+        self.record_version("mcp_server", &m.id, "created", owner, &m)
+            .await?;
+        Ok(m)
+    }
+
+    pub async fn mcp_server_update(
+        &self,
+        id: &str,
+        input: &McpServerInput,
+        actor: &str,
+    ) -> Result<Option<McpServer>, RegistryError> {
+        let m = mcp_servers::update(&self.db, id, input).await?;
+        if let Some(m) = &m {
+            self.record_version("mcp_server", id, "updated", actor, m)
+                .await?;
+        }
+        Ok(m)
+    }
+
+    pub async fn mcp_server_approve(&self, id: &str, approver: &str) -> Result<(), RegistryError> {
+        mcp_servers::set_status(&self.db, id, "approved", Some(approver)).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "approved", approver, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn mcp_server_unapprove(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        mcp_servers::set_status(&self.db, id, "community", None).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "unapproved", actor, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Move an entry through its lifecycle. `action` is the audited verb
+    /// (`disabled`/`enabled`/`archived`/`unarchived`); `state` is the result.
+    pub async fn mcp_server_set_state(
+        &self,
+        id: &str,
+        state: &str,
+        action: &str,
+        actor: &str,
+    ) -> Result<(), RegistryError> {
+        mcp_servers::set_state(&self.db, id, state).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, action, actor, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn mcp_server_delete(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "deleted", actor, &m)
+                .await?;
+        }
+        mcp_servers::delete(&self.db, id).await
+    }
+
     pub async fn standard_list(
         &self,
         q: Option<&str>,
@@ -1070,7 +1158,7 @@ impl ProjectRegistry {
     }
 
     /// A knowledge doc's version history (newest first). `doc_type` is one of
-    /// `guidance` | `recipes` | `standards`.
+    /// `guidance` | `recipes` | `standards` | `mcp_server`.
     pub async fn knowledge_history(
         &self,
         doc_type: &str,
@@ -1115,6 +1203,21 @@ impl ProjectRegistry {
             for s in asgard_catalog::standards::STANDARDS {
                 self.standard_put(s.id, s.title, s.summary, s.body, "asgard")
                     .await?;
+            }
+        }
+        if mcp_servers::count(&self.db).await? == 0 {
+            for (name, summary, install_json, tags, readme) in knowledge_seed::MCP_SERVERS {
+                let install: serde_json::Value = serde_json::from_str(install_json)
+                    .map_err(|e| RegistryError::Validation(format!("seed mcp '{name}': {e}")))?;
+                let input = McpServerInput {
+                    name: (*name).to_string(),
+                    summary: (*summary).to_string(),
+                    readme: (*readme).to_string(),
+                    install,
+                    tags: tags.iter().map(|s| s.to_string()).collect(),
+                    ..Default::default()
+                };
+                self.mcp_server_create("asgard", &input, true).await?;
             }
         }
         Ok(())

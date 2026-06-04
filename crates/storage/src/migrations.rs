@@ -32,6 +32,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         21,
         include_str!("../migrations/0021_cost_anomaly_unique.sql"),
     ),
+    (22, include_str!("../migrations/0022_mcp_servers.sql")),
 ];
 
 pub async fn run(db: &Db) -> Result<(), StorageError> {

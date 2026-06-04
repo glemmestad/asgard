@@ -125,6 +125,13 @@ The flow the [agent seed](./onboarding-loop.md) encodes, all as MCP tool calls:
    versioned). `guidance_list` / `recipe_list` round these out with advisory
    playbooks and runbooks; `guidance_put` / `recipe_put` let an agent contribute,
    but a submission lands as a **draft** until an admin approves it.
+   **`mcp_catalog_list` / `mcp_catalog_get`** browse the **MCP catalog** — MCP
+   servers the org has shared, each with a structured install spec and an owner
+   (contact). On a **user token**, `mcp_catalog_publish` shares one you built
+   (owned by you, listed *user-submitted* until an admin promotes it to
+   *company-approved*); `mcp_catalog_set_state` disables or archives one you own.
+   This catalog is intentionally separate from the provisioning catalog above — it
+   is opt-in sharing, not derived from what your projects provisioned.
 2. **`seed_plan`** — give it your repo's languages and a one-line description of
    the work; it returns the minimal set of guidance files to drop in (core +
    language add-ons + domain overlays + templates). **`seed_get`** fetches each

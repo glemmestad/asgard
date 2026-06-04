@@ -122,6 +122,11 @@ ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite:///tmp/asgard.db" \
 - **UI** is one self-contained file `web/dist/index.html` (rust-embed, no build,
   no deps, vanilla JS). Reuse helpers `el/esc/api/money/PAL/spark/pill`. Dark
   token system. Verify with `node --check` on the script block.
+  - **Destructive actions** (delete / decommission / revoke / disable / archive)
+    must go through the shared `confirmAction({ title, message, confirmLabel })`
+    modal — never the native `confirm()`/`alert()`. One confirmation UX across the
+    app (project kill/decommission, token revoke, user disable, catalog delete all
+    use it); consistency is the point.
 - Our own engineering standards live in `seed/.agent/{STANDARDS,DONE,SECURITY}.md`
   — and we follow them. "Done" = gates green (and run) + behavior verified + no
   orphaned code + clean-room clean + a change summary.

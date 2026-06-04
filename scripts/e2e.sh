@@ -267,6 +267,8 @@ grep -q 'AGENTS.md' "$WORK/boot.out" && grep -q 'RUST.md' "$WORK/boot.out" \
   && ok "MCP bootstrap inlines AGENTS.md + standards in one call" || { bad "bootstrap did not return inlined seed files"; cat "$WORK/boot.out"; }
 grep -q '"guidance_put"' "$WORK/tools.out" && ok "MCP exposes guidance tools (guidance_put)" || bad "guidance_put tool missing from MCP"
 grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe_get)" || bad "recipe_get tool missing from MCP"
+grep -q '"mcp_catalog_list"' "$WORK/tools.out" && grep -q '"mcp_catalog_publish"' "$WORK/tools.out" \
+  && ok "MCP exposes the catalog tools (mcp_catalog_list, mcp_catalog_publish)" || bad "mcp_catalog tools missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \
   && ok "MCP exposes promotion tools (request_promotion, promotion_status)" || bad "promotion tools missing from MCP"
 # Control plane issues credentials but does not run inference: gateway_credential
@@ -312,6 +314,14 @@ XPROJ='{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"request_r
 curl -s -o "$WORK/xproj.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$XPROJ"
 grep -q 'cross-project access denied' "$WORK/xproj.out" && ok "MCP denies cross-project access (scoped to the key's project)" || bad "cross-project access was not denied"
+
+# 7d-i. Publishing to the MCP catalog needs a user token: a project key (no owner
+# identity) is refused. The user-token publish path is exercised on the enforcing
+# server in 20g.
+MPUB='{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"mcp_catalog_publish","arguments":{"name":"From A Project Key","install":{"transport":"remote","url":"https://x/mcp"}}}}'
+curl -s -o "$WORK/mpub.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$MPUB"
+grep -qi 'requires a user token' "$WORK/mpub.out" && ok "mcp_catalog_publish refuses a project key (needs a user token)" || bad "project-key catalog publish was not refused"
 
 # 8. Cost segregated by dimension: spend rolls up to the project's group.
 curl -fsS "$BASE/api/cost?by=group" -o "$WORK/cost.json"
@@ -556,6 +566,43 @@ grep -q '"status":"published"' "$WORK/rappr.json" && ok "recipe approve returns 
 curl -fsS "$BASE/api/recipes?q=worker" -o "$WORK/rq.json"
 grep -q "$RSLUG" "$WORK/rq.json" && ok "recipe ?q= matches the body" || bad "recipe search missed a body hit"
 
+# 18c-iii. MCP catalog: a user-publishable catalog of MCP servers, decoupled from
+# project provisioning. Seeded company-approved entries ship in; an entry can be
+# disabled (hidden from the active catalog) and re-enabled; the trust tier flips
+# with approve/unapprove; lifecycle changes are versioned.
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat.json"
+MCN=$(python3 -c "import json;print(len(json.load(open('$WORK/mcat.json'))))" 2>/dev/null)
+python3 -c "import sys; sys.exit(0 if int('${MCN:-0}')>=3 else 1)" 2>/dev/null && ok "MCP catalog ships seeded entries ($MCN)" || bad "expected >=3 seeded MCP servers, got $MCN"
+grep -q '"status":"approved"' "$WORK/mcat.json" && ok "seeded MCP entries are company-approved" || bad "seeded MCP entries not approved"
+curl -fsS -X POST "$BASE/api/mcp-servers" -H 'content-type: application/json' \
+  -d '{"name":"Team Notion","summary":"our notion workspace","install":{"transport":"stdio","command":"npx","args":["-y","notion-mcp"],"env":["NOTION_TOKEN"]},"tags":["notion"]}' \
+  -o "$WORK/mput.json"
+MID=$(jget "$WORK/mput.json" "['id']")
+[[ -n "$MID" ]] && ok "published an MCP catalog entry (id $MID)" || bad "mcp publish failed"
+MINST=$(jget "$WORK/mput.json" "['install']['command']")
+[[ "$MINST" == "npx" ]] && ok "structured install round-trips (command=npx)" || bad "install not round-tripped ($MINST)"
+# Admin publish lands company-approved; unapprove demotes, approve restores.
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/unapprove" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers/${MID}" -o "$WORK/mget.json"
+MST=$(jget "$WORK/mget.json" "['status']")
+[[ "$MST" == "community" ]] && ok "unapprove marks the entry user-submitted (community)" || bad "unapprove wrong ($MST)"
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/approve" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers/${MID}" -o "$WORK/mget2.json"
+MST2=$(jget "$WORK/mget2.json" "['status']")
+[[ "$MST2" == "approved" ]] && ok "approve promotes the entry to company-approved" || bad "approve wrong ($MST2)"
+# Disable hides it from the active catalog; the disabled view still shows it; enable restores.
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/disable" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat2.json"
+grep -q "$MID" "$WORK/mcat2.json" && bad "disabled entry should not show in the active catalog" || ok "disable hides the entry from the active catalog"
+curl -fsS "$BASE/api/mcp-servers?state=disabled" -o "$WORK/mdis.json"
+grep -q "$MID" "$WORK/mdis.json" && ok "disabled entry appears under the disabled view" || bad "disabled view missing the entry"
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/enable" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat3.json"
+grep -q "$MID" "$WORK/mcat3.json" && ok "enable restores the entry to the active catalog" || bad "enable did not restore the entry"
+# Lifecycle is versioned for audit/pruning (created + disabled recorded).
+curl -fsS "$BASE/api/mcp-servers/${MID}/history" -o "$WORK/mhist.json"
+grep -q 'disabled' "$WORK/mhist.json" && ok "MCP catalog history records lifecycle changes" || bad "history missing lifecycle action"
+
 # 18c-ii. Standards are DB-backed + admin-editable + versioned. Edit one, then its
 # history has >=1 version and full-text search reaches the body.
 curl -fsS -X POST "$BASE/api/standards" -H 'content-type: application/json' \
@@ -654,6 +701,24 @@ CODE=$(curl -s -H "authorization: Bearer $MTOK" -o /dev/null -w '%{http_code}' -
 curl -s -H "authorization: Bearer $TOK" -X POST "$BASE2/api/guidance/member-draft-tip/approve" -o /dev/null
 curl -s -H "authorization: Bearer $MTOK" -o "$WORK/mg2.json" "$BASE2/api/guidance"
 grep -q 'member-draft-tip' "$WORK/mg2.json" && ok "approved guidance becomes visible to readers" || bad "approved guidance still hidden"
+# 20c-i. MCP catalog differs from guidance moderation: a member's submission is
+# visible immediately (user-submitted, member as contact), NOT hidden — discovery
+# is the point. An admin can then promote it to company-approved.
+curl -s -H "authorization: Bearer $MTOK" -X POST "$BASE2/api/mcp-servers" -H 'content-type: application/json' \
+  -d '{"name":"Finn MCP","summary":"finn built this","install":{"transport":"remote","url":"https://finn/mcp"}}' -o "$WORK/fmcp.json"
+FMID=$(jget "$WORK/fmcp.json" "['id']")
+FMST=$(jget "$WORK/fmcp.json" "['status']")
+FMOWN=$(jget "$WORK/fmcp.json" "['owner']")
+[[ "$FMST" == "community" && "$FMOWN" == "finn@corp.example" ]] && ok "member publish is user-submitted with the member as owner/contact" || bad "member publish tier/owner wrong (status=$FMST owner=$FMOWN)"
+curl -s -H "authorization: Bearer $MTOK" -o "$WORK/fmcat.json" "$BASE2/api/mcp-servers"
+grep -q "$FMID" "$WORK/fmcat.json" && ok "user-submitted entry is visible immediately (not hidden like a draft)" || bad "user-submitted entry was hidden"
+# A non-owner member cannot approve; an admin promotes it to company-approved.
+CODE=$(curl -s -H "authorization: Bearer $MTOK" -o /dev/null -w '%{http_code}' -X POST "$BASE2/api/mcp-servers/${FMID}/approve")
+[[ "$CODE" == "403" ]] && ok "member cannot approve a catalog entry (403)" || bad "expected 403 for member approve, got $CODE"
+curl -s -H "authorization: Bearer $TOK" -X POST "$BASE2/api/mcp-servers/${FMID}/approve" -o /dev/null
+curl -s -H "authorization: Bearer $TOK" "$BASE2/api/mcp-servers/${FMID}" -o "$WORK/fmcp2.json"
+FMST2=$(jget "$WORK/fmcp2.json" "['status']")
+[[ "$FMST2" == "approved" ]] && ok "admin promotes a user submission to company-approved" || bad "admin approve wrong ($FMST2)"
 # Behind TLS (simulated by the proxy header), the same login marks the cookie Secure.
 curl -s -D "$WORK/login_tls.hdr" -X POST "$BASE2/api/auth/login" \
   -H 'content-type: application/json' -H 'x-forwarded-proto: https' \
@@ -728,6 +793,14 @@ PXP="{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\
 curl -s -o "$WORK/pxp.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PXP"
 grep -qi 'not authorized' "$WORK/pxp.out" && ok "PAT denied a project the user does not own/manage" || { bad "PAT cross-project was not denied"; cat "$WORK/pxp.out"; }
+
+# 20g. MCP catalog over a user token: finn publishes an MCP server as himself; the
+# entry is owned by his identity (the contact point) and listed user-submitted.
+PCAT='{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"mcp_catalog_publish","arguments":{"name":"Finn Agent MCP","summary":"published over a PAT","install":{"transport":"remote","url":"https://finn-agent/mcp"}}}}'
+curl -s -o "$WORK/pcat.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PCAT"
+grep -q 'finn@corp.example' "$WORK/pcat.out" && grep -q '\\"status\\":\\"community\\"' "$WORK/pcat.out" \
+  && ok "PAT mcp_catalog_publish stamps the user as owner and lists it user-submitted" || { bad "PAT catalog publish wrong"; cat "$WORK/pcat.out"; }
 
 # Readiness probe reports DB reachable.
 curl -fsS "$BASE2/readyz" >/dev/null 2>&1 && ok "readiness probe (/readyz) is green" || bad "/readyz not green"

@@ -231,6 +231,29 @@ pub fn router(state: AppState) -> Router {
         .route("/api/recipes/{slug}", get(get_recipe))
         .route("/api/recipes/{slug}/approve", post(approve_recipe))
         .route("/api/recipes/{slug}/history", get(recipe_history))
+        .route(
+            "/api/mcp-servers",
+            get(list_mcp_servers).post(create_mcp_server),
+        )
+        .route(
+            "/api/mcp-servers/{id}",
+            get(get_mcp_server)
+                .put(update_mcp_server)
+                .delete(delete_mcp_server),
+        )
+        .route("/api/mcp-servers/{id}/approve", post(approve_mcp_server))
+        .route(
+            "/api/mcp-servers/{id}/unapprove",
+            post(unapprove_mcp_server),
+        )
+        .route("/api/mcp-servers/{id}/disable", post(disable_mcp_server))
+        .route("/api/mcp-servers/{id}/enable", post(enable_mcp_server))
+        .route("/api/mcp-servers/{id}/archive", post(archive_mcp_server))
+        .route(
+            "/api/mcp-servers/{id}/unarchive",
+            post(unarchive_mcp_server),
+        )
+        .route("/api/mcp-servers/{id}/history", get(mcp_server_history))
         .route("/api/requests", get(list_requests).post(submit_request))
         .route("/api/requests/{id}/approve", post(approve_request))
         .route("/api/requests/{id}/reject", post(reject_request))
@@ -1244,6 +1267,254 @@ async fn recipe_history(
     Path(slug): Path<String>,
 ) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
     Ok(Json(st.registry.knowledge_history("recipes", &slug).await?))
+}
+
+// ---- MCP catalog: user-publishable MCP servers (separate from provisioning) ----
+
+#[derive(Deserialize)]
+struct McpListQ {
+    #[serde(default)]
+    q: Option<String>,
+    /// Trust tier: `community` | `approved`.
+    #[serde(default)]
+    status: Option<String>,
+    /// Lifecycle view: `active` (default), `disabled`, `archived`, or `all`.
+    #[serde(default)]
+    state: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct McpServerBody {
+    name: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    readme: String,
+    #[serde(default)]
+    install: serde_json::Value,
+    #[serde(default)]
+    repository: String,
+    #[serde(default)]
+    homepage: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    tags: Vec<String>,
+}
+
+impl From<McpServerBody> for asgard_registry::McpServerInput {
+    fn from(b: McpServerBody) -> Self {
+        asgard_registry::McpServerInput {
+            name: b.name,
+            summary: b.summary,
+            readme: b.readme,
+            install: b.install,
+            repository: b.repository,
+            homepage: b.homepage,
+            version: b.version,
+            tags: b.tags,
+        }
+    }
+}
+
+/// The contact identity recorded as an entry's owner: the caller's email, or
+/// their username when no email is on the account (e.g. the dev-insecure admin).
+fn owner_id(user: &asgard_identity::User) -> String {
+    user.email.clone().unwrap_or_else(|| user.username.clone())
+}
+
+/// Owner-or-admin: the entry's owner, or a caller holding `ManageUsers`.
+fn owns_or_admin(user: &asgard_identity::User, entry: &asgard_registry::McpServer) -> bool {
+    user.can(asgard_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
+}
+
+async fn list_mcp_servers(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(ql): Query<McpListQ>,
+) -> Result<Json<Vec<asgard_registry::McpServer>>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let state = ql.state.as_deref().unwrap_or("active");
+    let mut list = st
+        .registry
+        .mcp_server_list(ql.q.as_deref(), ql.status.as_deref(), Some(state))
+        .await?;
+    // The active catalog is public; the disabled/archived management views are
+    // scoped to the caller's own entries unless they can see everything.
+    if state != "active" && !user.can(asgard_identity::Capability::ManageUsers) {
+        let me = owner_id(&user);
+        list.retain(|m| m.owner == me);
+    }
+    Ok(Json(list))
+}
+
+async fn create_mcp_server(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<McpServerBody>,
+) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    // An admin's own publish lands as the company-approved tier; everyone else's
+    // is listed immediately as user-submitted (community) with them as contact.
+    let approved = user.can(asgard_identity::Capability::ManageUsers);
+    let m = st
+        .registry
+        .mcp_server_create(&owner_id(&user), &b.into(), approved)
+        .await?;
+    Ok(Json(m))
+}
+
+async fn get_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+    st.registry
+        .mcp_server_get(&id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound(format!("mcp server {id}")))
+}
+
+async fn update_mcp_server(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<McpServerBody>,
+) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let existing = st
+        .registry
+        .mcp_server_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("mcp server {id}")))?;
+    if !owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can edit this catalog entry".into(),
+        ));
+    }
+    let m = st
+        .registry
+        .mcp_server_update(&id, &b.into(), &owner_id(&user))
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("mcp server {id}")))?;
+    Ok(Json(m))
+}
+
+async fn delete_mcp_server(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let existing = st
+        .registry
+        .mcp_server_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("mcp server {id}")))?;
+    if !owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can delete this catalog entry".into(),
+        ));
+    }
+    st.registry.mcp_server_delete(&id, &owner_id(&user)).await?;
+    Ok(Json(serde_json::json!({ "ok": true, "id": id })))
+}
+
+async fn approve_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    st.registry
+        .mcp_server_approve(&id, &owner_id(&user))
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "status": "approved" }),
+    ))
+}
+
+async fn unapprove_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    st.registry
+        .mcp_server_unapprove(&id, &owner_id(&user))
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "status": "community" }),
+    ))
+}
+
+/// Shared lifecycle transition: owner-or-admin moves an entry to `state`, audited
+/// under `action`.
+async fn mcp_transition(
+    st: &AppState,
+    headers: &HeaderMap,
+    id: &str,
+    state: &str,
+    action: &str,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = current_user(st, headers).await?;
+    let existing = st
+        .registry
+        .mcp_server_get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("mcp server {id}")))?;
+    if !owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can change this catalog entry's state".into(),
+        ));
+    }
+    st.registry
+        .mcp_server_set_state(id, state, action, &owner_id(&user))
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "state": state }),
+    ))
+}
+
+async fn disable_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mcp_transition(&st, &headers, &id, "disabled", "disabled").await
+}
+
+async fn enable_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mcp_transition(&st, &headers, &id, "active", "enabled").await
+}
+
+async fn archive_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mcp_transition(&st, &headers, &id, "archived", "archived").await
+}
+
+async fn unarchive_mcp_server(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    mcp_transition(&st, &headers, &id, "active", "unarchived").await
+}
+
+async fn mcp_server_history(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+    Ok(Json(
+        st.registry.knowledge_history("mcp_server", &id).await?,
+    ))
 }
 
 async fn list_standards(
