@@ -186,6 +186,7 @@ resource "aws_lb" "this" {
   load_balancer_type = "application"
   subnets            = var.subnet_ids
   security_groups    = [aws_security_group.alb.id]
+  idle_timeout       = var.idle_timeout
   tags               = var.tags
 }
 
@@ -303,6 +304,14 @@ resource "aws_ecs_service" "this" {
     subnets          = var.subnet_ids
     security_groups  = local.task_sg
     assign_public_ip = var.internal ? false : true
+  }
+
+  # With desired_count=1 a bad image would otherwise sit failing health checks
+  # forever; the circuit breaker fails the deployment and rolls back to the last
+  # healthy task definition.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
   }
 
   load_balancer {

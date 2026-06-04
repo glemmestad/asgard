@@ -47,6 +47,27 @@ project virtual key to use `/mcp`. Different credentials, same enforcement.
 
 ---
 
+## The container image
+
+Official images publish to **GitHub Container Registry** on every released
+version:
+
+```
+ghcr.io/glemmestad/asgard:<tag>
+```
+
+Tags, set by the release pipeline (`.github/workflows/release.yml`):
+
+| Tag | Points at | Use for |
+|---|---|---|
+| `vX.Y.Z` | An exact released version (semantic-release). | **Pin this in production.** Immutable, reproducible. |
+| `latest` | The most recent release. | Trying things out; never pin a deployment to it. |
+| `sha-<short>` | The exact commit that built the image. | Tracing an image back to source. |
+
+The image bundles `terraform` on `PATH` and the provisioning modules at `/modules`,
+so an armed deployment needs no extra mounts. (Running your own fork/registry?
+Substitute your image path — nothing in Asgard hard-codes `ghcr.io/glemmestad`.)
+
 ## Prerequisites
 
 - A host that can run the binary (or the container). **That's it — nothing else is
@@ -78,6 +99,12 @@ let it terminate TLS. If you do, set two headers so Asgard adapts correctly:
 Route `/`, `/api/*`, `/graphql`, and `/mcp` to the Asgard upstream. No WebSocket
 upgrade is needed (MCP uses Streamable HTTP, i.e. plain POST + SSE responses), but
 **don't buffer `/mcp` responses** if you want streaming to flow promptly.
+
+> **Mind the idle timeout in front of `/mcp`.** Streamable HTTP holds a response
+> stream open for the duration of a tool call. Any L7 hop with a short idle timeout
+> will sever it mid-call — an **AWS ALB defaults to 60s**. Raise it to ~300–900s
+> (the bundled `ecs-service` module exposes `idle_timeout`, defaulting to 300).
+> nginx: `proxy_read_timeout 900s;`. Caddy handles long streams without tuning.
 
 Caddy makes this automatic:
 
@@ -146,9 +173,27 @@ volumes: { asgard-pg: {} }
 Asgard runs its own migrations on boot against whatever `ASGARD_DATABASE_URL`
 points to; the same schema works on SQLite and Postgres.
 
-> **Run one replica.** The cost-rollup and secret-rotation background loops assume
-> a single writer. Asgard does not do leader election (by design). Scale vertically
-> for the pilot; one replica is correct.
+> **On ephemeral or replaceable compute, use Postgres — not SQLite.** SQLite is a
+> file on the local disk. Where that disk is ephemeral (containers / Fargate /
+> Kubernetes that get replaced on every deploy, crash, or scale event), each
+> replacement starts from an empty DB and silently loses every project, key, and
+> cost record. SQLite is the right call for a genuine single box whose disk
+> persists across restarts — a laptop, a homelab, a VM with its own volume — the
+> 5-person-shop / single-binary case, **no cloud required**. The moment compute is
+> cattle, point `ASGARD_DATABASE_URL` at any Postgres (managed or self-run); that's
+> the documented pilot path and what the
+> [self-deploy runbook](./deploy-agent.md#appendix--dogfood-self-deploy-asgard-on-ecs)
+> uses. The database is the single system of record: back it up and you've backed up
+> everything — projects, keys, cost, and the encrypted secret store.
+
+> **Run one replica — this is a hard invariant, not a suggestion.** The cost-rollup
+> and secret-rotation background loops assume a single writer and Asgard does **not**
+> do leader election (by design). There is no guard against running two: an
+> accidental scale-out (`desired_count: 2`, an HPA, a rolling deploy that overlaps
+> old+new) silently **double-counts cost deltas and races secret rotation** — the
+> data corrupts quietly, with no error. Pin `desired_count: 1`, disable autoscaling
+> on the service, and scale vertically. The request path is stateless; only these
+> background loops require the single-writer guarantee.
 
 ## Step 2 — The master key
 
@@ -168,8 +213,9 @@ unset, a built-in dev key is used — **fine for a smoke test, not for a pilot.*
 > stored secret becomes undecryptable. Keep it in your KMS (not in the DB), and
 > **back up the database** — the DB holds the encrypted secrets, the KMS holds the
 > key, and you need both. Rotating the key is a deliberate migration, not a config
-> tweak. If you arm provisioning, the terraform state under `work_dir` (in `/data`)
-> must also be on **durable** storage — lose it and you orphan real cloud resources.
+> tweak. The same master key also encrypts provisioning's Terraform state (stored
+> in the DB, see below), so a key you can't recover means state you can't decrypt —
+> one more reason to source it from your KMS and keep it stable.
 
 ## Step 3 — `asgard.yaml`
 
@@ -279,6 +325,16 @@ ASGARD_OIDC_REDIRECT_URI=https://<host>/api/auth/oidc/callback
 # ASGARD_OIDC_SCOPES defaults to "openid email profile"
 ```
 
+> **`ASGARD_OIDC_*` and `AUTH0_*` are two unrelated credential sets — don't
+> conflate them.** `ASGARD_OIDC_*` is **human login** (the authorization-code flow
+> against any OIDC IdP — Auth0, Okta, Entra) and is read by Asgard itself.
+> `AUTH0_*` is **provisioning** (M2M Management-API creds passed through to the
+> Terraform Auth0 provider, see "Arming provisioning" below) and is read by the
+> `terraform` child process, not Asgard. They happen to overlap only when your IdP
+> *is* Auth0 — and even then they are **two separate Auth0 apps** (a Regular Web
+> App for login, an M2M app for provisioning). Setting one does nothing for the
+> other.
+
 In your IdP, create a **Regular Web Application** for login:
 
 - Allowed callback URL: `https://<host>/api/auth/oidc/callback` (must match
@@ -292,7 +348,31 @@ fails, the most common cause is a mismatched redirect URI.
 ## Enterprise: arming provisioning
 
 Out of the box, provisioning is **unarmed** (the catalog is discoverable and the
-dry-run path works, but nothing real is created). To arm it:
+dry-run path works, but nothing real is created). There are two ways to arm it —
+pick one:
+
+**Env-only (container-first, no config file).** Set these on the Asgard process and
+the `terraform` connector registers on boot:
+
+```bash
+ASGARD_TF_MODULES_DIR=/modules                       # bundled in the official image
+ASGARD_TF_WORK_DIR=/data/asgard-tf                   # scratch only; can be ephemeral
+ASGARD_TF_ALLOWED=auth0:your-tenant                  # cloud:account allowlist
+```
+
+This is the recommended path for a container deploy — no `asgard.yaml` needed for
+the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
+
+> **Terraform state is durable in the database.** Around every apply/destroy,
+> Asgard snapshots each resource's state into its own DB (the same SQLite or
+> Postgres as everything else), encrypted with the master key. So `work_dir` is
+> just scratch and may be ephemeral — back up the database and you've backed up
+> your infrastructure state along with everything else. No S3, no remote backend,
+> no extra dependency. (The single-replica invariant keeps the single writer
+> honest; see "Run one replica".)
+
+**Config file (full control).** Or arm it from `asgard.yaml` when you want the other
+provisioning knobs (auto-approve, services overlay, AWS cost sources) in one place:
 
 1. Add a `terraform` block to `asgard.yaml` pointing at the bundled modules. The
    official container ships `terraform` on `PATH` and the modules at `/modules`,
@@ -302,7 +382,7 @@ dry-run path works, but nothing real is created). To arm it:
    provisioning:
      terraform:
        modules_dir: /modules         # bundled in the image (or your own mounted tree)
-       work_dir: /data/asgard-tf     # persisted working dirs + local TF state
+       work_dir: /data/asgard-tf     # scratch only; state is kept in the DB
      # Allow only the targets you intend to provision into:
      allowed:
        - { cloud: auth0, account: your-tenant }
@@ -343,7 +423,8 @@ plaintext, or the audit log.
 |---|---|---|
 | `ASGARD_DATABASE_URL` | `sqlite://…` or `postgres://…`. Migrations run on boot. | `sqlite://asgard.db` |
 | `ASGARD_BIND` | Listen address. | `0.0.0.0:8080` |
-| `ASGARD_SECRET_KEY` | 64 hex chars (32 bytes) for the secret store. From your KMS. | dev key (insecure) |
+| `ASGARD_SECRET_KEY` | 64 hex chars (32 bytes) for the secret store. From your KMS. **Load-bearing and one-way — changing it orphans every stored secret** (see Step 2). | dev key (insecure) |
+| `ASGARD_SYSTEM_NAME` | Display name the dashboard rebrands to (see "Rebranding" below). | `Asgard` |
 | `ASGARD_ADMIN_USER` | Initial admin username. | `admin` |
 | `ASGARD_ADMIN_PASSWORD` | Initial admin password. If unset and no admin exists, one is generated + logged once. | (generated) |
 | `ASGARD_OIDC_DOMAIN` | IdP domain; presence enables SSO. Endpoints derived as `/authorize`, `/oauth/token`, `/userinfo`. | (off) |
@@ -352,12 +433,32 @@ plaintext, or the audit log.
 | `ASGARD_DEV_INSECURE` | `1`/`true` disables human-session enforcement. Loopback-only; ignored otherwise. | off |
 | `ASGARD_FORCE_HTTPS` | `1`/`true` forces `Secure` on auth cookies regardless of detected scheme — "HTTPS is required." Set this when TLS is mandatory everywhere. | off (adaptive) |
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |
+| `ASGARD_TF_MODULES_DIR` | Arms the `terraform` connector **without a config file** — point it at the bundled modules (`/modules`). Presence is what registers the connector. | (off) |
+| `ASGARD_TF_WORK_DIR` | Scratch dir for Terraform working dirs. **State itself is kept (encrypted) in the DB**, so this may be ephemeral. | system temp |
+| `ASGARD_TF_ALLOWED` | Comma-separated `cloud:account` allowlist for env-armed provisioning, e.g. `auth0:your-tenant,aws:1234567890`. A request to anything not listed is refused. | — |
 | `ASGARD_GIT_TOKEN` | Token for catalog source repos (GitHub/GitLab), if configured. | — |
 | `ASGARD_GUARDRAIL_MODE` | `enforce` (default) or `monitor`. | `enforce` |
 
 Provider keys for inference backends (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
 activate the corresponding inference modules when present; see
 [Inference backends](./inference-backends.md).
+
+---
+
+## Rebranding the dashboard
+
+Set **`ASGARD_SYSTEM_NAME`** (e.g. `Acme Control Plane`) to rebrand the deployment. It is
+**cosmetic and UI-only** — it changes:
+
+- the browser tab title,
+- the header brand text (every `.brand` element), and
+- the logo glyph (the first letter of the name),
+
+served via `GET /api/auth/config` so the change is live on next page load. It does
+**not** rename anything functional: the MCP server still identifies as `asgard` in
+the `initialize` handshake, project ids keep the `proj-YYYY-NNNN` shape, env var
+names stay `ASGARD_*`, and log lines / API paths are unchanged. Set it once on the
+process; there's nothing else to configure.
 
 ---
 

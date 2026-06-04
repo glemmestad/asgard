@@ -27,7 +27,7 @@ use asgard_provision::{
     AutoApprovePolicy, AwsCostExplorerSource, BuiltinSecretStore, CloudTarget,
     DatabricksCostSource, ExecConnector, ExecCostSource, GatewaySource, LiteLlmConnector,
     LiteLlmCostSource, ProvisionRepo, ProvisionService, SecretStore, ServiceCatalog,
-    TerraformConnector,
+    TerraformConnector, TfStateStore, DEV_SECRET_KEY,
 };
 use asgard_registry::{
     ClassificationRequirements, GovernanceConfig, GroupAllowlist, GroupEntry, ProjectRegistry,
@@ -878,7 +878,23 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
         tracing::info!("litellm connector + cost source registered (per-project keys)");
     }
 
-    let Some(p) = &config.provisioning else {
+    // The builtin secret-store master key is honored unconditionally — env var
+    // (preferred) or the `provisioning.secrets` config block — *before* the
+    // provisioning early-return below. A container-first deploy that sets only
+    // ASGARD_SECRET_KEY and authors no config file must still get its key;
+    // otherwise the store silently keeps the insecure dev key while everything
+    // looks fine.
+    let master_key = secret_master_key(config.provisioning.as_ref());
+    if let Some(key) = master_key {
+        svc.set_secret_store(
+            Arc::new(BuiltinSecretStore::new(db.clone(), key)) as Arc<dyn SecretStore>
+        );
+    }
+
+    // Provisioning arms from an `asgard.yaml` block or, for a container-first
+    // deploy with no config file, from env alone (ASGARD_TF_MODULES_DIR + friends).
+    let env_provisioning = provisioning_from_env();
+    let Some(p) = config.provisioning.as_ref().or(env_provisioning.as_ref()) else {
         return svc;
     };
 
@@ -890,29 +906,27 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
         }
     }
 
-    // Builtin secret store master key (env overrides config; else dev default).
-    if let Some(key) = secret_master_key(p) {
-        svc.set_secret_store(
-            Arc::new(BuiltinSecretStore::new(db.clone(), key)) as Arc<dyn SecretStore>
-        );
-    }
-
-    // Terraform connector (the universal path).
+    // Terraform connector (the universal path). State is snapshotted into the DB
+    // (encrypted with the master key) around every run, so the work_dir is just
+    // scratch and may be ephemeral — durability rides on the database.
     if let Some(tf) = &p.terraform {
         let work = tf
             .work_dir
             .clone()
             .unwrap_or_else(|| std::env::temp_dir().join("asgard-tf"));
+        let tf_state = Arc::new(TfStateStore::new(
+            db.clone(),
+            master_key.unwrap_or(DEV_SECRET_KEY),
+        ));
         svc.register_backend(
             "terraform",
-            Arc::new(TerraformConnector::new(
-                tf.bin.clone(),
-                tf.modules_dir.clone(),
-                work,
-            )),
+            Arc::new(
+                TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
+                    .with_state(tf_state),
+            ),
         );
         tracing::info!(
-            "terraform connector registered (modules={})",
+            "terraform connector registered (modules={}, durable state in DB)",
             tf.modules_dir.display()
         );
         if !tf.modules_dir.exists() {
@@ -986,12 +1000,45 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
     svc
 }
 
+/// Synthesize a provisioning config from env so a container-first deploy can arm
+/// provisioning without an `asgard.yaml`. Returns `None` unless
+/// `ASGARD_TF_MODULES_DIR` is set (the minimum to register the terraform
+/// connector). `ASGARD_TF_WORK_DIR` sets durable state storage;
+/// `ASGARD_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
+/// to anything not listed is refused). A config-file `provisioning:` block, when
+/// present, takes precedence over this entirely.
+fn provisioning_from_env() -> Option<ProvisioningCfg> {
+    let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok()?;
+    let allowed = std::env::var("ASGARD_TF_ALLOWED")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| t.split_once(':'))
+                .map(|(cloud, account)| TargetCfg {
+                    cloud: cloud.trim().to_string(),
+                    account: account.trim().to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(ProvisioningCfg {
+        allowed,
+        terraform: Some(TerraformCfg {
+            bin: default_tf_bin(),
+            modules_dir: PathBuf::from(modules_dir),
+            work_dir: std::env::var("ASGARD_TF_WORK_DIR").ok().map(PathBuf::from),
+        }),
+        ..Default::default()
+    })
+}
+
 /// The builtin store master key: `ASGARD_SECRET_KEY` env (64 hex chars) overrides
 /// config; `None` leaves the dev default in place.
-fn secret_master_key(p: &ProvisioningCfg) -> Option<[u8; 32]> {
-    let hex = std::env::var("ASGARD_SECRET_KEY")
-        .ok()
-        .or_else(|| p.secrets.as_ref().and_then(|s| s.master_key_hex.clone()))?;
+fn secret_master_key(p: Option<&ProvisioningCfg>) -> Option<[u8; 32]> {
+    let hex = std::env::var("ASGARD_SECRET_KEY").ok().or_else(|| {
+        p.and_then(|p| p.secrets.as_ref())
+            .and_then(|s| s.master_key_hex.clone())
+    })?;
     let bytes = (0..hex.len())
         .step_by(2)
         .filter_map(|i| {

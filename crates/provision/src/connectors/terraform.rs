@@ -7,22 +7,35 @@
 //! Sensitive outputs are reported as `sensitive_keys` so the caller routes their
 //! values to the secret store — they never land in the resource record.
 //!
-//! State backend is operator-configurable; the zero-config default is local
-//! state persisted under `work_root/<project>/<name>` (kept off the control
-//! plane, not stored in the DB record). `destroy` re-uses that working dir.
+//! State is snapshotted into Asgard's DB (encrypted) around every apply/destroy
+//! via an attached [`TfStateStore`], so it survives an ephemeral `work_root`; the
+//! work dir under `work_root/<project>/<type>/<name>` is just scratch. Without a
+//! store attached (tests) state stays local to the work dir.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 
-use crate::{Plan, ProvisionError, ProvisionRequest, Provisioned, Provisioner};
+use crate::{Plan, ProvisionError, ProvisionRequest, Provisioned, Provisioner, TfStateStore};
 
 pub struct TerraformConnector {
     bin: String,
     modules_dir: PathBuf,
     work_root: PathBuf,
+    /// Durable state store. When set, each resource's `terraform.tfstate` is
+    /// hydrated from the DB before a run and snapshotted back after, so state
+    /// survives an ephemeral `work_root`. `None` keeps state local to `work_root`
+    /// (the zero-dependency default used in tests).
+    state: Option<Arc<TfStateStore>>,
+    /// Per-state-id locks: serialize hydrate→run→persist for one resource so
+    /// concurrent requests can't clobber its state. Asgard already mandates a
+    /// single replica; this guards the in-process case.
+    locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl TerraformConnector {
@@ -31,7 +44,79 @@ impl TerraformConnector {
             bin: bin.into(),
             modules_dir,
             work_root,
+            state: None,
+            locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Attach a durable state store so state persists in the DB across runs and
+    /// ephemeral work dirs.
+    pub fn with_state(mut self, store: Arc<TfStateStore>) -> Self {
+        self.state = Some(store);
+        self
+    }
+
+    fn state_id(req: &ProvisionRequest) -> String {
+        format!("{}/{}/{}", req.ctx.project_id, req.resource_type, req.name)
+    }
+
+    async fn lock_for(&self, id: &str) -> tokio::sync::OwnedMutexGuard<()> {
+        let m = {
+            let mut map = self.locks.lock().await;
+            map.entry(id.to_string())
+                .or_insert_with(|| Arc::new(Mutex::new(())))
+                .clone()
+        };
+        m.lock_owned().await
+    }
+
+    /// Write the DB-held state into the working dir before a run (no-op without a
+    /// store or any stored state).
+    async fn hydrate(&self, id: &str, wd: &Path) -> Result<(), ProvisionError> {
+        let Some(store) = &self.state else {
+            return Ok(());
+        };
+        if let Some(bytes) = store.load(id).await? {
+            std::fs::write(wd.join("terraform.tfstate"), bytes)
+                .map_err(|e| ProvisionError::Backend(format!("write tf state: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Snapshot the working dir's state back into the DB after a run (no-op
+    /// without a store; an absent state file is treated as empty and skipped).
+    async fn persist(&self, id: &str, wd: &Path) -> Result<(), ProvisionError> {
+        let Some(store) = &self.state else {
+            return Ok(());
+        };
+        match std::fs::read(wd.join("terraform.tfstate")) {
+            Ok(bytes) => store.save(id, &bytes).await,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(ProvisionError::Backend(format!("read tf state: {e}"))),
+        }
+    }
+
+    /// Materialize the working dir: copy the module, write tfvars, hydrate state
+    /// from the DB, and `init`. Shared by apply and destroy.
+    async fn prepare(
+        &self,
+        req: &ProvisionRequest,
+        plan: &Plan,
+        overrides: &Value,
+    ) -> Result<PathBuf, ProvisionError> {
+        let module = self.module_path(&req.config)?;
+        let wd = self.work_dir(req);
+        copy_module(&module, &wd)?;
+        let vars = tfvars(req, plan, overrides);
+        std::fs::write(
+            wd.join("asgard.auto.tfvars.json"),
+            serde_json::to_vec_pretty(&vars).unwrap_or_default(),
+        )
+        .map_err(|e| ProvisionError::Backend(format!("write tfvars: {e}")))?;
+        self.hydrate(&Self::state_id(req), &wd).await?;
+        self.run(&wd, &["init", "-input=false", "-no-color"])
+            .await?;
+        Ok(wd)
     }
 
     fn module_path(&self, config: &Value) -> Result<PathBuf, ProvisionError> {
@@ -66,23 +151,23 @@ impl TerraformConnector {
         plan: &Plan,
         overrides: &Value,
     ) -> Result<Provisioned, ProvisionError> {
-        let module = self.module_path(&req.config)?;
-        let wd = self.work_dir(req);
-        copy_module(&module, &wd)?;
-        let vars = tfvars(req, plan, overrides);
-        std::fs::write(
-            wd.join("asgard.auto.tfvars.json"),
-            serde_json::to_vec_pretty(&vars).unwrap_or_default(),
-        )
-        .map_err(|e| ProvisionError::Backend(format!("write tfvars: {e}")))?;
-
-        self.run(&wd, &["init", "-input=false", "-no-color"])
-            .await?;
-        self.run(
-            &wd,
-            &["apply", "-auto-approve", "-input=false", "-no-color"],
-        )
-        .await?;
+        let id = Self::state_id(req);
+        let _guard = self.lock_for(&id).await;
+        let wd = self.prepare(req, plan, overrides).await?;
+        let applied = self
+            .run(
+                &wd,
+                &["apply", "-auto-approve", "-input=false", "-no-color"],
+            )
+            .await;
+        // Persist whatever state exists — even after a partial-apply failure —
+        // before surfacing the apply error, or we'd lose track of created
+        // resources and orphan them.
+        if let Err(e) = self.persist(&id, &wd).await {
+            applied?;
+            return Err(e);
+        }
+        applied?;
         let out = self.run(&wd, &["output", "-json", "-no-color"]).await?;
         let raw: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
 
@@ -212,15 +297,31 @@ impl Provisioner for TerraformConnector {
         req: &ProvisionRequest,
         _outputs: &Value,
     ) -> Result<(), ProvisionError> {
-        let wd = self.work_dir(req);
-        if !wd.exists() {
+        let id = Self::state_id(req);
+        let _guard = self.lock_for(&id).await;
+        let has_stored = match &self.state {
+            Some(s) => s.exists(&id).await?,
+            None => false,
+        };
+        // Nothing was ever provisioned: no local working dir and no stored state.
+        if !self.work_dir(req).exists() && !has_stored {
             return Ok(());
         }
-        self.run(
-            &wd,
-            &["destroy", "-auto-approve", "-input=false", "-no-color"],
-        )
-        .await?;
+        // Rebuild the working dir from the module + hydrated state — after a
+        // restart the dir is gone but the state lives in the DB.
+        let plan = self.plan(req).await?;
+        let wd = self.prepare(req, &plan, &Value::Null).await?;
+        let destroyed = self
+            .run(
+                &wd,
+                &["destroy", "-auto-approve", "-input=false", "-no-color"],
+            )
+            .await;
+        let _ = self.persist(&id, &wd).await;
+        destroyed?;
+        if let Some(s) = &self.state {
+            let _ = s.delete(&id).await;
+        }
         Ok(())
     }
 
@@ -296,5 +397,43 @@ mod tests {
         // A normal apply leaves the spec's value intact.
         let normal = tfvars(&r, &plan(), &Value::Null);
         assert_eq!(normal["desired_count"], serde_json::json!(2));
+    }
+
+    /// The durability guarantee, without needing terraform installed: state
+    /// written to the work dir survives the work dir being wiped, because it was
+    /// snapshotted into the DB and is re-hydrated on the next run.
+    #[tokio::test]
+    async fn state_survives_an_ephemeral_work_dir() {
+        use asgard_storage::Db;
+
+        let dbpath =
+            std::env::temp_dir().join(format!("asgard-tf-{}.db", asgard_storage::new_uid()));
+        let db = Db::connect(&format!("sqlite://{}", dbpath.display()))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        let work_root =
+            std::env::temp_dir().join(format!("asgard-tfwork-{}", asgard_storage::new_uid()));
+        let conn = TerraformConnector::new("terraform", PathBuf::from("/modules"), work_root)
+            .with_state(Arc::new(TfStateStore::new(db, [0x33; 32])));
+
+        let r = req();
+        let id = TerraformConnector::state_id(&r);
+        let wd = conn.work_dir(&r);
+        std::fs::create_dir_all(&wd).unwrap();
+        std::fs::write(wd.join("terraform.tfstate"), b"{\"serial\":7}").unwrap();
+
+        // Snapshot into the DB, then simulate compute replacement: wipe the dir.
+        conn.persist(&id, &wd).await.unwrap();
+        std::fs::remove_dir_all(&wd).unwrap();
+        std::fs::create_dir_all(&wd).unwrap();
+        assert!(!wd.join("terraform.tfstate").exists());
+
+        // Re-hydrate from the DB restores the exact state.
+        conn.hydrate(&id, &wd).await.unwrap();
+        assert_eq!(
+            std::fs::read(wd.join("terraform.tfstate")).unwrap(),
+            b"{\"serial\":7}"
+        );
     }
 }

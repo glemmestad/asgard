@@ -23,6 +23,7 @@ Collect these before starting. Stop and ask a human for any you cannot derive.
   `openssl rand -hex 32` only for a throwaway trial.
 - `DB` — `postgres://USER:PASS@HOST:5432/asgard` for a pilot; `sqlite:///data/asgard.db` for a box trial.
 - `ASGARD_ADMIN_PASSWORD` — optional; if omitted, capture the generated one from the boot log.
+- `ASGARD_SYSTEM_NAME` — optional; UI display name to rebrand the dashboard to (e.g. `Acme Control Plane`). Cosmetic only; defaults to `Asgard`.
 - `[ENTERPRISE]` OIDC web-app: `ASGARD_OIDC_DOMAIN`, `ASGARD_OIDC_CLIENT_ID`, `ASGARD_OIDC_CLIENT_SECRET`, and the callback URL `https://HOST/api/auth/oidc/callback` registered in the IdP.
 - `[ENTERPRISE]` Auth0 M2M for provisioning: `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, `AUTH0_CLIENT_SECRET` (authorized for the Management API).
 
@@ -118,18 +119,25 @@ break-glass.
 
 ## Step 8 — `[ENTERPRISE]` Arm provisioning
 
-Add to `asgard.yaml` (the official image bundles `terraform` on `PATH` and the
-modules at `/modules`, so no mount is required):
+Container-first (no config file) — set on the Asgard process (the image bundles
+`terraform` on `PATH` and the modules at `/modules`):
+```bash
+ASGARD_TF_MODULES_DIR=/modules
+ASGARD_TF_WORK_DIR=/data/asgard-tf      # scratch only; can be ephemeral
+ASGARD_TF_ALLOWED=auth0:your-tenant
+AUTH0_DOMAIN=... AUTH0_CLIENT_ID=... AUTH0_CLIENT_SECRET=...   # M2M provider creds
+```
+Or via `asgard.yaml` when you want the other provisioning knobs in one place:
 ```yaml
 provisioning:
   terraform: { modules_dir: /modules, work_dir: /data/asgard-tf }
   allowed:
     - { cloud: auth0, account: your-tenant }
 ```
-Set the M2M creds **on the Asgard process** (the Terraform child inherits them):
-```bash
-AUTH0_DOMAIN=... AUTH0_CLIENT_ID=... AUTH0_CLIENT_SECRET=... asgard serve ...
-```
+Either way the M2M creds go **on the Asgard process** (the Terraform child inherits
+them). **Terraform state is persisted (encrypted) in Asgard's database** and
+hydrated back per run, so `ASGARD_TF_WORK_DIR` is just scratch and may be ephemeral
+— back up the DB and you've backed up provisioning state too.
 **Verify:** request `auth0-application` over `/mcp` (`request_resource`) for a
 registered project; the request reaches `fulfilled` and the created app's
 `client_secret` is stored as a `secret_ref` (fetch it via the `get_secret` tool;
@@ -188,6 +196,7 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
      "container_port": 8080,
      "health_path": "/readyz",
      "certificate_arn": "<CERT_ARN>",
+     "idle_timeout": 900,
      "desired_count": 1,
      "env": { "ASGARD_DATABASE_URL_SECRET_ARN": "<DB_SECRET_ARN>", "ASGARD_SECRET_KEY_SECRET_ARN": "<KEY_SECRET_ARN>" },
      "grants": { "secrets_read": ["<DB_SECRET_ARN>", "<KEY_SECRET_ARN>"], "kms_decrypt": ["<KMS_ARN>"] }

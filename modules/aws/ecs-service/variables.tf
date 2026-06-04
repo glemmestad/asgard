@@ -53,6 +53,11 @@ variable "container_port" {
   default = 8080
 }
 
+# ALB target-group health check path. Defaults to "/" so a generic web app works
+# out of the box, but "/" usually only proves the app serves *something* — set this
+# to a real readiness endpoint that fails when the backend is unhealthy (Asgard:
+# "/readyz", which checks the DB) so the ALB pulls broken tasks instead of routing
+# to them.
 variable "health_path" {
   type    = string
   default = "/"
@@ -106,4 +111,13 @@ variable "execution_role_arn" {
 variable "internal" {
   type    = bool
   default = true
+}
+
+# ALB idle timeout (seconds). AWS defaults to 60, which severs long-lived
+# Streamable-HTTP / SSE connections mid-stream — an agent on Asgard's `/mcp` would
+# see a tool call cut off. Default to 300 so streaming works out of the box; raise
+# toward 900 for very long tool calls.
+variable "idle_timeout" {
+  type    = number
+  default = 300
 }

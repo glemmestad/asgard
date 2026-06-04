@@ -23,6 +23,7 @@ mod manifest;
 mod repo;
 pub mod secrets;
 mod stub;
+mod tfstate;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -49,11 +50,12 @@ pub use manifest::{
 pub use repo::{ProvisionRepo, ProvisionedRecord};
 pub use secrets::{BuiltinSecretStore, SecretInfo, SecretRef, SecretStore};
 pub use stub::StubProvisioner;
+pub use tfstate::TfStateStore;
 
 /// Dev master key for the builtin secret store when the operator configures
 /// none. Production sets a real key (KMS/env/file) via `build_provision`; this
 /// only keeps the single binary working out of the box.
-const DEV_SECRET_KEY: [u8; 32] = [0x07; 32];
+pub const DEV_SECRET_KEY: [u8; 32] = [0x07; 32];
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProvisionError {

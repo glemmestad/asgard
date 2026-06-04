@@ -25,6 +25,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
         include_str!("../migrations/0016_knowledge_versions.sql"),
     ),
     (17, include_str!("../migrations/0017_pat_suffix.sql")),
+    (18, include_str!("../migrations/0018_tf_state.sql")),
 ];
 
 pub async fn run(db: &Db) -> Result<(), StorageError> {

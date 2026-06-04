@@ -66,6 +66,12 @@ The `litellm` module activates on `LITELLM_BASE_URL` (it's OpenAI-compatible).
 Asgard now routes inference through LiteLLM while keeping all governance — tokens,
 budgets, policy, guardrails, audit, per-project cost — exactly the same.
 
+> **This gated path needs no LiteLLM database.** Asgard only proxies chat
+> completions through LiteLLM on the one shared master key, so LiteLLM can run
+> **config-only / stateless** (no `DATABASE_URL` on the proxy). Key issuance,
+> budgets, and cost attribution all live in Asgard. The per-project path below is
+> the one that needs LiteLLM's own DB.
+
 ### 3. (Optional) Make it the default backend
 Point the catalog's default model ref at the `litellm` module's model, or set the
 project default-backend rule. Projects keep requesting "an LLM key"; they never
@@ -86,6 +92,13 @@ credential, and Asgard isn't in the call path) → Asgard mints a project-tagged
 virtual key on the proxy, stores the key value in the secret store, and registers a
 `litellm` cost source that reads each key's spend back via `/key/info`. Without
 those env vars the service's connector falls back to `stub` and no spend is pulled.
+
+> **This direct path requires LiteLLM to have its own database.** Per-project key
+> minting (`/key/generate`), budgets, and spend read-back (`/key/info`) are
+> DB-backed features of the LiteLLM proxy — LiteLLM must be configured with its own
+> `DATABASE_URL` (its own Postgres, separate from Asgard's). The gated `litellm`
+> module above does **not** need this; only `litellm-key` does, because here the
+> key lives on the proxy, not in Asgard.
 
 ## Databricks Model Serving
 
