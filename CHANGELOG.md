@@ -1,3 +1,10 @@
+# [0.2.0](https://github.com/glemmestad/asgard/compare/v0.1.0...v0.2.0) (2026-06-04)
+
+
+### Features
+
+* durable terraform state in DB + container-first provisioning ([#5](https://github.com/glemmestad/asgard/issues/5)) ([c9b899b](https://github.com/glemmestad/asgard/commit/c9b899b618716b3ab5aded492b25daa8cdfac2bd))
+
 # [0.1.0](https://github.com/glemmestad/asgard/compare/v0.0.1...v0.1.0) (2026-06-04)
 
 
