@@ -8,13 +8,13 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "semantic-release-cargo prepare ${nextRelease.version}"
+        "prepareCmd": "sed -i 's/^version = .*/version = \"${nextRelease.version}\"/' Cargo.toml"
       }
     ],
     [
       "@semantic-release/git",
       {
-        "assets": ["CHANGELOG.md", "Cargo.toml", "Cargo.lock"],
+        "assets": ["CHANGELOG.md", "Cargo.toml"],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ]
