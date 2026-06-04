@@ -277,6 +277,31 @@ pub struct RequestResourceArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct RequestGrantArgs {
+    /// Target project (required on a user token; omit on a project key). Both
+    /// resources must belong to it.
+    pub project_id: Option<String>,
+    /// The resource being granted access (e.g. an ecs-service); its identity gets
+    /// the access. Use an id from list_resources.
+    pub consumer_resource_id: String,
+    /// The resource access is granted to (e.g. an s3-bucket).
+    pub target_resource_id: String,
+    /// Access level the target defines; defaults to `write` (read+write).
+    #[serde(default)]
+    pub level: Option<String>,
+    pub requester: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListResourcesArgs {
+    /// Target project (required on a user token; omit on a project key).
+    pub project_id: Option<String>,
+    /// Optional state filter (e.g. "provisioned", "destroyed", "suspended").
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct PromotionArgs {
     /// Target project (required on a user token; omit on a project key).
     pub project_id: Option<String>,
@@ -339,6 +364,16 @@ impl AsgardMcp {
         ctx.extensions
             .get::<http::request::Parts>()
             .and_then(|p| p.extensions.get::<McpAuth>().cloned())
+    }
+
+    /// The authenticated principal as a requester/actor string (`user:{email}` or
+    /// `project:{id}`), or `None` on an unauthenticated stdio connection.
+    fn requester_from_auth(ctx: &RequestContext<RoleServer>) -> Option<String> {
+        match Self::auth(ctx) {
+            Some(McpAuth::User { email, .. }) => Some(format!("user:{email}")),
+            Some(McpAuth::Project { project_id }) => Some(format!("project:{project_id}")),
+            None => None,
+        }
     }
 
     /// The project a scoped tool acts on, authorized by the request principal:
@@ -903,6 +938,38 @@ impl AsgardMcp {
         Ok(serde_json::to_string(&outcome).unwrap_or_default())
     }
 
+    async fn do_request_grant(&self, pid: &str, a: RequestGrantArgs) -> Result<String, String> {
+        let level = a.level.as_deref().unwrap_or("write");
+        let requester = a.requester.as_deref().unwrap_or(DEFAULT_REQUESTER);
+        let outcome = self
+            .provision
+            .request_grant(
+                &self.workflow,
+                &self.registry,
+                pid,
+                &a.consumer_resource_id,
+                &a.target_resource_id,
+                level,
+                requester,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_string(&outcome).unwrap_or_default())
+    }
+
+    async fn do_list_resources(&self, pid: &str, state: Option<&str>) -> Result<String, String> {
+        let mut recs = self
+            .provision
+            .repo()
+            .list_by_project(pid)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(s) = state {
+            recs.retain(|r| r.state == s);
+        }
+        Ok(serde_json::to_string(&recs).unwrap_or_default())
+    }
+
     async fn do_request_promotion(
         &self,
         pid: &str,
@@ -1037,7 +1104,7 @@ impl AsgardMcp {
         Ok(json!({
             "tier": tier.as_str(),
             "files": files,
-            "next": "write each file to its path (create directories as needed), then call register_project",
+            "next": "write each file to its path (start with .gitignore, create directories as needed), then call register_project",
         })
         .to_string())
     }
@@ -1411,13 +1478,49 @@ impl AsgardMcp {
     async fn request_resource(
         &self,
         ctx: RequestContext<RoleServer>,
-        Parameters(a): Parameters<RequestResourceArgs>,
+        Parameters(mut a): Parameters<RequestResourceArgs>,
     ) -> Result<CallToolResult, McpError> {
         let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
             Ok(p) => p,
             Err(e) => return deny(e),
         };
+        if a.requester.is_none() {
+            a.requester = Self::requester_from_auth(&ctx);
+        }
         wrap(self.do_request_resource(&pid, a).await)
+    }
+
+    #[tool(
+        description = "Grant a consumer resource (e.g. an ecs-service) access to a target resource in the same project (e.g. an s3-bucket or dynamodb-table). Defaults to read+write. Your own project's resources are self-service — no approval. Pass ids from list_resources."
+    )]
+    async fn request_grant(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(mut a): Parameters<RequestGrantArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        if a.requester.is_none() {
+            a.requester = Self::requester_from_auth(&ctx);
+        }
+        wrap(self.do_request_grant(&pid, a).await)
+    }
+
+    #[tool(
+        description = "List a project's provisioned resources (id, type, name, state, outputs). Optionally filter by state. Use the ids here for request_grant and deprovision_resource."
+    )]
+    async fn list_resources(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<ListResourcesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        wrap(self.do_list_resources(&pid, a.state.as_deref()).await)
     }
 
     #[tool(

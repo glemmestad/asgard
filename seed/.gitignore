@@ -1,0 +1,27 @@
+# Secrets and local environment — never commit these (see .agent/SECURITY.md).
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+.secrets/
+
+# Credentials a control-plane resource may mint locally.
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Build output, dependencies, caches.
+target/
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+
+# Editor / OS noise.
+.DS_Store
+.idea/
+.vscode/

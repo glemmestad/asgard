@@ -849,6 +849,31 @@ impl ProvisionService {
         spec: serde_json::Value,
         requester: &str,
     ) -> Result<RequestOutcome, ProvisionError> {
+        self.request_inner(
+            workflow,
+            registry,
+            project_id,
+            resource_type,
+            name,
+            spec,
+            requester,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn request_inner(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+        project_id: &str,
+        resource_type: &str,
+        name: &str,
+        spec: serde_json::Value,
+        requester: &str,
+        config_override: Option<serde_json::Value>,
+    ) -> Result<RequestOutcome, ProvisionError> {
         let reg = registry.require_active(project_id).await?;
         let manifest = self
             .catalog
@@ -861,25 +886,37 @@ impl ProvisionService {
             ));
         }
 
-        let cloud = spec
-            .get("cloud")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&self.default_cloud)
-            .to_string();
+        // Allowlist gate: unchanged — the target is the spec's cloud/account or the
+        // global default, so which targets an operator has armed still governs.
         let account = spec
             .get("account")
             .and_then(|v| v.as_str())
             .unwrap_or(&self.default_account)
             .to_string();
+        let gate_cloud = spec
+            .get("cloud")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.default_cloud)
+            .to_string();
         let target = CloudTarget {
-            cloud: cloud.clone(),
+            cloud: gate_cloud.clone(),
             account: account.clone(),
         };
         if !self.allowed.contains(&target) {
             return Err(ProvisionError::NotPermitted(format!(
-                "target {cloud}/{account} is not an allowed provisioning target"
+                "target {gate_cloud}/{account} is not an allowed provisioning target"
             )));
         }
+        // Recorded cloud (attribution/tags only — not the gate): the resource's own
+        // manifest cloud, so an AWS bucket isn't mislabeled with the default cloud
+        // (e.g. an auth0-first allowlist tagging it `auth0`).
+        let cfg = manifest.connector_config();
+        let cloud = spec
+            .get("cloud")
+            .and_then(|v| v.as_str())
+            .or_else(|| cfg.get("cloud").and_then(|v| v.as_str()))
+            .unwrap_or(&self.default_cloud)
+            .to_string();
 
         // Resolve the variant (cost/tier/approval keyed to the spec) and enforce
         // the service's tier availability — a hard gate, not a review.
@@ -913,7 +950,7 @@ impl ProvisionService {
         // (strings/ints/bools only — no floats, no arbitrary nested records). The
         // raw spec is carried as a JSON string and the cost estimate is derived
         // from the manifest at provision time rather than passed through here.
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "project_id": project_id,
             "resource_type": resource_type,
             "name": name,
@@ -923,6 +960,19 @@ impl ProvisionService {
             "cloud": cloud,
             "account": account,
         });
+        // A per-request connector-module override (the target's grant mechanism)
+        // rides as a Cedar-safe string. `level` is surfaced to the policy context so
+        // an operator can gate grants by access level without a code change.
+        if let Some(m) = config_override
+            .as_ref()
+            .and_then(|c| c.get("module"))
+            .and_then(|v| v.as_str())
+        {
+            payload["config_module"] = serde_json::json!(m);
+        }
+        if let Some(level) = spec.get("level").and_then(|v| v.as_str()) {
+            payload["level"] = serde_json::json!(level);
+        }
         let req = workflow
             .submit(NewRequest {
                 kind: format!("provision:{resource_type}"),
@@ -948,6 +998,129 @@ impl ProvisionService {
                 pending_approval: pending,
             })
         }
+    }
+
+    /// Grant a consumer resource access to a target resource at `level`. Resolves
+    /// the consumer's principal identity and the target's ARN + action set from
+    /// their records and manifests, then flows the binding through the normal
+    /// request/approve/fulfill lifecycle using the *target's* grant mechanism
+    /// (`grant.module`). Same-project only — both resources must belong to
+    /// `project_id` (the caller's authority over it is enforced upstream).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request_grant(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+        project_id: &str,
+        consumer_resource_id: &str,
+        target_resource_id: &str,
+        level: &str,
+        requester: &str,
+    ) -> Result<RequestOutcome, ProvisionError> {
+        let consumer = self
+            .repo
+            .get(consumer_resource_id)
+            .await?
+            .ok_or_else(|| ProvisionError::NotFound(consumer_resource_id.to_string()))?;
+        let target = self
+            .repo
+            .get(target_resource_id)
+            .await?
+            .ok_or_else(|| ProvisionError::NotFound(target_resource_id.to_string()))?;
+
+        if consumer.project_id != project_id || target.project_id != project_id {
+            return Err(ProvisionError::NotPermitted(
+                "consumer and target must belong to the same project".into(),
+            ));
+        }
+        if consumer.state != "provisioned" || target.state != "provisioned" {
+            return Err(ProvisionError::InvalidSpec(
+                "both resources must be provisioned before granting access".into(),
+            ));
+        }
+
+        let cm = self
+            .catalog
+            .get(&consumer.rtype)
+            .ok_or_else(|| ProvisionError::Unsupported(consumer.rtype.clone()))?;
+        let tm = self
+            .catalog
+            .get(&target.rtype)
+            .ok_or_else(|| ProvisionError::Unsupported(target.rtype.clone()))?;
+
+        let grant = tm.grant.as_ref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!("'{}' is not a grantable target", target.rtype))
+        })?;
+        let principal_kind = cm.principal_kind.as_deref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' cannot be granted access (declares no principal)",
+                consumer.rtype
+            ))
+        })?;
+        if principal_kind != grant.principal_kind {
+            return Err(ProvisionError::InvalidSpec(format!(
+                "principal-kind mismatch: '{}' provides '{}', '{}' grants to '{}'",
+                consumer.rtype, principal_kind, target.rtype, grant.principal_kind
+            )));
+        }
+        let principal_output = cm.principal_output.as_deref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' declares no principal_output",
+                consumer.rtype
+            ))
+        })?;
+        let principal_role_arn = consumer
+            .outputs
+            .get(principal_output)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProvisionError::InvalidSpec(format!(
+                    "consumer '{}' has no output '{principal_output}'",
+                    consumer.name
+                ))
+            })?
+            .to_string();
+        let target_arn = target
+            .outputs
+            .get("arn")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProvisionError::InvalidSpec(format!("target '{}' has no 'arn' output", target.name))
+            })?
+            .to_string();
+        let actions = tm.access_levels.get(level).ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' has no access level '{level}' (known: {})",
+                target.rtype,
+                tm.access_levels
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+
+        let spec = serde_json::json!({
+            "consumer_resource_id": consumer_resource_id,
+            "target_resource_id": target_resource_id,
+            "level": level,
+            "principal_role_arn": principal_role_arn,
+            "target_arn": target_arn,
+            "actions": actions,
+        });
+        let name = format!("grant-{}-{}-{}", consumer.name, target.name, level);
+        let config_override = serde_json::json!({ "module": grant.module });
+        self.request_inner(
+            workflow,
+            registry,
+            project_id,
+            "access-grant",
+            &name,
+            spec,
+            requester,
+            Some(config_override),
+        )
+        .await
     }
 
     /// Tear down a provisioned resource (project decommission / cleanup). Routes
@@ -1184,9 +1357,15 @@ impl ProvisionService {
         let connector = manifest
             .map(|m| m.connector().to_string())
             .unwrap_or_else(|| "stub".to_string());
-        let config = manifest
+        let mut config = manifest
             .map(|m| m.connector_config())
             .unwrap_or_else(|| serde_json::json!({}));
+        // Per-request module override (a grant's target-specific mechanism).
+        if let Some(m) = req.payload.get("config_module").and_then(|v| v.as_str()) {
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("module".into(), serde_json::json!(m));
+            }
+        }
         // Record the resolved *variant* cost (e.g. the chosen instance size), not
         // the service's base estimate, so the rollup reflects what was provisioned.
         let est = manifest
@@ -1552,6 +1731,280 @@ mod tests {
         // The persisted record reflects the teardown.
         let rec = svc.repo().get(&rid).await.unwrap().unwrap();
         assert_eq!(rec.state, "destroyed");
+    }
+
+    #[tokio::test]
+    async fn resource_cloud_comes_from_its_manifest_not_the_default() {
+        // default_cloud is "stub" in the test service, but s3-bucket's manifest
+        // declares cloud: aws — the record must carry the manifest's cloud (the
+        // bug was an AWS bucket tagged with the global default).
+        let (wf, reg, svc, pid) = harness().await;
+        let out = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "assets",
+                serde_json::json!({"name": "assets"}),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.tags.get("cloud").map(String::as_str), Some("aws"));
+    }
+
+    /// Insert a provisioned record directly (bypassing a connector) so grant
+    /// resolution can be exercised against realistic outputs.
+    async fn seed_record(
+        svc: &ProvisionService,
+        pid: &str,
+        rtype: &str,
+        name: &str,
+        outputs: serde_json::Value,
+    ) -> String {
+        let now = asgard_storage::now();
+        let rec = ProvisionedRecord {
+            id: asgard_storage::new_uid(),
+            project_id: pid.to_string(),
+            rtype: rtype.to_string(),
+            name: name.to_string(),
+            spec: serde_json::json!({}),
+            outputs,
+            tags: Default::default(),
+            est_monthly_usd: 0.0,
+            state: "provisioned".into(),
+            backend: "stub".into(),
+            dry_run: true,
+            request_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        let id = rec.id.clone();
+        svc.repo().record(&rec).await.unwrap();
+        id
+    }
+
+    const ROLE_ARN: &str = "arn:aws:iam::123456789012:role/proj-task-role";
+    const BUCKET_ARN: &str = "arn:aws:s3:::proj-assets";
+
+    #[tokio::test]
+    async fn request_grant_self_service_write_auto_approves() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+
+        let out = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+
+        // Your own resources are self-service — no approval.
+        assert!(!out.pending_approval);
+        assert_eq!(out.request.state, State::Fulfilled);
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.rtype, "access-grant");
+        assert_eq!(rec.spec["principal_role_arn"], ROLE_ARN);
+        assert_eq!(rec.spec["target_arn"], BUCKET_ARN);
+        let actions: Vec<String> = serde_json::from_value(rec.spec["actions"].clone()).unwrap();
+        assert!(actions.contains(&"s3:PutObject".to_string()));
+        assert!(actions.contains(&"s3:GetObject".to_string()));
+    }
+
+    #[tokio::test]
+    async fn request_grant_read_level_omits_write_actions() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let out = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "read",
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let actions: Vec<String> =
+            serde_json::from_value(out.provisioned.unwrap().spec["actions"].clone()).unwrap();
+        assert!(actions.contains(&"s3:GetObject".to_string()));
+        assert!(!actions.contains(&"s3:PutObject".to_string()));
+    }
+
+    #[tokio::test]
+    async fn request_grant_unknown_level_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "admin",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("access level"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_missing_principal_output_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(&svc, &pid, "ecs-service", "web", serde_json::json!({})).await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("task_role_arn"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_non_grantable_target_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        // random-secret declares no `grant` mechanism.
+        let target = seed_record(
+            &svc,
+            &pid,
+            "random-secret",
+            "api-key",
+            serde_json::json!({"arn": "x"}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("grantable"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_cross_project_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let other = register_with_class(&reg, "light-operational").await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        // Target lives in a different project.
+        let target = seed_record(
+            &svc,
+            &other,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("same project"), "got: {err}");
     }
 
     #[tokio::test]
