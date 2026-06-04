@@ -1,3 +1,10 @@
+## [0.2.1](https://github.com/glemmestad/asgard/compare/v0.2.0...v0.2.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* env-armed provisioning defaults target to the first allowed entry ([#6](https://github.com/glemmestad/asgard/issues/6)) ([2c7ceed](https://github.com/glemmestad/asgard/commit/2c7ceed8e5133858dbf1eb82b04ac92d1aac4b2e))
+
 # [0.2.0](https://github.com/glemmestad/asgard/compare/v0.1.0...v0.2.0) (2026-06-04)
 
 
