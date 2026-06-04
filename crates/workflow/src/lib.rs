@@ -115,6 +115,7 @@ impl WorkflowEngine {
             "access" | "invoke" => "invoke",
             "promotion" => "promote",
             "review-extension" => "extend",
+            "budget" => "set_budget",
             _ => "deploy",
         }
     }

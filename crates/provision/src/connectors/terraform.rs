@@ -382,14 +382,60 @@ fn copy_module(src: &Path, dst: &Path) -> Result<(), ProvisionError> {
     Ok(())
 }
 
-/// Build the tfvars: every top-level spec field, plus `name`, the immutable
+/// Resolve a manifest `config.defaults` value against the process env. A whole
+/// string `${VAR}` becomes the env value; `${VAR:csv}` splits it into a list.
+/// Any referenced var that is unset yields `None`, so the default is dropped and
+/// the module's own default (or null) applies — a literal `${VAR}` never reaches
+/// Terraform. Non-string scalars pass through; arrays resolve element-wise.
+fn resolve_default(v: &Value) -> Option<Value> {
+    match v {
+        Value::String(s) => match s.strip_prefix("${").and_then(|x| x.strip_suffix('}')) {
+            Some(inner) => {
+                let (name, csv) = match inner.strip_suffix(":csv") {
+                    Some(n) => (n, true),
+                    None => (inner, false),
+                };
+                let val = std::env::var(name).ok()?;
+                if csv {
+                    let items: Vec<Value> = val
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty())
+                        .map(|p| Value::String(p.to_string()))
+                        .collect();
+                    (!items.is_empty()).then_some(Value::Array(items))
+                } else {
+                    Some(Value::String(val))
+                }
+            }
+            None => Some(Value::String(s.clone())),
+        },
+        Value::Array(items) => {
+            let resolved: Vec<Value> = items.iter().filter_map(resolve_default).collect();
+            (!resolved.is_empty()).then_some(Value::Array(resolved))
+        }
+        other => Some(other.clone()),
+    }
+}
+
+/// Build the tfvars: manifest `config.defaults` (operator/env-sourced) as the
+/// floor, overlaid by every top-level spec field, plus `name`, the immutable
 /// project `tags` map, and any `overrides` (a suspend/resume re-apply layers
 /// these over the spec — e.g. `desired_count: 0`).
 fn tfvars(req: &ProvisionRequest, plan: &Plan, overrides: &Value) -> Value {
-    let mut m = match &req.spec {
-        Value::Object(o) => o.clone(),
-        _ => Map::new(),
-    };
+    let mut m = Map::new();
+    if let Some(Value::Object(defaults)) = req.config.get("defaults") {
+        for (k, v) in defaults {
+            if let Some(resolved) = resolve_default(v) {
+                m.insert(k.clone(), resolved);
+            }
+        }
+    }
+    if let Value::Object(o) = &req.spec {
+        for (k, v) in o {
+            m.insert(k.clone(), v.clone());
+        }
+    }
     m.insert("name".into(), Value::String(req.name.clone()));
     let tags: Map<String, Value> = plan
         .tags
@@ -525,6 +571,35 @@ mod tests {
         // A normal apply leaves the spec's value intact.
         let normal = tfvars(&r, &plan(), &Value::Null);
         assert_eq!(normal["desired_count"], serde_json::json!(2));
+    }
+
+    #[test]
+    fn config_defaults_source_env_yield_to_spec_and_drop_when_unset() {
+        std::env::set_var("ASGARD_TEST_DEF_SUBNET", "subnet-grp-1");
+        std::env::set_var("ASGARD_TEST_DEF_SGS", "sg-1, sg-2");
+        std::env::remove_var("ASGARD_TEST_DEF_REGION");
+        let mut r = req();
+        r.spec = serde_json::json!({"name": "db", "instance_class": "db.t3.small"});
+        r.config = serde_json::json!({"defaults": {
+            "subnet_group_name": "${ASGARD_TEST_DEF_SUBNET}",
+            "vpc_security_group_ids": "${ASGARD_TEST_DEF_SGS:csv}",
+            "region": "${ASGARD_TEST_DEF_REGION}",
+            "instance_class": "db.t3.micro"
+        }});
+        let v = tfvars(&r, &plan(), &Value::Null);
+        assert_eq!(v["subnet_group_name"], serde_json::json!("subnet-grp-1"));
+        assert_eq!(
+            v["vpc_security_group_ids"],
+            serde_json::json!(["sg-1", "sg-2"])
+        );
+        assert!(v.get("region").is_none(), "unset env default is dropped");
+        assert_eq!(
+            v["instance_class"],
+            serde_json::json!("db.t3.small"),
+            "the request spec overrides a manifest default"
+        );
+        std::env::remove_var("ASGARD_TEST_DEF_SUBNET");
+        std::env::remove_var("ASGARD_TEST_DEF_SGS");
     }
 
     /// The durability guarantee, without needing terraform installed: state

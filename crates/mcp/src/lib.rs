@@ -116,11 +116,19 @@ pub struct RegisterProjectArgs {
     pub evidence: asgard_registry::Evidence,
 }
 
-/// Project id plus the full evidence record (PUT semantics — the submitted block
-/// replaces the stored one).
+/// Project id plus mutable fields. `name`/`description`/`budget_usd` patch the
+/// project in place (id unchanged). The evidence block keeps PUT semantics, but
+/// is only written when a field is supplied — a name-only update leaves evidence
+/// intact.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateProjectArgs {
     pub project_id: Option<String>,
+    /// New display name (e.g. code-name → production name). Id stays the same.
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// New monthly budget. Up to the classification's self-service ceiling applies
+    /// immediately; above it routes to human review.
+    pub budget_usd: Option<f64>,
     #[serde(flatten)]
     pub evidence: asgard_registry::Evidence,
 }
@@ -481,6 +489,14 @@ impl AsgardMcp {
     ) -> Result<String, String> {
         let requester = a.requester.clone();
         let owner_email = owner_override.clone().unwrap_or(a.owner_email);
+        // No budget given → default to half the classification's self-service
+        // ceiling, so a project never registers with a $0 (effectively no-cap) budget.
+        let budget_usd = a.budget_usd.or_else(|| {
+            let class = a.classification.as_deref().unwrap_or("poc");
+            self.provision
+                .auto_approve_ceiling(class)
+                .map(|ceiling| ceiling / 2.0)
+        });
         let input = RegisterInput {
             name: a.name,
             owner_email,
@@ -488,7 +504,7 @@ impl AsgardMcp {
             group: a.group,
             classification: a.classification,
             data_class: a.data_class,
-            budget_usd: a.budget_usd,
+            budget_usd,
             description: a.description,
             evidence: a.evidence,
         };
@@ -513,15 +529,45 @@ impl AsgardMcp {
     async fn do_update_project(
         &self,
         pid: &str,
-        evidence: asgard_registry::Evidence,
+        a: UpdateProjectArgs,
         actor: &str,
     ) -> Result<String, String> {
-        let reg = self
+        // Evidence is PUT — but only when supplied, so a name/budget-only update
+        // doesn't clear it.
+        if a.evidence != asgard_registry::Evidence::default() {
+            self.registry
+                .update_evidence(pid, a.evidence, actor)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        let reg = self.registry.get(pid).await.map_err(|e| e.to_string())?;
+        let ceiling = reg
+            .as_ref()
+            .and_then(|r| self.provision.auto_approve_ceiling(&r.classification));
+        let (reg, budget) = self
             .registry
-            .update_evidence(pid, evidence, actor)
+            .update_project(
+                &self.workflow,
+                pid,
+                asgard_registry::ProjectUpdate {
+                    name: a.name,
+                    description: a.description,
+                    budget_usd: a.budget_usd,
+                },
+                ceiling,
+                actor,
+            )
             .await
             .map_err(|e| e.to_string())?;
-        Ok(serde_json::to_string(&reg).unwrap_or_default())
+        let pending = match budget {
+            asgard_registry::BudgetOutcome::PendingReview(req) => Some(req),
+            _ => None,
+        };
+        Ok(serde_json::to_string(&serde_json::json!({
+            "project": reg,
+            "budget_review": pending,
+        }))
+        .unwrap_or_default())
     }
 
     async fn do_project_get(&self, pid: &str) -> Result<String, String> {
@@ -1191,14 +1237,14 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Update a project's classification evidence record (governance metadata: owners, support/runbook/monitoring URLs, security review status, maintainers, data flows, etc.). PUT semantics — the submitted fields replace the stored evidence block; omitted fields are cleared. Requires a project you own/manage."
+        description = "Update a registered project in place — the project id never changes, so all tagging/cost attribution stays intact. Set `name` to relabel (code-name → production name), `budget_usd` to re-budget (up to the classification's self-service ceiling applies immediately; above it routes to human review), and/or the evidence fields to revise governance metadata (PUT — evidence is rewritten only when supplied, so a name/budget-only update leaves it intact). Requires a project you own/manage."
     )]
     async fn update_project(
         &self,
         ctx: RequestContext<RoleServer>,
         Parameters(a): Parameters<UpdateProjectArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let pid = match self.resolve_project(&ctx, a.project_id).await {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
             Ok(p) => p,
             Err(e) => return deny(e),
         };
@@ -1207,7 +1253,7 @@ impl AsgardMcp {
             Some(McpAuth::Project { project_id }) => format!("project:{project_id}"),
             None => DEFAULT_REQUESTER.to_string(),
         };
-        wrap(self.do_update_project(&pid, a.evidence, &actor).await)
+        wrap(self.do_update_project(&pid, a, &actor).await)
     }
 
     #[tool(

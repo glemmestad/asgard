@@ -91,24 +91,37 @@ pub struct CloudTarget {
     pub account: String,
 }
 
-/// When a resource request may skip human approval. All conditions must hold:
-/// the project's classification is in `classifications` (POC by default), the
-/// resource's estimated monthly cost is within `max_resource_monthly_usd`, and
-/// the project's total committed spend stays within `max_project_monthly_usd`.
+/// When a resource request may skip human approval: the self-service envelope is
+/// a per-classification monthly ceiling. A request auto-approves when its
+/// manifest opts in, the variant doesn't force review, and the project's total
+/// committed infra spend (existing + this request) stays within the ceiling for
+/// its classification. A classification with no configured ceiling never
+/// auto-approves — every request at that tier routes to a human. Higher trust
+/// tiers get larger envelopes; the project's own `budget_usd` is deliberately
+/// not part of this — self-service authority is org policy, not self-set.
 #[derive(Debug, Clone)]
 pub struct AutoApprovePolicy {
-    pub classifications: Vec<String>,
-    pub max_resource_monthly_usd: f64,
-    pub max_project_monthly_usd: f64,
+    pub ceilings: BTreeMap<String, f64>,
 }
 
 impl Default for AutoApprovePolicy {
     fn default() -> Self {
         AutoApprovePolicy {
-            classifications: vec!["poc".to_string()],
-            max_resource_monthly_usd: 50.0,
-            max_project_monthly_usd: 500.0,
+            ceilings: BTreeMap::from([
+                ("poc".to_string(), 500.0),
+                ("light-operational".to_string(), 2500.0),
+                ("wide-operational".to_string(), 10_000.0),
+                ("critical-path".to_string(), 25_000.0),
+            ]),
         }
+    }
+}
+
+impl AutoApprovePolicy {
+    /// The self-service ceiling for a classification, or `None` if that tier
+    /// never auto-approves.
+    pub fn ceiling(&self, classification: &str) -> Option<f64> {
+        self.ceilings.get(classification).copied()
     }
 }
 
@@ -424,6 +437,13 @@ impl ProvisionService {
 
     pub fn set_auto_approve(&mut self, auto: AutoApprovePolicy) {
         self.auto = auto;
+    }
+
+    /// The self-service monthly ceiling for a classification (`None` if that tier
+    /// never auto-approves). Callers use it to apply the budget rule and to
+    /// default a new project's budget to half the ceiling.
+    pub fn auto_approve_ceiling(&self, classification: &str) -> Option<f64> {
+        self.auto.ceiling(classification)
     }
 
     pub fn connectors(&self) -> Vec<String> {
@@ -930,19 +950,12 @@ impl ProvisionService {
         // per-resource and project-total cost limits hold (variant cost).
         let est = resolved.estimated_monthly_usd;
         let infra_so_far = self.repo.infra_total_for_project(project_id).await?;
-        let class_ok = self
+        let committed = reg.spent_usd + infra_so_far + est;
+        let within_ceiling = self
             .auto
-            .classifications
-            .iter()
-            .any(|c| c == &reg.classification);
-        let within_resource = est <= self.auto.max_resource_monthly_usd;
-        let within_project =
-            (reg.spent_usd + infra_so_far + est) <= self.auto.max_project_monthly_usd;
-        let auto_ok = manifest.auto_approvable
-            && !resolved.force_review
-            && class_ok
-            && within_resource
-            && within_project;
+            .ceiling(&reg.classification)
+            .is_some_and(|ceiling| committed <= ceiling);
+        let auto_ok = manifest.auto_approvable && !resolved.force_review && within_ceiling;
         let tier_str = if auto_ok { "self_service" } else { "review" };
         let sla_seconds = if auto_ok { None } else { Some(7 * 24 * 3600) };
 
@@ -2227,7 +2240,13 @@ mod tests {
 
     #[tokio::test]
     async fn review_resource_parks_for_approval_then_fulfills() {
-        let (wf, reg, svc, pid) = harness().await;
+        let (wf, reg, mut svc, pid) = harness().await;
+        // rds-postgres is self-service by default now; drop the POC ceiling below its
+        // estimate so it parks. The request→approve→fulfill cascade is what's under
+        // test here, not the trigger that sends it to review.
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 1.0)]),
+        });
         let out = svc
             .request(
                 &wf,
@@ -2259,8 +2278,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn non_poc_classification_requires_approval() {
-        let (wf, reg, svc, _pid) = harness().await;
+    async fn classification_without_ceiling_requires_approval() {
+        let (wf, reg, mut svc, _pid) = harness().await;
+        // Only POC has a self-service envelope; wide-operational has none, so even a
+        // cheap, auto-approvable resource routes to a human at that tier.
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 500.0)]),
+        });
         let pid = register_with_class(&reg, "wide-operational").await;
         let out = svc
             .request(
@@ -2276,7 +2300,7 @@ mod tests {
             .unwrap();
         assert!(
             out.pending_approval,
-            "above-POC classification must require approval even for a self-service type"
+            "a classification with no configured ceiling must require approval"
         );
     }
 
@@ -2284,9 +2308,7 @@ mod tests {
     async fn over_cost_limit_requires_approval() {
         let (wf, reg, mut svc, pid) = harness().await;
         svc.set_auto_approve(AutoApprovePolicy {
-            classifications: vec!["poc".into()],
-            max_resource_monthly_usd: 1.0, // s3 est is 5.0 → over the cap
-            max_project_monthly_usd: 500.0,
+            ceilings: BTreeMap::from([("poc".into(), 1.0)]), // s3 est 5.0 → over the ceiling
         });
         let out = svc
             .request(
@@ -2343,7 +2365,10 @@ mod tests {
 
     #[tokio::test]
     async fn ec2_small_variant_auto_approves_big_variant_reviews() {
-        let (wf, reg, svc, pid) = harness().await; // poc
+        let (wf, reg, mut svc, pid) = harness().await; // poc
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 100.0)]),
+        });
         let micro = svc
             .request(
                 &wf,
@@ -2356,7 +2381,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!micro.pending_approval, "t3.micro ($7) is under the cap");
+        assert!(
+            !micro.pending_approval,
+            "t3.micro ($7) is under the ceiling"
+        );
         assert_eq!(micro.provisioned.unwrap().est_monthly_usd, 7.0);
 
         let big = svc
@@ -2371,7 +2399,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(big.pending_approval, "m7i.4xlarge ($500) is over the cap");
+        assert!(
+            big.pending_approval,
+            "m7i.4xlarge ($500) is over the ceiling"
+        );
     }
 
     #[tokio::test]
@@ -2399,9 +2430,7 @@ mod tests {
         let (wf, reg, mut svc, _pid) = harness().await;
         let pid = register_with_class(&reg, "wide-operational").await;
         svc.set_auto_approve(AutoApprovePolicy {
-            classifications: vec!["wide-operational".into()],
-            max_resource_monthly_usd: 100_000.0,
-            max_project_monthly_usd: 100_000.0,
+            ceilings: BTreeMap::from([("wide-operational".into(), 100_000.0)]),
         });
         let out = svc
             .request(

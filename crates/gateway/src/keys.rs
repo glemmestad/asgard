@@ -115,6 +115,25 @@ impl GatewayRepo {
         Ok(())
     }
 
+    pub async fn set_identity(
+        &self,
+        project_id: &str,
+        display_name: &str,
+        description: &str,
+    ) -> Result<(), GatewayError> {
+        sqlx::query(&self.db.q(
+            "UPDATE projects_runtime SET display_name = ?, description = ?, updated_at = ? \
+             WHERE project_id = ?",
+        ))
+        .bind(display_name)
+        .bind(description)
+        .bind(asgard_storage::now())
+        .bind(project_id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     pub async fn set_budget(&self, project_id: &str, budget_usd: f64) -> Result<(), GatewayError> {
         sqlx::query(
             &self.db.q(
