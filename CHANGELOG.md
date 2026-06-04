@@ -1,3 +1,10 @@
+## [0.8.1](https://github.com/glemmestad/asgard/compare/v0.8.0...v0.8.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* **provision:** let an image-only deploy add its own services via ASGARD_SERVICES_DIR ([#21](https://github.com/glemmestad/asgard/issues/21)) ([ccfd990](https://github.com/glemmestad/asgard/commit/ccfd990fc86a51ed9e2ef2b6385e229de702fd8b))
+
 # [0.8.0](https://github.com/glemmestad/asgard/compare/v0.7.0...v0.8.0) (2026-06-04)
 
 
