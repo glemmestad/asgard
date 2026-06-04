@@ -5,7 +5,7 @@ status: live
 description: >-
   Anthropic Claude inference via the native Messages API. Part of the built-in
   lightweight floor — active when ANTHROPIC_MASTER_KEY is set. Proves the floor is
-  not OpenAI-tied. Projects get an Asgard token, never this master key.
+  not OpenAI-tied. Projects get a gateway token, never this master key.
 provisioner:
   connector: stub
 cost:

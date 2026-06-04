@@ -451,7 +451,7 @@
           <div><b>Promote to ${esc(cl.next_tier)}</b> ${route}</div>${btn}
         </div>
         <div style="margin-top:10px;display:grid;gap:6px">${rows}${excRows}</div>
-        ${unv.length ? `<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted);font-size:12px">${unv.length} signals Asgard can't verify automatically</summary><div style="margin-top:6px;display:grid;gap:4px">${unv.map(s => `<div class="muted" style="font-size:12px">• ${esc(s)}</div>`).join('')}</div></details>` : ''}
+        ${unv.length ? `<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--muted);font-size:12px">${unv.length} signals ${SYS_NAME} can't verify automatically</summary><div style="margin-top:6px;display:grid;gap:4px">${unv.map(s => `<div class="muted" style="font-size:12px">• ${esc(s)}</div>`).join('')}</div></details>` : ''}
         <div id="promote-out" style="margin-top:8px"></div>
       </div>`;
     }
@@ -498,6 +498,7 @@
       about:    { label: 'About', ic: 'ⓘ', render: renderAbout },
     };
     let active = 'start';
+    let SYS_NAME = 'Asgard';
     // Deep-link target: when set, the projects tab opens straight to this detail
     // (used by the governance scorecard's offender drill-in).
     let focusProject = null;
@@ -556,17 +557,17 @@
         : `<div id="gs-token-out"></div><p class="muted" style="margin:8px 0 0;font-size:12px">After creating it, export it as <code>ASGARD_PAT</code> so the snippets below resolve it.</p>`;
       return `<div class="step"><div class="n">1</div><div class="b">
         <h3>Create a Personal Access Token (PAT)</h3>
-        <p class="muted" style="margin:0 0 6px;font-size:13px">The PAT is your key to Asgard's MCP server — a long-lived <strong>user token</strong> tied to you. It lets your agent register projects and act on every project you own or manage; no per-project juggling.</p>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">The PAT is your key to ${SYS_NAME}'s MCP server — a long-lived <strong>user token</strong> tied to you. It lets your agent register projects and act on every project you own or manage; no per-project juggling.</p>
         ${minted ? '' : `<div class="row" style="margin:0 0 8px"><button class="act" id="gs-token">Create a PAT</button></div>`}
         ${tokenBlock}
       </div></div>
       <div class="step"><div class="n">2</div><div class="b">
         <h3>Connect your agent over MCP</h3>
-        <p class="muted" style="margin:0 0 6px;font-size:13px">Add Asgard's MCP server to your agent. Each client below references <code>$ASGARD_PAT</code> — you never paste the literal token into the command.</p>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">Add ${SYS_NAME}'s MCP server to your agent. Each client below references <code>$ASGARD_PAT</code> — you never paste the literal token into the command.</p>
         <div class="muted" style="font-size:12px;margin-top:8px">Claude Code</div>${snip(claude)}
         <div class="muted" style="font-size:12px;margin-top:10px">Codex (<code>~/.codex/config.toml</code>)</div>${snip(codex)}
         <div class="muted" style="font-size:12px;margin-top:10px">Cursor / generic Streamable-HTTP client (mcp.json)</div>${snip(cursor)}
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Once connected, <code>tools/list</code> shows <code>register_project</code>, <code>request_resource</code>, <code>seed_plan</code>, and the rest. Tell your agent: <em>"read the Asgard standards, register this project, then build."</em></p>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Once connected, <code>tools/list</code> shows <code>register_project</code>, <code>request_resource</code>, <code>seed_plan</code>, and the rest. Tell your agent: <em>"read the ${SYS_NAME} standards, register this project, then build."</em></p>
         <p class="muted" style="font-size:11px;margin-top:8px">Deploying an app or CI that lives in a single project? Register one below and mint a <strong>per-project key</strong> there instead — it's scoped to that one project.</p>
       </div></div>`;
     }
@@ -584,7 +585,7 @@
           const pat = await api('/api/auth/tokens', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name: 'agent' }) });
           // A stale server can answer this POST with the SPA HTML fallback (200) —
           // surface that loudly instead of silently re-rendering an identical state.
-          if (!pat || typeof pat !== 'object' || !pat.token) throw new Error('Token endpoint returned no token — the server may be out of date. Rebuild and restart Asgard.');
+          if (!pat || typeof pat !== 'object' || !pat.token) throw new Error(`Token endpoint returned no token — the server may be out of date. Rebuild and restart ${SYS_NAME}.`);
           const cc = document.getElementById('gs-connect');
           cc.innerHTML = connectStep(pat.token);
           wireConnect(cc);
@@ -607,7 +608,7 @@
         : `<select id="gs-group">${groupReq ? '' : '<option value="">— ungrouped —</option>'}${groups.groups.map(g=>`<option value="${esc(g.key)}">${esc(g.display_name||g.key)} (${esc(g.cost_center)})</option>`).join('')}</select>`;
       const managerPh = pol.require_manager ? 'manager email' : 'manager email (defaults to you)';
       v.innerHTML = `<h1 class="pagehead">Getting started</h1>
-      <p class="pagesub">A few steps to go from a running Asgard to your agent deploying a resource — governed, attributed, and audited.</p>
+      <p class="pagesub">A few steps to go from a running ${SYS_NAME} to your agent deploying a resource — governed, attributed, and audited.</p>
       <div class="card" id="gs-connect">${connectStep(null)}</div>
       <div class="card"><div class="step"><div class="n">3</div><div class="b">
         <h3>Register a project</h3>
@@ -1306,7 +1307,7 @@
       const chips = ["Which group spends the most this month?","What's the EOM forecast and is anyone over budget?",
         "Show top movers vs last month.","What's untagged right now?"];
       c.innerHTML = `<div class="sect" style="border-bottom:1px solid var(--line)"><div class="lbl">Chat</div>
-        <div class="sub">grounded in the rollup · routed through Asgard's gateway</div></div>
+        <div class="sub">grounded in the rollup · routed through ${SYS_NAME}'s gateway</div></div>
         <div class="chatlog" id="chatlog"></div>
         <div class="chatbar"><input id="qaq" placeholder="Ask about spend…" /><button class="act" id="qago">Ask</button></div>`;
       const log = document.getElementById('chatlog');
@@ -1732,7 +1733,7 @@
       document.getElementById('view').innerHTML = `<h1 class="pagehead">About</h1>
       <p class="pagesub">An open-source governance control plane for AI &amp; agent development.</p>
       <div class="card">
-        <p style="margin-top:0">Asgard pairs a governed catalog with a model gateway — budgets, policy, guardrails, kill switch, and audit — alongside evals as PR gates, a request→approval workflow, and an isolated runtime.</p>
+        <p style="margin-top:0">${SYS_NAME} pairs a governed catalog with a model gateway — budgets, policy, guardrails, kill switch, and audit — alongside evals as PR gates, a request→approval workflow, and an isolated runtime.</p>
         <p class="muted" style="margin-bottom:0">Ships as a single embedded binary. REST at <code>/api/*</code>, GraphQL at <code>/graphql</code>, and MCP at <code>/mcp</code> (Streamable HTTP) plus stdio.</p>
       </div>
       <div class="grid2">
@@ -1763,6 +1764,7 @@
         ${sso}
         <p class="err" id="loginerr" style="min-height:1em;margin-bottom:0"></p>
       </div>`;
+      applyBranding(cfg.system_name);
       if (cfg.oidc) document.getElementById('sso').onclick = () => { location.href = '/api/auth/oidc/login'; };
       document.getElementById('loginf').onsubmit = async (e) => {
         e.preventDefault();
@@ -1776,7 +1778,15 @@
 
     // boot: require a session, then preload per-project series so sparklines
     // render on first paint. Falls back to the sign-in view when unauthenticated.
+    function applyBranding(name) {
+      name = (name && String(name).trim()) || 'Asgard';
+      SYS_NAME = name;
+      document.title = name;
+      document.querySelectorAll('.brand').forEach(e => e.textContent = name);
+      document.querySelectorAll('.logo').forEach(e => e.textContent = name[0].toUpperCase());
+    }
     async function boot() {
+      try { applyBranding((await api('/api/auth/config')).system_name); } catch {}
       let me;
       try { me = await api('/api/auth/me'); }
       catch { return showLogin(); }

@@ -1,8 +1,8 @@
-# Project manifest stub. You normally register via the Asgard MCP tool
+# Project manifest stub. You normally register via the MCP tool
 # `register_project` (which mints the canonical proj-YYYY-NNNN id); this file is
 # an illustrative reference of the shape and a place to record the result.
 #
-# `group` must be one of the cost-centers the Asgard deployer allows
+# `group` must be one of the cost-centers the deployer allows
 # (ask via the `list_groups` MCP tool or `GET /api/groups`). Owner and manager
 # are emails (self-entered, unverified) and must be two different people.
 apiVersion: asgard.dev/v1

@@ -1,6 +1,6 @@
 # Picking a classification
 
-Every project in Asgard carries a data classification, and that single field does more work than almost anything else you set. It determines which models you're allowed to call, how heavy the infrastructure under you is, how much human approval a change requires, and how much operational rigor you're signing up for. Getting it right is the difference between a project that's appropriately governed and one that's either reckless or strangled by ceremony it doesn't need.
+Every project on the control plane carries a data classification, and that single field does more work than almost anything else you set. It determines which models you're allowed to call, how heavy the infrastructure under you is, how much human approval a change requires, and how much operational rigor you're signing up for. Getting it right is the difference between a project that's appropriately governed and one that's either reckless or strangled by ceremony it doesn't need.
 
 There are two opposite mistakes, and most people are prone to one or the other. This guide is about choosing deliberately and avoiding both.
 

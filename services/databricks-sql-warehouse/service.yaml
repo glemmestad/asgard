@@ -6,10 +6,10 @@ classification_min: poc
 classification_max: critical-path
 description: >-
   A Databricks SQL warehouse (serverless or pro) — the query compute analysts and
-  agents run against. Provisioned through Asgard's universal terraform connector +
+  agents run against. Provisioned through the platform's universal terraform connector +
   the Databricks provider, so it carries the same gate, classification floor,
   approval tier, project tagging, and audit as any AWS resource. Always requires
-  human approval (cost-bearing). Asgard orchestrates Databricks; it does not
+  human approval (cost-bearing). The control plane orchestrates Databricks; it does not
   replace it.
 auto_approvable: false
 required_fields: [name, cluster_size]

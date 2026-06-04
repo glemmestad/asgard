@@ -10,7 +10,7 @@ Every model decision trades off three things at once:
 
 1. **Capability.** Can the model do the task at all? This covers reasoning depth, reliability over long multi-step runs, tool-use competence, multimodal handling, and the size of context window it can actually use well (not just the number on the spec sheet).
 2. **Cost.** Tokens per dollar. The spread between a flagship and a cheap-tier model is commonly 10-50x on input and output token price, before you even account for the flagship being slower and therefore tying up more of your latency budget.
-3. **Data sensitivity.** Where is this model allowed to run, given the data you're sending it? A model not cleared for your data class is simply off the table — no matter how good or cheap it is. In Asgard, the gateway enforces a data-class-by-model allowlist, so this axis isn't advisory; it's a hard gate. See `choose-a-model-by-data-class`.
+3. **Data sensitivity.** Where is this model allowed to run, given the data you're sending it? A model not cleared for your data class is simply off the table — no matter how good or cheap it is. On the control plane, the gateway enforces a data-class-by-model allowlist, so this axis isn't advisory; it's a hard gate. See `choose-a-model-by-data-class`.
 
 You are choosing the cheapest model that clears your sensitivity floor *and* meets your capability bar. Not cheaper than that (you'll ship something broken), and not more expensive than that (you'll burn budget for no quality gain).
 
@@ -53,7 +53,7 @@ For most retrieval work, the chunking strategy matters more than the embedding m
 
 ## Stable model ids vs. pinned versions
 
-Route everything through the Asgard gateway and refer to models by their stable, canonical names (think generic tiers — a flagship id, a mid-tier id, a cheap-tier id — rather than a provider's dated version string). The gateway maps each canonical name to a specific upstream version, and advances that mapping when a provider ships a compatible update. Your code keeps calling the same name and doesn't churn every time a vendor releases a point version.
+Route everything through the gateway and refer to models by their stable, canonical names (think generic tiers — a flagship id, a mid-tier id, a cheap-tier id — rather than a provider's dated version string). The gateway maps each canonical name to a specific upstream version, and advances that mapping when a provider ships a compatible update. Your code keeps calling the same name and doesn't churn every time a vendor releases a point version.
 
 When you genuinely need exact-version reproducibility — for instance, an eval that gates tier promotion on a specific behavior — pin the upstream version explicitly in the request. The audit log records both the canonical id and the upstream version it resolved to, so you can always reconstruct what actually ran.
 
@@ -67,7 +67,7 @@ Absolute prices change constantly and depend on your provider contracts, so don'
 | Mid-tier | ~5-15x | ~5-15x | Moderate (~1-2s) |
 | Flagship | ~30-75x | ~30-75x | Slow (several seconds) |
 
-These multipliers are illustrative, not a quote. The point is that the gap between tiers is large and real — large enough that picking the right tier dominates almost every other inference-cost lever you have. Spend is attributed per project in Asgard, so you can watch the actual numbers on the Cost tab rather than guessing.
+These multipliers are illustrative, not a quote. The point is that the gap between tiers is large and real — large enough that picking the right tier dominates almost every other inference-cost lever you have. Spend is attributed per project on the control plane, so you can watch the actual numbers on the Cost tab rather than guessing.
 
 ## How to A/B test a model choice cheaply
 

@@ -39,6 +39,9 @@ pub struct AppState {
     pub provision: ProvisionService,
     pub identity: IdentityService,
     pub gql: AsgardSchema,
+    /// Display name for this deployment, shown as the wordmark/title in the UI.
+    /// Defaults to `Asgard`; operators rebrand via `ASGARD_SYSTEM_NAME`.
+    pub system_name: String,
     /// A platform-owned gateway key the dashboard's cost Q&A uses when the caller
     /// supplies none, so the human-first dashboard works without pasting a key.
     /// Spend is attributed to the internal system project like any other call.
@@ -87,6 +90,7 @@ impl AppState {
             provision,
             identity,
             gql,
+            system_name: "Asgard".to_string(),
             system_cost_key: None,
             cost_qa_model: "model:default/mock".to_string(),
             oidc: None,
@@ -94,6 +98,15 @@ impl AppState {
             force_https: false,
             login_throttle: LoginThrottle::default(),
         }
+    }
+
+    pub fn with_system_name(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        let name = name.trim();
+        if !name.is_empty() {
+            self.system_name = name.to_string();
+        }
+        self
     }
 
     pub fn with_system_cost_key(mut self, key: Option<String>) -> Self {
@@ -1851,6 +1864,7 @@ async fn auth_config(State(st): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "local": true,
         "oidc": st.oidc.is_some(),
+        "system_name": st.system_name,
         "registration": {
             "require_manager": pol.require_manager,
             "require_group": pol.require_group,

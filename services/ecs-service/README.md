@@ -7,7 +7,7 @@ target group + listener, CloudWatch logs, and a `url` output you can hit.
 
 ## Why this exists
 
-It is the primitive a real app (a collaborative editor, an API, Asgard itself)
+It is the primitive a real app (a collaborative editor, an API, the control plane itself)
 needs to run web-facing. It is deliberately built to close the gaps the
 predecessor platform hit (see `docs/docs/migrate-app.md`):
 
@@ -21,7 +21,7 @@ predecessor platform hit (see `docs/docs/migrate-app.md`):
 
 ## Networking
 
-Asgard never creates a VPC. Supply an existing one:
+The platform never creates a VPC. Supply an existing one:
 
 - `vpc_id` (required)
 - `subnet_ids` (required) — where the ALB and tasks land

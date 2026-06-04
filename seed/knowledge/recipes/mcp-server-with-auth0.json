@@ -1,5 +1,5 @@
 {
-  "description": "Stand up an HTTPS-reachable MCP server with Auth0 M2M authentication, from Asgard primitives. Composes an ECR repo, an Auth0 M2M app, and a load-balanced HTTPS service. The result is an /mcp URL agents reach with a Bearer token. The agent fills the inputs and issues each request_resource itself.",
+  "description": "Stand up an HTTPS-reachable MCP server with Auth0 M2M authentication, from the platform's primitives. Composes an ECR repo, an Auth0 M2M app, and a load-balanced HTTPS service. The result is an /mcp URL agents reach with a Bearer token. The agent fills the inputs and issues each request_resource itself.",
   "inputs": [
     { "name": "name", "required": true, "description": "kebab-case identifier; resources land at <project>-<name>." },
     { "name": "image", "required": true, "description": "OCI image for the MCP server; listens on 8080 with /healthz. Use immutable :sha tags." },

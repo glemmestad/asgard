@@ -5,7 +5,7 @@ status: live
 description: >-
   OpenAI inference, reached directly via its OpenAI-compatible API. Part of the
   built-in lightweight floor — active when OPENAI_MASTER_KEY is set. Projects get
-  an Asgard token, never this master key; spend is attributed per token.
+  a gateway token, never this master key; spend is attributed per token.
 # Not provisioned — the gateway routes to it. stub keeps the manifest uniform.
 provisioner:
   connector: stub

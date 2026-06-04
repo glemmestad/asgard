@@ -603,6 +603,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         provision,
         core.identity.clone(),
     )
+    .with_system_name(std::env::var("ASGARD_SYSTEM_NAME").unwrap_or_default())
     .with_system_cost_key(system_cost_key)
     .with_cost_qa_model(cost_qa_model)
     .with_oidc(build_oidc())

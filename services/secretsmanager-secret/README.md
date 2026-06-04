@@ -1,7 +1,7 @@
 # Secrets Manager Secret
 
 Random cryptographic material stored in **AWS Secrets Manager** — the AWS-backed
-counterpart to `random-secret` (which keeps material in Asgard's own store).
+counterpart to `random-secret` (which keeps material in the platform's own store).
 
 Reach for this when the value must live in Secrets Manager so a task role can
 read it: an `ecs-service` injecting it via `secrets:` (env var ← secret ARN), or

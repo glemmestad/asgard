@@ -1,18 +1,18 @@
 # Databricks Model Serving (inference)
 
-Routes governed model calls through Asgard's gateway to **Databricks Model
+Routes governed model calls through the gateway to **Databricks Model
 Serving / Foundation Model APIs**. This is a plug-in module — the same shape as
 LiteLLM — not core code: it's `kind: openai-compatible` with a request-path
 override.
 
-**Asgard sits in front of Databricks.** A project gets an Asgard virtual key,
+**The control plane sits in front of Databricks.** A project gets a virtual key,
 never the Databricks token. Every call is budget-checked, policy- and
 data-class-gated, guardrailed, kill-switchable, audited, and cost-attributed per
 project — including in front of Databricks' own Mosaic AI Gateway.
 
 ## Enable
 
-Set in the Asgard process env (e.g. `.env`):
+Set in the control plane's process env (e.g. `.env`):
 
 ```
 DATABRICKS_HOST=https://dbc-xxxx.cloud.databricks.com
@@ -30,7 +30,7 @@ Databricks queries a served model at
 path, not the body), with an OpenAI-shaped request/response. The manifest's
 `chat_path: /serving-endpoints/{model}/invocations` expresses exactly that — the
 `{model}` placeholder is filled with the route model. No Databricks-specific code
-lives in Asgard.
+lives in the control plane.
 
 ## Use (out-of-band, like any service)
 

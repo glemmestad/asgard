@@ -2,7 +2,7 @@
 
 Provisions a `databricks_sql_endpoint` via the universal terraform connector +
 the Databricks provider (auth from `DATABRICKS_HOST`/`DATABRICKS_TOKEN` in the
-Asgard env). Review-tier (cost-bearing).
+control plane's env). Review-tier (cost-bearing).
 
 **Spec fields** (become tfvars): `name`, `cluster_size` (e.g. `Small`),
 optional `auto_stop_mins`, `max_num_clusters`, `enable_serverless_compute`,

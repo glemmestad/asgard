@@ -7,7 +7,7 @@ its own ALB); reach for this only when you need a shared entry point.
 
 ## Networking
 
-Takes an existing VPC (Asgard never creates one):
+Takes an existing VPC (the platform never creates one):
 
 - `vpc_id` (required)
 - `subnet_ids` (required)

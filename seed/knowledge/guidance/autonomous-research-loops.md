@@ -81,7 +81,7 @@ An autonomous loop with tools and a budget needs hard limits, set at the runtime
 - **A wall-clock cap.** Especially for loops that submit long-running jobs and poll for them.
 - **Scoped, safe tools.** The agent gets exactly the tools the task needs and no destructive ones without a human check. An agent that can delete or overwrite shared state unsupervised is an incident waiting for a quiet night.
 
-Route every model call through the Asgard gateway so the spend is attributed per project and capped, and so every step is in the audit log when you need to reconstruct what happened.
+Route every model call through the gateway so the spend is attributed per project and capped, and so every step is in the audit log when you need to reconstruct what happened.
 
 ## Reproducibility
 

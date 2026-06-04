@@ -1,8 +1,8 @@
 {
-  "description": "A real-time collaborative editor backend, assembled from Asgard primitives — the same shape as a production collaborative editor. Provisions a Postgres metadata store, an S3 bucket for document blobs/snapshots, an HMAC signing key, an Auth0 SPA app, and a load-balanced HTTPS service. You bring the server image; Asgard wires the infrastructure. The agent fills the inputs and issues each request_resource itself.",
+  "description": "A real-time collaborative editor backend, assembled from the platform's primitives — the same shape as a production collaborative editor. Provisions a Postgres metadata store, an S3 bucket for document blobs/snapshots, an HMAC signing key, an Auth0 SPA app, and a load-balanced HTTPS service. You bring the server image; the platform wires the infrastructure. The agent fills the inputs and issues each request_resource itself.",
   "inputs": [
     { "name": "image", "required": true, "description": "OCI image for the collab server; reads DATABASE_URL_SECRET_ARN, DOCS_BUCKET, TOKEN_KEY_SECRET_ARN, AUTH0_CLIENT_ID, listens on 8080 with /healthz. Use immutable :sha tags." },
-    { "name": "vpc_id", "required": true, "description": "Existing VPC (Asgard never creates one)." },
+    { "name": "vpc_id", "required": true, "description": "Existing VPC (the platform never creates one)." },
     { "name": "subnet_ids", "required": true, "description": "Two or more subnets across AZs." },
     { "name": "certificate_arn", "required": true, "description": "ACM cert for the app hostname; HTTPS is required for SPA login." },
     { "name": "kms_arn", "required": true, "description": "KMS key wrapping the secrets, for the task role's kms:Decrypt." },

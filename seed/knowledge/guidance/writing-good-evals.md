@@ -10,7 +10,7 @@ A bad eval set is worse than none, because it manufactures false confidence: it 
 
 **An eval is not** a list of prompts the team likes, a screenshot of a good run, or a notebook nobody ever reopens. The test is simple: if you can't run it the same way twice and get a comparable verdict, you don't have an eval — you have a memory of a good day.
 
-In Asgard, evals are what gate tier promotion: a project can't move up a classification tier until its eval verdict clears the bar. The gate reads the verdict; it does not write your cases. Whether the cases are any good is entirely on you.
+On the control plane, evals are what gate tier promotion: a project can't move up a classification tier until its eval verdict clears the bar. The gate reads the verdict; it does not write your cases. Whether the cases are any good is entirely on you.
 
 ## What makes a case useful
 

@@ -66,7 +66,7 @@ pub const GUIDANCE: &[(&str, &str, &[&str], &str)] = &[
 pub const RECIPES: &[(&str, &str, &[&str], &str, &str)] = &[
     (
         "Add real-time collaboration to your app",
-        "From 'I want multi-user live editing' to 'it's working' — the server you build, the Asgard primitives you provision, and how to verify.",
+        "From 'I want multi-user live editing' to 'it's working' — the server you build, the platform primitives you provision, and how to verify.",
         &["collaboration", "realtime", "recipe"],
         include_str!("../../../seed/knowledge/recipes/realtime-collab.md"),
         include_str!("../../../seed/knowledge/recipes/realtime-collab.json"),

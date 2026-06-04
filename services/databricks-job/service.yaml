@@ -6,7 +6,7 @@ classification_min: poc
 classification_max: critical-path
 description: >-
   A Databricks Workflows job that runs a notebook task on serverless compute,
-  optionally on a schedule. Provisioned through Asgard's terraform connector +
+  optionally on a schedule. Provisioned through the platform's terraform connector +
   the Databricks provider — gated, tier-classified, project-tagged, and audited.
   Always requires human approval (a scheduled job is recurring compute spend).
 auto_approvable: false

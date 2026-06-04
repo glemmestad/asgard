@@ -6,8 +6,8 @@ description: >-
   Databricks Model Serving / Foundation Model APIs as an inference upstream. A
   standard enableable module — you do NOT author code; you enable it by setting
   DATABRICKS_HOST (your workspace URL) and DATABRICKS_TOKEN — the same standard env
-  vars the Databricks CLI/Terraform use. Databricks serves the tokens; Asgard's gateway sits IN FRONT
-  of it (and of Databricks' own Mosaic AI Gateway) — projects get an Asgard token,
+  vars the Databricks CLI/Terraform use. Databricks serves the tokens; the gateway sits IN FRONT
+  of it (and of Databricks' own Mosaic AI Gateway) — projects get a gateway token,
   never the Databricks one, and every call is budgeted, policy-checked,
   data-class-gated, audited, and attributed per project. Defined exactly like the
   LiteLLM module: OpenAI-compatible, just a different request path.
@@ -30,7 +30,7 @@ inference:
   chat_path: /serving-endpoints/{model}/invocations
   # Seed with the Foundation Model APIs pay-per-token endpoints you have enabled;
   # `route` is the serving endpoint name, `ref` is how callers address it through
-  # Asgard. Edit cost_in/cost_out to your workspace's per-1K-token pricing.
+  # the control plane. Edit cost_in/cost_out to your workspace's per-1K-token pricing.
   models:
     - { ref: model:databricks/llama-3-3-70b, route: databricks-meta-llama-3-3-70b-instruct, data_classes: [public, internal, confidential], cost_in: 0.001, cost_out: 0.003 }
     - { ref: model:databricks/claude-sonnet, route: databricks-claude-sonnet-4-5, data_classes: [public, internal, confidential], cost_in: 0.003, cost_out: 0.015 }

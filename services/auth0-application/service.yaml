@@ -7,7 +7,7 @@ classification_max: critical-path
 description: >-
   An Auth0 application (client) in an existing tenant — the first non-AWS,
   non-inference service module, provisioned through the universal terraform
-  connector with no Asgard code. The generated client_secret is routed to the
+  connector with no platform-specific code. The generated client_secret is routed to the
   secret store; only a reference is recorded. A project-dedicated Auth0 *tenant*
   is not API/Terraform-creatable and is deferred.
 auto_approvable: true

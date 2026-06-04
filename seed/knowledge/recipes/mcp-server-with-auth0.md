@@ -3,7 +3,7 @@
 You wrote some tools you want an AI agent to call — over the network, by more than
 one person, with auth on every request. This runbook takes you from "I have tool
 code" to "agents hit `https://…/mcp` with a Bearer token and it works," using
-Asgard primitives. You bring the server image; Asgard provisions and governs the
+the platform's primitives. You bring the server image; the platform provisions and governs the
 repo, the auth app, and the HTTPS service.
 
 ## What "working" looks like
@@ -29,7 +29,7 @@ An **MCP server** (your code, your image) that:
 - validates an Auth0-issued **JWT** on each request,
 - exposes your tools.
 
-Asgard provisions the image repository, the Auth0 M2M app agents use to get
+The control plane provisions the image repository, the Auth0 M2M app agents use to get
 tokens, and the load-balanced HTTPS service. The server image must honor:
 
 | Env var | Carries |
@@ -89,8 +89,8 @@ Record `url`. MCP is reachable at `<url>/mcp`. Approval-gated.
 
 ## Why you bring your own image
 
-Same principle as every recipe: Asgard provisions infrastructure, not your tool
-code. You own the server (and its CVEs, its versioning); Asgard owns the governed
+Same principle as every recipe: the platform provisions infrastructure, not your tool
+code. You own the server (and its CVEs, its versioning); the platform owns the governed
 repo + auth + HTTPS service it runs in. That separation is what keeps the hub
 thin and auditable.
 
