@@ -403,6 +403,7 @@ version = "0.1.0"
 dependencies = [
  "asgard-gateway",
  "asgard-registry",
+ "asgard-storage",
  "async-trait",
  "reqwest",
  "rust-embed",

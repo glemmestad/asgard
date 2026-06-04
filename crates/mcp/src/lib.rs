@@ -1221,7 +1221,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Request a one-step classification promotion (e.g. poc → light-operational). A clean Light target auto-approves. If the review finds fixable problems the request is returned to you as 'flagged' with `review_findings` — fix the evidence/repo and call this again to re-run (it supersedes the prior attempt), or escalate_promotion to forward it to a human. Clean Wide/Critical targets need a human by tier. Returns the workflow request."
+        description = "Request a one-step classification promotion (e.g. poc → light-operational). A clean Light target auto-approves. When a deep code-review reviewer is enabled it reads your repository in the background, so the request may come back as 'reviewing' — poll with promotion_status (or re-fetch the request) until it resolves. If the review finds fixable problems the request is returned to you as 'flagged' with `review_findings` — fix the evidence/repo and call this again to re-run (it supersedes the prior attempt), or escalate_promotion to forward it to a human. Clean Wide/Critical targets need a human by tier. Returns the workflow request."
     )]
     async fn request_promotion(
         &self,

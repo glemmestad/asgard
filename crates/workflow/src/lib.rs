@@ -29,6 +29,11 @@ pub enum WorkflowError {
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Requested,
+    /// Parked in an async background review (a `code-review` reviewer reads the
+    /// repo). A transient state the worker resolves to `Approved`/`Requested`
+    /// (clean) or `Flagged` (findings); survives a restart via the `review_jobs`
+    /// queue, not memory.
+    Reviewing,
     /// Blocked by review findings and returned to the submitter to fix-and-retry
     /// or escalate. A resting state owned by the submitter, not yet a human's
     /// queue — distinct from `Requested` (pending a human approver).
@@ -43,6 +48,7 @@ impl State {
     pub fn as_str(&self) -> &'static str {
         match self {
             State::Requested => "requested",
+            State::Reviewing => "reviewing",
             State::Flagged => "flagged",
             State::Approved => "approved",
             State::Rejected => "rejected",
@@ -52,6 +58,7 @@ impl State {
     }
     pub fn parse(s: &str) -> State {
         match s {
+            "reviewing" => State::Reviewing,
             "flagged" => State::Flagged,
             "approved" => State::Approved,
             "rejected" => State::Rejected,
@@ -70,6 +77,12 @@ fn can_transition(from: State, to: State) -> bool {
             | (Requested, Rejected)
             | (Requested, Cancelled)
             | (Requested, Flagged)
+            | (Requested, Reviewing)
+            | (Approved, Reviewing)
+            | (Reviewing, Approved)
+            | (Reviewing, Requested)
+            | (Reviewing, Flagged)
+            | (Reviewing, Cancelled)
             | (Flagged, Requested)
             | (Flagged, Approved)
             | (Flagged, Cancelled)
@@ -304,6 +317,55 @@ impl WorkflowEngine {
         .await
     }
 
+    /// Park a promotion in async background review. The Cedar-assigned approver is
+    /// preserved (`None`) so a clean verdict can restore the human queue.
+    pub async fn review(&self, id: &str, actor: &str) -> Result<WorkflowRequest, WorkflowError> {
+        self.transition(
+            id,
+            State::Reviewing,
+            None,
+            Some("under automated code review"),
+            actor,
+        )
+        .await
+    }
+
+    /// Resolve a `Reviewing` promotion to its post-review resting state on a clean
+    /// verdict: the pre-review state the caller stashed (`Approved` for a clean
+    /// Light auto-approve, `Requested` for a Wide+ awaiting a human). The approver
+    /// is preserved. Findings take the `flag` path instead, not this one.
+    pub async fn resolve_review(
+        &self,
+        id: &str,
+        to: State,
+        reason: &str,
+        actor: &str,
+    ) -> Result<WorkflowRequest, WorkflowError> {
+        self.transition(id, to, None, Some(reason), actor).await
+    }
+
+    /// Replace a request's payload (no state change). Used to stash the pre-review
+    /// baseline before parking in `Reviewing`, and to write the reviewer summary
+    /// once the async worker finishes. Not audited (informational fields only).
+    pub async fn update_payload(
+        &self,
+        id: &str,
+        payload: serde_json::Value,
+    ) -> Result<(), WorkflowError> {
+        let now = asgard_storage::now();
+        sqlx::query(
+            &self
+                .db
+                .q("UPDATE workflow_requests SET payload = ?, updated_at = ? WHERE id = ?"),
+        )
+        .bind(payload.to_string())
+        .bind(&now)
+        .bind(id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     async fn transition(
         &self,
         id: &str,
@@ -510,6 +572,52 @@ mod tests {
             .unwrap();
         assert_eq!(by_subject.len(), 1);
         assert_eq!(by_subject[0].id, r.id);
+    }
+
+    #[tokio::test]
+    async fn reviewing_resolves_clean_or_flags() {
+        let e = engine().await;
+        // Clean Wide promotion (needs a human): Requested → Reviewing → Requested,
+        // preserving the approver across the round trip.
+        let r = e
+            .submit(NewRequest {
+                kind: "promotion".into(),
+                requester: "user:default/alice".into(),
+                subject: "project:proj-2026-0009".into(),
+                payload: serde_json::json!({"target_classification": "wide-operational"}),
+                sla_seconds: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(r.state, State::Requested);
+        let approver = r.approver.clone();
+        let reviewing = e.review(&r.id, "system").await.unwrap();
+        assert_eq!(reviewing.state, State::Reviewing);
+        assert_eq!(reviewing.approver, approver);
+        let restored = e
+            .resolve_review(&r.id, State::Requested, "review passed", "system")
+            .await
+            .unwrap();
+        assert_eq!(restored.state, State::Requested);
+        assert_eq!(restored.approver, approver);
+
+        // Findings → Reviewing → Flagged.
+        let r2 = e
+            .submit(NewRequest {
+                kind: "promotion".into(),
+                requester: "user:default/alice".into(),
+                subject: "project:proj-2026-0010".into(),
+                payload: serde_json::json!({"target_classification": "wide-operational"}),
+                sla_seconds: None,
+            })
+            .await
+            .unwrap();
+        e.review(&r2.id, "system").await.unwrap();
+        let flagged = e
+            .flag(&r2.id, "system", "repo violates standards")
+            .await
+            .unwrap();
+        assert_eq!(flagged.state, State::Flagged);
     }
 
     #[tokio::test]

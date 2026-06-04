@@ -34,7 +34,8 @@ use asgard_registry::{
     RegistrationPolicy, ReviewConfig,
 };
 use asgard_reviewer::{
-    LlmJudge, ReviewService, ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
+    CodeReview, LlmJudge, RegistryStandards, ReviewDepth, ReviewDepthMap, ReviewService,
+    ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
 };
 use asgard_storage::Db;
 use asgard_workflow::WorkflowEngine;
@@ -199,6 +200,14 @@ struct Config {
     /// empty=default posture).
     #[serde(default)]
     classification_requirements: std::collections::BTreeMap<String, Vec<String>>,
+    /// Per-tier code-review depth, keyed by target tier (`light-operational` /
+    /// `wide-operational` / `critical-path`): which standard ids to judge against,
+    /// the tool-loop round budget, and whether to skip. Any tier present overrides
+    /// the shipped default (POC skip; Light `coding`; Wide +`security`; Critical
+    /// +`workflow`); absent tiers keep the default (mirrors
+    /// `classification_requirements`' empty=default posture).
+    #[serde(default)]
+    review_depth: std::collections::BTreeMap<String, ReviewDepthCfg>,
     /// Review-date engine thresholds (WS3): POC review window, automatic-extension
     /// allowance, and sweep cadence. Defaults are the policy doc's 90 days / 1.
     #[serde(default)]
@@ -236,6 +245,10 @@ struct ReviewCfg {
     /// How often the review sweep runs (seconds). Absent = daily.
     #[serde(default)]
     sweep_secs: Option<u64>,
+    /// How often the async code-review worker drains its queue (seconds). Absent
+    /// = 15s.
+    #[serde(default)]
+    worker_secs: Option<u64>,
 }
 
 impl Default for ReviewCfg {
@@ -244,8 +257,28 @@ impl Default for ReviewCfg {
             poc_window_days: default_poc_window(),
             auto_extensions: default_auto_extensions(),
             sweep_secs: None,
+            worker_secs: None,
         }
     }
+}
+
+/// One tier's code-review depth override (see `Config::review_depth`).
+#[derive(Debug, Clone, Deserialize)]
+struct ReviewDepthCfg {
+    /// Skip code review for this tier entirely.
+    #[serde(default)]
+    skip: bool,
+    /// Standard ids to judge against (e.g. `["coding", "security"]`).
+    #[serde(default)]
+    standards: Vec<String>,
+    /// Tool-loop round budget (how many `list_files`/`read_file` cycles the model
+    /// gets to navigate the repo). Absent = 8.
+    #[serde(default = "default_review_rounds")]
+    max_rounds: usize,
+}
+
+fn default_review_rounds() -> usize {
+    8
 }
 
 fn default_poc_window() -> i64 {
@@ -629,6 +662,17 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             Arc::new(LlmJudge::new(gateway.clone(), system_cost_key.clone())),
         );
         reviewer_registry.register("webhook", Arc::new(WebhookReviewer::new()));
+        // The deep async reviewer: reads the repo over Asgard's git token and judges
+        // it against the org standards, depth per target tier. Runs in the worker.
+        reviewer_registry.register(
+            "code-review",
+            Arc::new(CodeReview::new(
+                gateway.clone(),
+                system_cost_key.clone(),
+                Arc::new(RegistryStandards::new(core.db.clone())),
+                build_review_depth(&config),
+            )),
+        );
         let review_service = Arc::new(ReviewService::new(
             reviewer_catalog,
             reviewer_registry,
@@ -758,6 +802,26 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         });
     }
 
+    // Async code-review worker: drain the `review_jobs` queue — reclaim crashed
+    // leases, run each pending promotion's reviewer panel, and finalize (approve /
+    // request / flag, or fail closed). Crash-safe (state in the DB); runs even when
+    // review is disabled so any leftover `Reviewing` promotion still drains.
+    {
+        let reg = state.registry.clone();
+        let wf = state.workflow.clone();
+        let secs = config.review.worker_secs.unwrap_or(15).max(1);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                match reg.drain_reviews(&wf).await {
+                    Ok(n) if n > 0 => tracing::info!("review worker: finalized {n} promotion(s)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("review worker pass failed: {e}"),
+                }
+            }
+        });
+    }
+
     // Mount the MCP server (Streamable HTTP at /mcp, gated by project virtual
     // key) alongside the REST/GraphQL/UI surface — same process, same port.
     let mcp_router = asgard_mcp::http_router(
@@ -869,6 +933,23 @@ fn build_registration_policy(config: &Config) -> RegistrationPolicy {
 
 fn build_requirements(config: &Config) -> ClassificationRequirements {
     ClassificationRequirements::from_overrides(config.classification_requirements.clone())
+}
+
+/// Resolve operator `review_depth` overrides over the shipped per-tier defaults:
+/// any tier present replaces that tier's depth; absent tiers keep the default.
+fn build_review_depth(config: &Config) -> ReviewDepthMap {
+    let mut map = ReviewDepthMap::default();
+    for (tier, cfg) in &config.review_depth {
+        map = map.with_override(
+            tier,
+            ReviewDepth {
+                skip: cfg.skip,
+                standard_ids: cfg.standards.clone(),
+                max_rounds: cfg.max_rounds,
+            },
+        );
+    }
+    map
 }
 
 /// Dev/test escape hatch: run the review gate against the mock model when no real

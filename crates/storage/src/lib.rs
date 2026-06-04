@@ -139,6 +139,13 @@ pub fn plus_days(iso: &str, n: i64) -> String {
     (base + chrono::Duration::days(n)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
+/// An ISO-8601 instant `n` seconds from now (RFC3339, millis, UTC). Used for
+/// short-lived job leases. Negative `n` yields a past instant (already expired).
+pub fn now_plus_seconds(n: i64) -> String {
+    (chrono::Utc::now() + chrono::Duration::seconds(n))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
 /// Whole seconds between two RFC3339 instants (`end - start`). `None` if either
 /// input is unparseable. Used for promotion cycle-time metrics.
 pub fn seconds_between(start_iso: &str, end_iso: &str) -> Option<i64> {

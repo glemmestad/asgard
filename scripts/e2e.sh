@@ -29,6 +29,7 @@ cleanup() {
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
   [[ -n "${SERVER2_PID:-}" ]] && kill "$SERVER2_PID" 2>/dev/null
   [[ -n "${SERVER3_PID:-}" ]] && kill "$SERVER3_PID" 2>/dev/null
+  [[ -n "${SERVER5_PID:-}" ]] && kill "$SERVER5_PID" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -769,6 +770,81 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE4/api/auth/login" -H
   -d '{"username":"admin","password":"e2e-admin-pw"}')
 [[ "$CODE" == "403" ]] && ok "disable-local-login: POST /api/auth/login is refused (403)" || bad "expected 403 for local login when disabled, got $CODE"
 kill "$SERVER4_PID" 2>/dev/null
+
+# 23. Async code-review gate (the deep reviewer). With ASGARD_REVIEW_ALLOW_MOCK=1
+# the gate is on (mock judge); the reviewer reads the actual repo over the Local
+# backend. A clean repo parks in `reviewing`, the background worker reads it and
+# approves; a repo carrying the review-fail marker is flagged — the gate judged the
+# CODE, not the form. The whole async path (enqueue → worker → finalize) runs here.
+PORT5=$((PORT+4)); BASE5="http://127.0.0.1:${PORT5}"
+mkdir -p "$WORK/repo_ok/src" "$WORK/repo_bad/src"
+printf 'fn main() {}\n' > "$WORK/repo_ok/src/main.rs"
+printf '# Clean fixture\n' > "$WORK/repo_ok/README.md"
+printf 'fn main() {}\n' > "$WORK/repo_bad/src/main.rs"
+: > "$WORK/repo_bad/.asgard-review-fail"
+ASGARD_REVIEW_ALLOW_MOCK=1 ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite://${WORK}/review.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/asgard.yaml" >"$WORK/server5.log" 2>&1 &
+SERVER5_PID=$!
+for i in $(seq 1 50); do curl -fsS "$BASE5/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -fsS "$BASE5/healthz" >/dev/null 2>&1 || { bad "review server did not start"; cat "$WORK/server5.log"; }
+grep -q 'review gate enabled' "$WORK/server5.log" \
+  && ok "review gate ENABLED under ASGARD_REVIEW_ALLOW_MOCK=1 (mock judge)" \
+  || { bad "review gate not enabled under mock override"; cat "$WORK/server5.log"; }
+
+# Current state of a workflow request by id (scoped to its project subject).
+req_state() { # $1=base $2=pid $3=request-id
+  curl -fsS "$1/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:'+'$2'))")" \
+    | python3 -c "import json,sys;rs=json.load(sys.stdin);print(next((r['state'] for r in rs if r['id']=='$3'),'?'))"
+}
+
+REG_OK=$(cat <<JSON
+{"name":"Async OK","owner_email":"carol@corp.example","manager_email":"dave@corp.example","group":"platform","classification":"poc","data_class":"internal","budget_usd":10,"repo_or_source_url":"$WORK/repo_ok","business_owner":"carol@corp.example","technical_owner":"dave@corp.example","team_or_org_of_record":"Platform","support_contact":"oncall@corp.example","runbook_url":"https://rb","monitoring_or_logs_url":"https://logs","ci_status_url":"N/A","critical_flow_test_or_eval_url":"https://eval","state_loss_posture":"stateless","requested_classification":"light-operational","primary_data_flows":["s3 -> warehouse"]}
+JSON
+)
+curl -fsS -X POST "$BASE5/api/projects" -H 'content-type: application/json' -d "$REG_OK" -o "$WORK/r_ok.json"
+POK=$(jget "$WORK/r_ok.json" "['project_id']")
+curl -fsS -X POST "$BASE5/api/projects/${POK}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pok.json"
+SOK=$(jget "$WORK/pok.json" "['state']")
+RIDOK=$(jget "$WORK/pok.json" "['id']")
+[[ "$SOK" == "reviewing" ]] && ok "clean Light + LLM → parks in async review (state=reviewing)" || bad "expected reviewing, got $SOK"
+# Drive the worker (the periodic loop does this on a schedule; the endpoint is the
+# same idempotent routine). A clean repo → approved.
+curl -fsS -X POST "$BASE5/api/reviews/run" -o "$WORK/run1.json"
+STOK=$(req_state "$BASE5" "$POK" "$RIDOK")
+[[ "$STOK" == "approved" ]] && ok "worker reads a clean repo and approves the promotion" || bad "expected approved after worker, got $STOK"
+curl -fsS "$BASE5/api/requests/${RIDOK}/reviews" -o "$WORK/revok.json"
+python3 -c "import json,sys;rs=json.load(open('$WORK/revok.json'));sys.exit(0 if any(r['reviewer_id']=='code-review' and r['disposition']=='pass' for r in rs) else 1)" \
+  && ok "clean-repo code-review verdict persisted (disposition=pass)" || { bad "code-review pass verdict not persisted"; cat "$WORK/revok.json"; }
+
+# Same evidence, a repo carrying the review-fail marker → the reviewer flags it.
+REG_BAD=$(cat <<JSON
+{"name":"Async Bad","owner_email":"carol@corp.example","manager_email":"dave@corp.example","group":"platform","classification":"poc","data_class":"internal","budget_usd":10,"repo_or_source_url":"$WORK/repo_bad","business_owner":"carol@corp.example","technical_owner":"dave@corp.example","team_or_org_of_record":"Platform","support_contact":"oncall@corp.example","runbook_url":"https://rb","monitoring_or_logs_url":"https://logs","ci_status_url":"N/A","critical_flow_test_or_eval_url":"https://eval","state_loss_posture":"stateless","requested_classification":"light-operational","primary_data_flows":["s3 -> warehouse"]}
+JSON
+)
+curl -fsS -X POST "$BASE5/api/projects" -H 'content-type: application/json' -d "$REG_BAD" -o "$WORK/r_bad.json"
+PBAD=$(jget "$WORK/r_bad.json" "['project_id']")
+curl -fsS -X POST "$BASE5/api/projects/${PBAD}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pbad.json"
+RIDBAD=$(jget "$WORK/pbad.json" "['id']")
+[[ "$(jget "$WORK/pbad.json" "['state']")" == "reviewing" ]] && ok "machine-clean Light w/ marker repo also parks in review" || bad "expected reviewing for bad repo"
+curl -fsS -X POST "$BASE5/api/reviews/run" -o "$WORK/run2.json"
+STBAD=$(req_state "$BASE5" "$PBAD" "$RIDBAD")
+[[ "$STBAD" == "flagged" ]] && ok "worker reads the marker repo and FLAGS it (judged the code, not the form)" || bad "expected flagged after worker, got $STBAD"
+curl -fsS "$BASE5/api/requests/${RIDBAD}/reviews" -o "$WORK/revbad.json"
+python3 -c "import json,sys;rs=json.load(open('$WORK/revbad.json'));sys.exit(0 if any(r['reviewer_id']=='code-review' and r['disposition']=='concern' for r in rs) else 1)" \
+  && ok "flagged-repo code-review verdict persisted (disposition=concern)" || { bad "code-review concern verdict not persisted"; cat "$WORK/revbad.json"; }
+curl -fsS "$BASE5/api/audit?entity=project:${PBAD}" -o "$WORK/badaud.json"
+grep -q 'project.promotion_flagged' "$WORK/badaud.json" \
+  && ok "async review flag is audited (project.promotion_flagged)" || bad "flag audit record missing for async review"
+# Re-running supersedes the in-flight/flagged attempt (one open promotion).
+curl -fsS -X POST "$BASE5/api/projects/${PBAD}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pbad2.json"
+RIDBAD2=$(jget "$WORK/pbad2.json" "['id']")
+OPENB=$(curl -fsS "$BASE5/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:${PBAD}'))")" \
+  | python3 -c "import json,sys;rs=json.load(sys.stdin);print(sum(1 for r in rs if r['state'] in ('reviewing','flagged','requested')))")
+[[ "$RIDBAD2" != "$RIDBAD" && "$OPENB" == "1" ]] && ok "re-running supersedes the prior review attempt (one open)" || bad "supersede wrong (rid=$RIDBAD rid2=$RIDBAD2 open=$OPENB)"
+kill "$SERVER5_PID" 2>/dev/null
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [[ "$FAIL" == "0" ]]

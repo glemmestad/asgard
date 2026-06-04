@@ -181,14 +181,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_loads_llm_judge_enabled() {
+    fn embedded_loads_builtin_reviewers_enabled() {
         let cat = ReviewerCatalog::embedded().unwrap();
         let j = cat.get("llm-judge").expect("built-in llm-judge");
         assert_eq!(j.kind, "llm-judge");
         assert!(j.enabled);
         // `auto` resolves to the platform's real model at runtime.
         assert_eq!(j.model, "auto");
-        assert_eq!(cat.enabled_for("light-operational").len(), 1);
+        // The deep async reviewer also ships embedded + enabled.
+        let cr = cat.get("code-review").expect("built-in code-review");
+        assert_eq!(cr.kind, "code-review");
+        assert!(cr.is_async());
+        // Both built-ins apply to a Light promotion; one of them is async.
+        assert_eq!(cat.enabled_for("light-operational").len(), 2);
+        assert!(cat.has_async_for("light-operational"));
     }
 
     #[test]
@@ -203,7 +209,10 @@ mod tests {
         .unwrap();
         let cat = ReviewerCatalog::load(Some(&dir)).unwrap();
         assert!(!cat.get("llm-judge").unwrap().enabled);
-        assert!(cat.enabled_for("light-operational").is_empty());
+        // The overlay drops llm-judge from the panel; the other built-in remains.
+        let enabled = cat.enabled_for("light-operational");
+        assert!(enabled.iter().all(|m| m.id != "llm-judge"));
+        assert!(enabled.iter().any(|m| m.id == "code-review"));
         std::fs::remove_dir_all(&dir).ok();
     }
 

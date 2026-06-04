@@ -21,6 +21,7 @@ pub mod promotion;
 pub mod promotion_reviewer;
 pub mod recipes;
 pub mod review;
+pub mod review_jobs;
 pub mod standards;
 pub mod versions;
 
@@ -32,6 +33,7 @@ pub use promotion::{ClassificationRequirements, EvidenceVerdict, PromotionCheckl
 pub use promotion_reviewer::{ReviewerOutcome, ReviewerPanel};
 pub use recipes::Recipe;
 pub use review::{ExtendOutcome, ReviewConfig, ReviewState, SweepSummary};
+pub use review_jobs::{ReviewJob, ReviewJobs};
 pub use standards::Standard;
 pub use versions::Version;
 
@@ -50,6 +52,23 @@ pub const CLASSIFICATIONS: &[&str] = &[
     "critical-path",
 ];
 pub const DATA_CLASSES: &[&str] = &["public", "internal", "confidential", "restricted"];
+
+/// Review-job worker tunables. A real code review (repo fetch + several model
+/// calls) can run a while, so the lease is generous; a crashed run is reclaimed
+/// only after it lapses. Three attempts before the promotion fails closed.
+const REVIEW_LEASE_SECS: i64 = 600;
+const REVIEW_MAX_ATTEMPTS: i64 = 3;
+
+/// The state to restore a `Reviewing` promotion to on a clean verdict — the
+/// pre-review Cedar decision stashed in the payload at enqueue. Defaults to
+/// `Requested` (a human gate) if absent: the safe direction.
+fn pre_review_state(req: &WorkflowRequest) -> State {
+    req.payload
+        .get("pre_review_state")
+        .and_then(|v| v.as_str())
+        .map(State::parse)
+        .unwrap_or(State::Requested)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
@@ -591,9 +610,14 @@ impl ProjectRegistry {
     }
 
     /// Request a one-step promotion. Validates the step, evaluates the evidence,
-    /// and submits a `promotion` workflow request whose payload carries the
-    /// policy facts; Cedar then auto-approves (Light, clean) or routes to a human
-    /// (everything else). Returns the request — already `Approved` or `Requested`.
+    /// and submits a `promotion` workflow request whose payload carries the policy
+    /// facts; Cedar then auto-approves (Light, clean) or routes to a human.
+    ///
+    /// When an async reviewer (`code-review`) applies to `target`, the panel is
+    /// deferred to the background worker: the request parks in `Reviewing` and a
+    /// `review_jobs` row is enqueued — the call returns immediately. Otherwise the
+    /// inline panel (synchronous reviewers) runs now and the request resolves to
+    /// `Approved` / `Requested` / `Flagged` before returning.
     pub async fn request_promotion(
         &self,
         workflow: &WorkflowEngine,
@@ -605,25 +629,64 @@ impl ProjectRegistry {
         promotion::validate_step(&reg.classification, target)?;
         let verdict = promotion::evaluate(&reg, target, &self.requirements);
         let risk_accepted = !reg.evidence.risk_acceptance_url.trim().is_empty();
+        let machine_has_exception = !verdict.exception_signals.is_empty();
+        let async_review = self
+            .reviewer_panel
+            .as_ref()
+            .map(|p| p.has_async(target))
+            .unwrap_or(false);
 
-        // Run the pluggable reviewer panel (no-op identity when none is wired).
+        let subject = format!("project:{project_id}");
+        // Re-running supersedes any open attempt (requested/flagged/reviewing)
+        // rather than piling up duplicates; human decisions are left alone.
+        for open in self.open_promotions(workflow, &subject).await? {
+            let _ = workflow.cancel(&open.id, actor).await;
+        }
+
+        if async_review {
+            // Submit on the machine verdict alone (the reviewers run later in the
+            // worker), so Cedar gives the pre-review resting state. Park in
+            // `Reviewing` and enqueue; the worker runs the panel and finalizes.
+            let mut payload = serde_json::json!({
+                "project_id": project_id,
+                "from_classification": reg.classification,
+                "target_classification": target,
+                "evidence_complete": verdict.evidence_complete,
+                "has_exception": machine_has_exception,
+                "is_critical": target == "critical-path",
+                "risk_accepted": risk_accepted,
+                "missing": verdict.missing,
+                "exception_signals": verdict.exception_signals,
+            });
+            let req = workflow
+                .submit(NewRequest {
+                    kind: "promotion".into(),
+                    requester: actor.to_string(),
+                    subject: subject.clone(),
+                    payload: payload.clone(),
+                    sla_seconds: Some(7 * 24 * 3600),
+                })
+                .await?;
+            // A policy forbid is terminal — don't review a denied promotion.
+            if req.state == State::Rejected {
+                return Ok(req);
+            }
+            payload["pre_review_state"] = serde_json::json!(req.state.as_str());
+            workflow.update_payload(&req.id, payload).await?;
+            let reviewing = workflow.review(&req.id, actor).await?;
+            self.jobs().enqueue(&req.id, project_id, target).await?;
+            return Ok(reviewing);
+        }
+
+        // Inline path: run the panel now (synchronous reviewers only) and fold its
+        // escalate-only signals into the Cedar decision before submitting.
         let outcome = match &self.reviewer_panel {
             Some(p) => p.review(&reg, target, &verdict).await,
             None => ReviewerOutcome::empty(),
         };
-
-        // Reviewers are escalate-only: they may ADD exception signals, never clear
-        // `missing` or flip `evidence_complete`.
         let mut exception_signals = verdict.exception_signals.clone();
         exception_signals.extend(outcome.added_exception_signals.iter().cloned());
         let has_exception = !exception_signals.is_empty();
-
-        let subject = format!("project:{project_id}");
-        // Re-running supersedes the stale attempt rather than piling up duplicate
-        // open rows; human decisions (approved/rejected/fulfilled) are left alone.
-        for open in self.open_promotions(workflow, &subject).await? {
-            let _ = workflow.cancel(&open.id, actor).await;
-        }
 
         let payload = serde_json::json!({
             "project_id": project_id,
@@ -640,7 +703,7 @@ impl ProjectRegistry {
             "review_summary": outcome.summary,
             "reviewers_ran": outcome.reviewer_ids,
         });
-        let mut req = workflow
+        let req = workflow
             .submit(NewRequest {
                 kind: "promotion".into(),
                 requester: actor.to_string(),
@@ -650,20 +713,57 @@ impl ProjectRegistry {
             })
             .await?;
 
-        // Self-fixable findings → return to the submitter (fix-and-retry or
-        // escalate) instead of dumping a human approver with it. A clean
-        // Wide+/Critical stays `Requested` (human mandatory by tier, no findings).
-        if req.state == State::Requested && has_exception {
-            let summary = if outcome.summary.trim().is_empty() {
-                "promotion blocked by review findings".to_string()
-            } else {
-                outcome.summary.clone()
-            };
-            req = workflow.flag(&req.id, actor, &summary).await?;
+        let clean_state = req.state;
+        self.finalize_promotion(
+            workflow,
+            req,
+            project_id,
+            target,
+            clean_state,
+            &outcome,
+            has_exception,
+            actor,
+        )
+        .await
+    }
+
+    /// Route a promotion to its resting state once its review outcome is known.
+    /// Shared by the inline path (req fresh from `submit`, `clean_state` = its
+    /// post-submit state) and the async worker (req parked in `Reviewing`,
+    /// `clean_state` = the stashed pre-review state). Persists every verdict for
+    /// audit. Escalate-only: an exception can only push to `Flagged`; a clean
+    /// verdict restores `clean_state`. A `Rejected` / superseded request is
+    /// terminal and left as-is.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn finalize_promotion(
+        &self,
+        workflow: &WorkflowEngine,
+        req: WorkflowRequest,
+        project_id: &str,
+        target: &str,
+        clean_state: State,
+        outcome: &ReviewerOutcome,
+        has_exception: bool,
+        actor: &str,
+    ) -> Result<WorkflowRequest, RegistryError> {
+        self.persist_reviews(&req.id, project_id, outcome).await;
+        if matches!(
+            req.state,
+            State::Rejected | State::Cancelled | State::Fulfilled
+        ) {
+            return Ok(req);
         }
 
-        self.persist_reviews(&req.id, project_id, &outcome).await;
-        if req.state == State::Flagged {
+        let mut req = req;
+        if has_exception {
+            if req.state != State::Flagged {
+                let summary = if outcome.summary.trim().is_empty() {
+                    "promotion blocked by review findings".to_string()
+                } else {
+                    outcome.summary.clone()
+                };
+                req = workflow.flag(&req.id, actor, &summary).await?;
+            }
             let _ = asgard_storage::audit::append(
                 &self.db,
                 &asgard_storage::audit::AuditRecord::new(actor, "project.promotion_flagged")
@@ -678,11 +778,156 @@ impl ProjectRegistry {
                     })),
             )
             .await;
+        } else if req.state != clean_state {
+            req = workflow
+                .resolve_review(&req.id, clean_state, "review passed; no findings", actor)
+                .await?;
         }
         Ok(req)
     }
 
-    /// Open (`Requested`/`Flagged`) promotion requests for a project subject.
+    /// The async review-job queue (a thin handle over the shared `Db`).
+    pub fn jobs(&self) -> review_jobs::ReviewJobs {
+        review_jobs::ReviewJobs::new(self.db.clone())
+    }
+
+    /// Execute one claimed review job: load the promotion + project, re-evaluate
+    /// the machine verdict, run the deferred reviewer panel, mirror its summary
+    /// into the payload, and finalize. A superseded/terminal request is a no-op.
+    /// Infra errors propagate so the worker can retry / fail the job closed.
+    pub async fn run_review_job(
+        &self,
+        workflow: &WorkflowEngine,
+        job: &ReviewJob,
+    ) -> Result<WorkflowRequest, RegistryError> {
+        let mut req = workflow
+            .get(&job.request_id)
+            .await?
+            .ok_or_else(|| RegistryError::NotRegistered(job.request_id.clone()))?;
+        if req.state != State::Reviewing {
+            return Ok(req); // superseded or already resolved
+        }
+        let reg = self.require_active(&job.project_id).await?;
+        let verdict = promotion::evaluate(&reg, &job.target, &self.requirements);
+        let machine_has_exception = !verdict.exception_signals.is_empty();
+        // The evidence machine already flags this — don't spend a deep code review
+        // (repo fetch + model calls) on a promotion that fails the evidence bar.
+        let outcome = if machine_has_exception {
+            ReviewerOutcome::empty()
+        } else {
+            match &self.reviewer_panel {
+                Some(p) => p.review(&reg, &job.target, &verdict).await,
+                None => ReviewerOutcome::empty(),
+            }
+        };
+        let has_exception = machine_has_exception || !outcome.added_exception_signals.is_empty();
+        let clean_state = pre_review_state(&req);
+
+        // Mirror the reviewer summary into the payload (parity with the inline path).
+        if let serde_json::Value::Object(map) = &mut req.payload {
+            map.insert("review_passed".into(), serde_json::json!(outcome.passed));
+            map.insert(
+                "review_findings".into(),
+                serde_json::json!(outcome.findings),
+            );
+            map.insert("review_summary".into(), serde_json::json!(outcome.summary));
+            map.insert(
+                "reviewers_ran".into(),
+                serde_json::json!(outcome.reviewer_ids),
+            );
+        }
+        let _ = workflow.update_payload(&req.id, req.payload.clone()).await;
+
+        self.finalize_promotion(
+            workflow,
+            req,
+            &job.project_id,
+            &job.target,
+            clean_state,
+            &outcome,
+            has_exception,
+            "system",
+        )
+        .await
+    }
+
+    /// Fail a stuck review closed: the worker exhausted its retries, so flag the
+    /// promotion rather than leave it hanging in `Reviewing`. Escalate-only.
+    async fn fail_review_closed(
+        &self,
+        workflow: &WorkflowEngine,
+        job: &ReviewJob,
+        error: &str,
+    ) -> Result<(), RegistryError> {
+        let Some(req) = workflow.get(&job.request_id).await? else {
+            return Ok(());
+        };
+        if req.state != State::Reviewing {
+            return Ok(());
+        }
+        let clean_state = pre_review_state(&req);
+        let outcome = ReviewerOutcome {
+            passed: false,
+            added_exception_signals: vec![format!(
+                "automated code review did not complete: {error}"
+            )],
+            findings: vec![format!(
+                "code review failed to complete after retries: {error}"
+            )],
+            summary: "code review unavailable — fix and retry, or escalate".into(),
+            reviewer_ids: vec!["code-review".into()],
+            verdicts_json: vec![],
+        };
+        self.finalize_promotion(
+            workflow,
+            req,
+            &job.project_id,
+            &job.target,
+            clean_state,
+            &outcome,
+            true,
+            "system",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// One worker pass over the review queue: reclaim stale leases, then run each
+    /// pending job to completion (finalize + mark `done`, or `fail` — terminally
+    /// failing closed to `Flagged`). Returns how many jobs it finalized. Idempotent
+    /// and crash-safe; the background loop in `serve` calls it on a schedule and an
+    /// admin can trigger it on demand.
+    pub async fn drain_reviews(&self, workflow: &WorkflowEngine) -> Result<usize, RegistryError> {
+        let jobs = self.jobs();
+        jobs.reclaim_stale().await?;
+        let mut done = 0;
+        while let Some(job) = jobs.claim_next(REVIEW_LEASE_SECS).await? {
+            match self.run_review_job(workflow, &job).await {
+                Ok(_) => {
+                    jobs.finish(&job.id).await?;
+                    done += 1;
+                }
+                Err(e) => {
+                    let terminal = jobs
+                        .fail(&job.id, &e.to_string(), job.attempts, REVIEW_MAX_ATTEMPTS)
+                        .await?;
+                    if terminal {
+                        let _ = self
+                            .fail_review_closed(workflow, &job, &e.to_string())
+                            .await;
+                        done += 1;
+                    } else {
+                        // Re-queued for a later pass; stop now so we don't
+                        // immediately re-claim the same row in this pass.
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(done)
+    }
+
+    /// Open (`Requested`/`Flagged`/`Reviewing`) promotion requests for a subject.
     async fn open_promotions(
         &self,
         workflow: &WorkflowEngine,
@@ -697,7 +942,11 @@ impl ProjectRegistry {
         Ok(all
             .into_iter()
             .filter(|r| {
-                r.kind == "promotion" && matches!(r.state, State::Requested | State::Flagged)
+                r.kind == "promotion"
+                    && matches!(
+                        r.state,
+                        State::Requested | State::Flagged | State::Reviewing
+                    )
             })
             .collect())
     }
@@ -1884,6 +2133,156 @@ mod tests {
         // The stale flagged attempt is superseded; exactly one open promotion remains.
         let first_after = wf.get(&first.id).await.unwrap().unwrap();
         assert_eq!(first_after.state, State::Cancelled);
+        let open = r
+            .open_promotions(&wf, &format!("project:{}", reg.project_id))
+            .await
+            .unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, second.id);
+    }
+
+    /// A panel with an async reviewer: `request_promotion` must defer it to the
+    /// worker (park `Reviewing` + enqueue) rather than run it inline.
+    struct AsyncPanel {
+        concern: bool,
+    }
+    #[async_trait::async_trait]
+    impl ReviewerPanel for AsyncPanel {
+        async fn review(&self, _: &Registration, _: &str, _: &EvidenceVerdict) -> ReviewerOutcome {
+            if self.concern {
+                ReviewerOutcome {
+                    passed: false,
+                    added_exception_signals: vec!["code-review: violates standards".into()],
+                    findings: vec!["unhandled error path".into()],
+                    summary: "1 reviewer finding(s)".into(),
+                    reviewer_ids: vec!["code-review".into()],
+                    verdicts_json: vec![serde_json::json!({
+                        "reviewer_id": "code-review", "kind": "code-review",
+                        "disposition": "concern", "model": "model:default/mock", "cost_usd": 0.0,
+                    })],
+                }
+            } else {
+                ReviewerOutcome {
+                    reviewer_ids: vec!["code-review".into()],
+                    ..Default::default()
+                }
+            }
+        }
+        fn has_async(&self, _target: &str) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn async_reviewer_parks_in_reviewing_and_enqueues() {
+        let (r, wf) = registry_and_workflow().await;
+        let r = r.with_reviewer_panel(std::sync::Arc::new(AsyncPanel { concern: false }));
+        let reg = r.register(light_ready_input(), "u").await.unwrap();
+
+        // Clean Light + an async reviewer → deferred, not auto-approved inline.
+        let req = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        assert_eq!(req.state, State::Reviewing);
+        // The pre-review state (a clean Light would auto-approve) is stashed.
+        assert_eq!(
+            req.payload["pre_review_state"],
+            serde_json::json!("approved")
+        );
+        // A pending job is queued for the worker.
+        let job = r.jobs().latest_for_request(&req.id).await.unwrap().unwrap();
+        assert_eq!(job.status, "pending");
+        assert_eq!(job.target, "light-operational");
+
+        // Worker, clean verdict → restore the stashed Approved state.
+        let outcome = ReviewerOutcome {
+            reviewer_ids: vec!["code-review".into()],
+            ..Default::default()
+        };
+        let reviewing = wf.get(&req.id).await.unwrap().unwrap();
+        let done = r
+            .finalize_promotion(
+                &wf,
+                reviewing,
+                &reg.project_id,
+                "light-operational",
+                State::Approved,
+                &outcome,
+                false,
+                "system",
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.state, State::Approved);
+        // Fulfillable now, like any approved promotion.
+        r.fulfill_promotion(&wf, &done.id, "system").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_reviewer_findings_flag_and_persist() {
+        let (r, wf) = registry_and_workflow().await;
+        let panel = AsyncPanel { concern: true };
+        let r = r.with_reviewer_panel(std::sync::Arc::new(AsyncPanel { concern: true }));
+        let reg = r.register(light_ready_input(), "u").await.unwrap();
+        let req = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        assert_eq!(req.state, State::Reviewing);
+
+        // Worker runs the panel → a concern → finalize flags it (escalate-only).
+        let cur = r.get(&reg.project_id).await.unwrap().unwrap();
+        let verdict = promotion::evaluate(&cur, "light-operational", r.requirements());
+        let outcome = panel.review(&cur, "light-operational", &verdict).await;
+        let has_exc =
+            !verdict.exception_signals.is_empty() || !outcome.added_exception_signals.is_empty();
+        let reviewing = wf.get(&req.id).await.unwrap().unwrap();
+        let flagged = r
+            .finalize_promotion(
+                &wf,
+                reviewing,
+                &reg.project_id,
+                "light-operational",
+                State::Approved,
+                &outcome,
+                has_exc,
+                "system",
+            )
+            .await
+            .unwrap();
+        assert_eq!(flagged.state, State::Flagged);
+        // The verdict is persisted for audit.
+        let n: i64 = sqlx::query_scalar(
+            &r.db
+                .q("SELECT COUNT(*) FROM promotion_reviews WHERE request_id = ?"),
+        )
+        .bind(&req.id)
+        .fetch_one(r.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    #[tokio::test]
+    async fn re_request_supersedes_in_flight_review() {
+        let (r, wf) = registry_and_workflow().await;
+        let r = r.with_reviewer_panel(std::sync::Arc::new(AsyncPanel { concern: false }));
+        let reg = r.register(light_ready_input(), "u").await.unwrap();
+        let first = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        assert_eq!(first.state, State::Reviewing);
+        // A re-run cancels the in-flight Reviewing attempt.
+        let second = r
+            .request_promotion(&wf, &reg.project_id, "light-operational", "u")
+            .await
+            .unwrap();
+        assert_eq!(
+            wf.get(&first.id).await.unwrap().unwrap().state,
+            State::Cancelled
+        );
         let open = r
             .open_promotions(&wf, &format!("project:{}", reg.project_id))
             .await

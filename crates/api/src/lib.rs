@@ -217,6 +217,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/cost/rollup", post(cost_rollup))
         .route("/api/governance/metrics", get(governance_metrics))
         .route("/api/registry/sweep", post(registry_sweep))
+        .route("/api/reviews/run", post(run_reviews))
         .route("/api/groups", get(list_groups))
         .route("/api/standards", get(list_standards).post(put_standard))
         .route("/api/standards/{id}", get(get_standard))
@@ -1055,6 +1056,14 @@ async fn registry_sweep(
     State(st): State<AppState>,
 ) -> Result<Json<asgard_registry::SweepSummary>, ApiError> {
     Ok(Json(st.registry.sweep("system").await?))
+}
+
+/// Trigger one async code-review worker pass (ops/e2e): drain the review queue,
+/// finalizing each pending promotion's review. Idempotent and crash-safe; the
+/// periodic task in `serve()` runs the same routine on a schedule.
+async fn run_reviews(State(st): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let finalized = st.registry.drain_reviews(&st.workflow).await?;
+    Ok(Json(serde_json::json!({ "finalized": finalized })))
 }
 
 async fn list_groups(State(st): State<AppState>) -> Json<serde_json::Value> {

@@ -481,6 +481,19 @@
         <div id="flag-out" style="margin-top:8px"></div>
       </div>`;
     }
+    // A promotion the deep code-reviewer is still working on (async background
+    // job). Read-only: it survives a reload and finalizes on its own to
+    // approved/requested/flagged — a refresh re-fetches to show the outcome.
+    function reviewingCard(req){
+      if (!req) return '';
+      return `<div class="card" style="margin-top:12px;border-color:var(--blue)">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <div><b>Code review in progress</b> ${pill('reviewing','blue')}</div>
+          <button class="act" id="review-refresh">Refresh</button>
+        </div>
+        <p class="muted" style="font-size:12px;margin:8px 0 0">The review agent is reading the repository against the org standards. This runs in the background — it survives a reload and finalizes on its own. Refresh to check the outcome.</p>
+      </div>`;
+    }
     // WS3 review-date: deadline, expiry flag, and an extend control. Expiry is a
     // flag (blocks nothing); only render when there's a deadline or it's expired.
     function reviewCard(p, decommissioned){
@@ -1515,6 +1528,7 @@
         try { [p, resources, checklist, openReqs] = await Promise.all([api(`/api/projects/${enc(id)}`), api(`/api/projects/${enc(id)}/resources`), api(`/api/projects/${enc(id)}/promotion`).catch(() => null), api(`/api/requests?subject=${enc('project:'+id)}`).catch(() => [])]); }
         catch (e) { root().innerHTML = errBanner(e); return; }
         const flagged = (openReqs || []).find(r => r.kind === 'promotion' && r.state === 'flagged') || null;
+        const reviewing = (openReqs || []).find(r => r.kind === 'promotion' && r.state === 'reviewing') || null;
         const cap = Number(p.budget_usd||0), spent = Number(p.spent_usd||0);
         const decommissioned = p.lifecycle === 'decommissioned';
         const actions = decommissioned
@@ -1546,6 +1560,7 @@
           </div>
           ${reviewCard(p, decommissioned)}
           ${promotionCard(checklist, decommissioned)}
+          ${reviewingCard(reviewing)}
           ${flaggedCard(flagged)}
           ${decommissioned ? '' : demoteControl(p)}
           <h3 style="margin:18px 0 8px">Resources</h3>
@@ -1555,6 +1570,8 @@
           <div class="row">${actions}</div>`;
         root().querySelector('.crumb').onclick = () => showList();
         root().querySelectorAll('.pbtn').forEach(b => b.onclick = () => doAction(id, b.dataset.kind));
+        const reviewRefresh = root().querySelector('#review-refresh');
+        if (reviewRefresh) reviewRefresh.onclick = () => showDetail(id);
         const evEdit = root().querySelector('#ev-edit');
         if (evEdit) evEdit.onclick = () => {
           document.getElementById('p-evidence').innerHTML = evidenceForm(p);

@@ -20,7 +20,9 @@ use serde_json::Value;
 
 use asgard_registry::{EvidenceVerdict, Registration, ReviewerOutcome, ReviewerPanel};
 
-pub use code_review::{CodeReview, ReviewDepth, ReviewDepthMap, StandardsSource};
+pub use code_review::{
+    CodeReview, RegistryStandards, ReviewDepth, ReviewDepthMap, StandardsSource,
+};
 pub use llm_judge::LlmJudge;
 pub use manifest::{ReviewerCatalog, ReviewerManifest};
 pub use webhook::WebhookReviewer;
@@ -323,6 +325,10 @@ impl ReviewerPanel for ReviewService {
             format!("{} reviewer finding(s)", out.findings.len())
         };
         out
+    }
+
+    fn has_async(&self, target: &str) -> bool {
+        self.catalog.has_async_for(target)
     }
 }
 

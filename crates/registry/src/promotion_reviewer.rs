@@ -54,4 +54,11 @@ pub trait ReviewerPanel: Send + Sync {
         target: &str,
         verdict: &EvidenceVerdict,
     ) -> ReviewerOutcome;
+
+    /// Whether an enabled reviewer for `target` runs asynchronously (reads a repo,
+    /// many model calls) and so must be dispatched to the background worker rather
+    /// than run inline. Default `false`: a panel of only inline reviewers.
+    fn has_async(&self, _target: &str) -> bool {
+        false
+    }
 }

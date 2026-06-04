@@ -99,6 +99,30 @@ pub trait StandardsSource: Send + Sync {
     async fn standard(&self, id: &str) -> Option<String>;
 }
 
+/// A [`StandardsSource`] backed by the registry's operator-editable standards
+/// store. Holds the shared `Db` directly (not the registry) to avoid an `Arc`
+/// cycle registry → reviewer → registry; the reviewer only reads.
+pub struct RegistryStandards {
+    db: asgard_storage::Db,
+}
+
+impl RegistryStandards {
+    pub fn new(db: asgard_storage::Db) -> Self {
+        RegistryStandards { db }
+    }
+}
+
+#[async_trait]
+impl StandardsSource for RegistryStandards {
+    async fn standard(&self, id: &str) -> Option<String> {
+        asgard_registry::standards::get(&self.db, id)
+            .await
+            .ok()
+            .flatten()
+            .map(|s| s.body)
+    }
+}
+
 pub struct CodeReview {
     gateway: Arc<Gateway>,
     system_key: Option<String>,
@@ -135,32 +159,40 @@ impl CodeReview {
     }
 }
 
-/// Offline/mock judgment: read the repo (proving the read path) then defer to the
-/// machine verdict for the disposition — deterministic, no model call.
+/// Marker a repo can carry to deterministically fail the offline review (a file
+/// named `.asgard-review-fail`, or any path containing `REVIEW_FAIL`). Lets tests
+/// and the offline e2e drive a concern on an otherwise machine-clean repo.
+const FAIL_MARKER: &str = ".asgard-review-fail";
+
+/// Offline/mock judgment: read the repo (proving the read path) and judge it
+/// *independently* of the machine verdict — a clean tree passes; a tree carrying
+/// the fail marker raises a concern. Deterministic, no model call.
 async fn stub_verdict(
     m: &ReviewerManifest,
-    req: &ReviewRequest,
+    _req: &ReviewRequest,
     reader: &RepoReader,
 ) -> ReviewVerdict {
-    let n = reader.list_files().await.map(|f| f.len()).unwrap_or(0);
-    if req.machine_verdict.auto_approvable() {
-        let mut v = ReviewVerdict::pass(&m.id, "code-review", 1.0, m.model.clone(), 0.0);
-        v.findings = vec![format!(
-            "offline code-review stub: read {n} file(s), no machine issues"
-        )];
-        v
-    } else {
+    let files = reader.list_files().await.unwrap_or_default();
+    let n = files.len();
+    let flagged = files
+        .iter()
+        .any(|f| f.ends_with(FAIL_MARKER) || f.contains("REVIEW_FAIL"));
+    if flagged {
         ReviewVerdict::concern(
             &m.id,
             "code-review",
             vec![format!(
-                "offline code-review stub: read {n} file(s); machine verdict not clean"
+                "offline code-review stub: repo carries a review-fail marker ({n} file(s) read)"
             )],
-            format!("{}: machine verdict not clean", m.id),
+            format!("{}: repo flagged by offline review", m.id),
             1.0,
             m.model.clone(),
             0.0,
         )
+    } else {
+        let mut v = ReviewVerdict::pass(&m.id, "code-review", 1.0, m.model.clone(), 0.0);
+        v.findings = vec![format!("offline code-review stub: read {n} file(s), clean")];
+        v
     }
 }
 
@@ -331,22 +363,24 @@ mod tests {
         }
     }
 
-    // A CodeReview with no gateway use (mock/stub path only). We never call the
-    // gateway on the stub path, so a panic-on-use gateway is fine — but building one
-    // needs deps; instead exercise the stub via a fixture repo + mock model.
+    // The stub reads the repo and judges it on its own (a fail-marker file), not by
+    // echoing the machine verdict. Exercised over a local fixture repo, no gateway.
     #[tokio::test]
-    async fn stub_reads_repo_and_mirrors_machine_verdict() {
+    async fn stub_reads_repo_and_judges_independently() {
         let dir = std::env::temp_dir().join(format!("asgard-cr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("main.rs"), b"fn main() {}\n").unwrap();
         let reader = RepoReader::from_url(dir.to_str().unwrap()).unwrap();
         let m = manifest();
 
-        let pass = stub_verdict(&m, &req(dir.to_str().unwrap(), true), &reader).await;
+        // Clean tree → pass, regardless of the machine verdict.
+        let pass = stub_verdict(&m, &req(dir.to_str().unwrap(), false), &reader).await;
         assert_eq!(pass.disposition, Disposition::Pass);
         assert!(pass.findings[0].contains("read 1 file"));
 
-        let concern = stub_verdict(&m, &req(dir.to_str().unwrap(), false), &reader).await;
+        // A fail marker → concern, even though the machine verdict is clean.
+        std::fs::write(dir.join(FAIL_MARKER), b"").unwrap();
+        let concern = stub_verdict(&m, &req(dir.to_str().unwrap(), true), &reader).await;
         assert_eq!(concern.disposition, Disposition::Concern);
         std::fs::remove_dir_all(&dir).ok();
     }
