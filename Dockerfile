@@ -1,8 +1,19 @@
+# Build the Docusaurus docs site; the binary embeds the output (docs/build) and
+# serves it at /docs. Done in its own stage so the Rust build stays Node-free.
+FROM node:20-bookworm AS docs
+WORKDIR /docs
+COPY docs/package.json docs/package-lock.json ./
+RUN npm ci
+COPY docs/ ./
+RUN npm run build
+
 # Build the single static binary. The web UI is a committed, build-free SPA in
-# web/dist, embedded into the binary at compile time via rust-embed.
+# web/dist; both it and the docs site (copied in below) are embedded at compile
+# time via rust-embed.
 FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
+COPY --from=docs /docs/build ./docs/build
 RUN cargo build --release -p asgard
 
 # Minimal runtime. SQLite default works with no extra setup; Postgres + the

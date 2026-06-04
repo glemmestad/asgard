@@ -40,6 +40,15 @@ use asgard_workflow::WorkflowEngine;
 #[folder = "../../web/dist"]
 struct WebAssets;
 
+// The Docusaurus site, served at /docs. It's produced by a Node build
+// (`docs/build`), which exists in the release image (the Dockerfile builds it
+// before the binary) but not on a bare `cargo build` — `allow_missing` keeps
+// those builds compiling, and the handler serves a placeholder when empty.
+#[derive(RustEmbed)]
+#[folder = "../../docs/build"]
+#[allow_missing = true]
+struct DocsAssets;
+
 #[derive(Parser)]
 #[command(
     name = "asgard",
@@ -1471,6 +1480,14 @@ fn load_config(path: Option<PathBuf>) -> Config {
 
 async fn static_handler(uri: Uri, system_name: String) -> Response {
     let raw = uri.path().trim_start_matches('/');
+    // The embedded docs site owns everything under /docs. Branch here, before the
+    // UI's SPA fallback, so a missing docs page serves the docs 404 — not the app.
+    if raw == "docs" {
+        return docs_handler("");
+    }
+    if let Some(rest) = raw.strip_prefix("docs/") {
+        return docs_handler(rest);
+    }
     let path = if raw.is_empty() { "index.html" } else { raw };
     // Serve the requested asset; fall back to the SPA shell for client-side routes.
     let (served, file) = match WebAssets::get(path) {
@@ -1493,6 +1510,55 @@ async fn static_handler(uri: Uri, system_name: String) -> Response {
     }
     ([(header::CONTENT_TYPE, ct)], file.data.into_owned()).into_response()
 }
+
+/// Serve the embedded Docusaurus site. `rel` is the path under `/docs`. Docusaurus
+/// emits pretty URLs as `<page>/index.html`, so a request with no file extension
+/// falls back to the directory index.
+fn docs_handler(rel: &str) -> Response {
+    let rel = if rel.is_empty() {
+        "index.html"
+    } else {
+        rel.trim_end_matches('/')
+    };
+    let mut tries = vec![rel.to_string()];
+    if std::path::Path::new(rel).extension().is_none() {
+        tries.push(format!("{rel}/index.html"));
+    }
+    for t in &tries {
+        if let Some(f) = DocsAssets::get(t) {
+            return serve_doc(t, f, StatusCode::OK);
+        }
+    }
+    // Docs are bundled but this page isn't — serve the site's own 404. If the
+    // 404 itself is missing, the docs weren't built into this binary.
+    match DocsAssets::get("404.html") {
+        Some(f) => serve_doc("404.html", f, StatusCode::NOT_FOUND),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            DOCS_NOT_BUNDLED,
+        )
+            .into_response(),
+    }
+}
+
+fn serve_doc(name: &str, file: rust_embed::EmbeddedFile, status: StatusCode) -> Response {
+    let ct = mime_guess::from_path(name)
+        .first_or_octet_stream()
+        .as_ref()
+        .to_string();
+    (status, [(header::CONTENT_TYPE, ct)], file.data.into_owned()).into_response()
+}
+
+/// Shown when this binary was built without the docs site (a bare `cargo build`
+/// rather than the release image). The hosted copy is the fallback.
+const DOCS_NOT_BUNDLED: &str = "<!doctype html><meta charset=utf-8><title>Docs not bundled</title>\
+<body style=\"font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.5\">\
+<h1>Docs aren't bundled in this build</h1>\
+<p>This Asgard binary was built without the documentation site. Build it with \
+<code>cd docs &amp;&amp; npm ci &amp;&amp; npm run build</code> before compiling, or read the \
+docs at <a href=\"https://asgard.dev\">asgard.dev</a>.</p>\
+<p><a href=\"/\">← Back to Asgard</a></p>";
 
 /// Replace the static `<title>Asgard</title>` shell title with the configured
 /// system name. No-op when unset or still the default, so the stock build is
@@ -1524,6 +1590,17 @@ mod tests {
         assert!(brand_index_html(shell, "Acme Corp").contains("<title>Acme Corp</title>"));
         // HTML-escaped so a stray angle bracket can't break out of the title.
         assert!(brand_index_html(shell, "A<b>").contains("<title>A&lt;b&gt;</title>"));
+    }
+
+    #[test]
+    fn docs_handler_missing_page_is_404() {
+        // A /docs request for a page that doesn't exist must 404 — never fall
+        // through to the UI's SPA shell. Holds whether or not the docs site was
+        // built into this binary.
+        assert_eq!(
+            docs_handler("definitely-not-a-real-page").status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[test]

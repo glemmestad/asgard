@@ -495,6 +495,7 @@
       cost:     { label: 'Cost report', ic: '∑', render: renderCost },
       audit:    { label: 'Audit', ic: '☰', render: renderAudit },
       users:    { label: 'Users', ic: '⚇', render: renderUsers, need: 'admin' },
+      docs:     { label: 'Docs ↗', ic: '◳', href: '/docs' },
       about:    { label: 'About', ic: 'ⓘ', render: renderAbout },
     };
     let active = 'start';
@@ -515,12 +516,15 @@
       for (const [k, t] of Object.entries(tabs)) {
         if (!tabAllowed(t)) continue;
         const b = el(`<button class="${k===active?'active':''}"><span class="ic">${t.ic}</span><span>${t.label}</span></button>`);
-        b.onclick = () => go(k);
+        // External links (e.g. the embedded docs site) open in a new tab; they
+        // never become the active in-app view.
+        b.onclick = t.href ? () => window.open(t.href, '_blank', 'noopener') : () => go(k);
         nav.appendChild(b);
       }
     }
 
     function go(k) {
+      if (tabs[k] && tabs[k].href) { window.open(tabs[k].href, '_blank', 'noopener'); return; }
       if (!tabAllowed(tabs[k])) k = 'start';
       active = k; renderNav();
       document.getElementById('view').className = tabs[k].full ? 'full' : 'wrap';
@@ -613,6 +617,12 @@
       <p class="pagesub">A few steps to go from a running ${SYS_NAME} to your agent deploying a resource — governed, attributed, and audited.</p>
       <div class="card" id="gs-connect">${connectStep(null)}</div>
       <div class="card"><div class="step"><div class="n">3</div><div class="b">
+        <h3>Open a repo and learn the standards</h3>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">${SYS_NAME} is a <strong>starting point for a repo</strong>. Create a new one (or open an existing one), initialize git, and drop a pointer so any agent — and any teammate — knows the repo is governed:</p>
+        ${snip('mkdir my-app && cd my-app && git init\necho "Governed by '+SYS_NAME+'. Read AGENTS.md, then build." > AGENTS.md')}
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Then tell your connected agent to read the standards and register. It calls <code>seed_plan</code> / <code>seed_get</code> to pull the minimal coding + security standards into <code>.agent/</code>, then registers below. The live standards over MCP are the source of truth; the <code>.agent/</code> files are the offline mirror.</p>
+      </div></div></div>
+      <div class="card"><div class="step"><div class="n">4</div><div class="b">
         <h3>Register a project</h3>
         <p class="muted" style="margin:0 0 8px;font-size:13px">Registration is the gate: nothing provisions or spends until a project is registered and active. Everything it creates is attributed to it. Your connected agent can do this itself — or register one here and optionally mint a per-project key.</p>
         <div class="row">
@@ -626,16 +636,22 @@
         </div>
         <div id="gs-regout" style="margin-top:10px"></div>
       </div></div></div>
-      <div class="card"><div class="step"><div class="n">4</div><div class="b">
-        <h3>Deploy your first resource</h3>
-        <p class="muted" style="margin:0 0 6px;font-size:13px">Your agent provisions by calling <code>request_resource</code>. Auto-approvable services (like object storage) provision immediately; cost-bearing ones (databases, load-balanced services) route to a manager for approval. A first, safe one:</p>
-        ${snip('request_resource s3-bucket { "name": "assets" }')}
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Browse everything you can provision in the catalog, and watch spend land per-project on the Cost tab.</p>
+      <div class="card"><div class="step"><div class="n">5</div><div class="b">
+        <h3>Provision what the project needs</h3>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">Your agent provisions by calling <code>request_resource</code>. Auto-approvable services (like object storage) provision immediately; cost-bearing ones (databases, load-balanced services) route to a manager for approval. A first, safe one — a private, versioned bucket for permanent file storage:</p>
+        ${snip('request_resource s3-bucket { "name": "project-files" }')}
+        <p class="muted" style="margin:12px 0 4px;font-size:13px">Need your <strong>application</strong> to call a model (summarize a doc, score a transaction)? Mint the project's LLM key with <code>gateway_credential</code> and call the gateway's OpenAI-compatible endpoint with it.</p>
+        <div class="card" style="border-color:var(--amber);margin:6px 0 0;padding:12px">
+          <p style="margin:0 0 4px;font-weight:700;color:var(--amber)">⚠ The LLM key is for app inference — not your dev tools</p>
+          <p class="muted" style="margin:0;font-size:12px">It exists so your <strong>deployed app</strong> can query a model through the governed gateway (budget, policy, guardrails, audit, kill switch — all attributed to this project). It is <strong>not</strong> a general key for your coding assistant or ad-hoc chat; your agent already talks to ${SYS_NAME}'s control plane over MCP and doesn't use it. Mint it when the product itself needs inference.</p>
+        </div>
+        <p class="muted" style="margin:10px 0 0;font-size:12px">Whether that call lands on the built-in OpenAI/Anthropic floor or an enterprise LiteLLM/Databricks backend is the operator's choice — your code is identical either way. Browse everything you can provision in the catalog, and watch spend land per-project on the Cost tab.</p>
         <div class="row" style="margin-top:10px">
           <button class="act" id="gs-cat">Browse the catalog</button>
           <button class="act" id="gs-cost" style="background:var(--chip);color:var(--fg);border:1px solid var(--line)">View cost</button>
         </div>
-      </div></div></div>`;
+      </div></div></div>
+      <p class="pagesub" style="margin-top:4px">Want the full walkthrough — connecting Codex/Cursor, the agent seed, inference backends, deploying? <a href="/docs" target="_blank" rel="noopener">Read the docs ↗</a></p>`;
       wireConnect(document.getElementById('gs-connect'));
       wireCopy(v);
       document.getElementById('gs-cat').onclick = () => go('catalog');
