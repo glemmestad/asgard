@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/glemmestad/asgard/compare/v0.4.2...v0.5.0) (2026-06-04)
+
+
+### Features
+
+* **website:** marketing site at asgard.build with auto-synced docs ([#12](https://github.com/glemmestad/asgard/issues/12)) ([1e8675c](https://github.com/glemmestad/asgard/commit/1e8675c146bb1420e24594c2eb3b009a48cdc274))
+
 ## [0.4.2](https://github.com/glemmestad/asgard/compare/v0.4.1...v0.4.2) (2026-06-04)
 
 
