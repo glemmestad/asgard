@@ -3,9 +3,9 @@
 You built an app and now you want multiple people editing the same thing at once —
 live cursors, presence, no "your changes conflict with theirs" dialogs. This is
 the runbook to take you from that wish to a working, governed deployment on
-Asgard. Follow it top to bottom; every step is an Asgard MCP call you make
-yourself. Asgard is a hub, not a magic "collab service" — you bring the server,
-Asgard provisions and governs the infrastructure and hands you a URL.
+the control plane. Follow it top to bottom; every step is an MCP call you make
+yourself. The control plane is a hub, not a magic "collab service" — you bring the server,
+the control plane provisions and governs the infrastructure and hands you a URL.
 
 ## What "working" looks like
 
@@ -34,7 +34,7 @@ A small **collaboration server** (your code, your image) that:
 - signs short-lived WebSocket access tokens with an **HMAC key**,
 - verifies user logins against an **Auth0** SPA app.
 
-Asgard provisions the S3 bucket, the database, the secret, the Auth0 app, and the
+The control plane provisions the S3 bucket, the database, the secret, the Auth0 app, and the
 load-balanced HTTPS service — and wires their outputs into your server's
 environment. **You do not write any Terraform or touch IAM.** You write the
 server (or fork an existing CRDT server like Hocuspocus) and a thin frontend
@@ -140,10 +140,10 @@ callbacks so login works:
 
 ## Why you bring your own image
 
-Asgard's catalog is infrastructure primitives, not application code. A shared
-"collab server" image would make Asgard own someone else's runtime — its
+The catalog is infrastructure primitives, not application code. A shared
+"collab server" image would make the platform own someone else's runtime — its
 Dockerfile, CVEs, version bumps — forever, for one recipe. Keeping the server in
-your project is what lets Asgard stay a thin, auditable hub. Fork a CRDT server,
+your project is what lets the platform stay a thin, auditable hub. Fork a CRDT server,
 honor the env contract above, push it, and the rest is this runbook.
 
 ## Cost (illustrative, POC)

@@ -11,5 +11,5 @@ propagates to billing.
 **Outputs**: `id` (endpoint name), `serving_endpoint_id`.
 
 **Closes the loop with inference**: once created, add the endpoint name to the
-`databricks` inference module's `models[]` (as a `route`) so Asgard's gateway
+`databricks` inference module's `models[]` (as a `route`) so the gateway
 fronts it. (Auto-registration of provisioned endpoints is a roadmap item.)

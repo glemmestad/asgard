@@ -7,7 +7,7 @@ description: >-
   routing). A standard enableable module — you do NOT author this, you enable it by
   pointing LITELLM_BASE_URL at your proxy. Once enabled it becomes the inference
   upstream and can be the default backend for project tokens. Deploy LiteLLM
-  alongside Asgard (e.g. the Helm sidecar); Asgard governs, LiteLLM routes.
+  alongside the control plane (e.g. the Helm sidecar); the control plane governs, LiteLLM routes.
 provisioner:
   connector: stub
 cost:

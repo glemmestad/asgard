@@ -1057,7 +1057,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "List recipes — narrated runbooks for building and deploying a whole capability on Asgard (e.g. real-time collaboration, an MCP server). Each `body` is a rich markdown guide you follow end to end; an at-a-glance `spec` of steps supplements it. Asgard does not execute recipes — you read and follow them."
+        description = "List recipes — narrated runbooks for building and deploying a whole capability on the platform (e.g. real-time collaboration, an MCP server). Each `body` is a rich markdown guide you follow end to end; an at-a-glance `spec` of steps supplements it. The control plane does not execute recipes — you read and follow them."
     )]
     async fn recipe_list(&self) -> Result<CallToolResult, McpError> {
         wrap(self.do_recipe_list().await)
@@ -1260,7 +1260,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Fetch a secret value for a project (control plane: handing you a credential Asgard minted). Audited; the value is never logged. On a user token pass project_id; on a project key omit it. Use the secret name reported in a resource's outputs."
+        description = "Fetch a secret value for a project (control plane: handing you a credential the control plane minted). Audited; the value is never logged. On a user token pass project_id; on a project key omit it. Use the secret name reported in a resource's outputs."
     )]
     async fn get_secret(
         &self,
@@ -1337,12 +1337,12 @@ impl ServerHandler for AsgardMcp {
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new("asgard", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
-            "Asgard control plane. Connect with a user token to register projects \
+            "Governance control plane. Connect with a user token to register projects \
              and manage every project you own/manage, or a project key scoped to \
              one. Register a project (the gate), then provision services and fetch \
-             the credentials Asgard mints (e.g. gateway_credential for the LLM key). \
+             the credentials the control plane mints (e.g. gateway_credential for the LLM key). \
              Using a service — calling an LLM, reading a bucket — is out-of-band \
-             with that service's own credential, not an Asgard tool. Call \
+             with that service's own credential, not a control-plane tool. Call \
              list_services and list_standards to discover the catalog."
                 .to_string(),
         );

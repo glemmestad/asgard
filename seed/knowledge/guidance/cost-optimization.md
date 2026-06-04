@@ -4,7 +4,7 @@ Your project's bill is higher than it should be, or you want to keep it from get
 
 ## Measure before you optimize
 
-The first rule of cost work: **don't optimize what you haven't measured.** Intuition about where the money goes is wrong more often than it's right. In Asgard, spend is attributed per project, so the Cost tab breaks your bill down by service, by resource within each service, and over time. Look there first. The biggest line item is usually one of three things — compute, model tokens, or storage and egress — and you should fully optimize the biggest before touching anything smaller. Saving 80% of a line item that's 5% of your bill is a rounding error you spent an afternoon on.
+The first rule of cost work: **don't optimize what you haven't measured.** Intuition about where the money goes is wrong more often than it's right. On the control plane, spend is attributed per project, so the Cost tab breaks your bill down by service, by resource within each service, and over time. Look there first. The biggest line item is usually one of three things — compute, model tokens, or storage and egress — and you should fully optimize the biggest before touching anything smaller. Saving 80% of a line item that's 5% of your bill is a rounding error you spent an afternoon on.
 
 ## The biggest levers, in order
 
@@ -34,7 +34,7 @@ Storage is cheap per gigabyte and expensive in aggregate when nobody ever delete
 
 ## Attribution: know whose cost it is
 
-You can't manage a bill you can't decompose. Route every model call through the Asgard gateway so spend lands on the right project automatically, tag resources consistently, and provision through the catalog rather than around it. The moment cost shows up under "miscellaneous" or on someone's personal account, it stops being manageable and becomes a mystery that someone inherits later. Attribution isn't bureaucracy — it's the precondition for every other optimization on this list.
+You can't manage a bill you can't decompose. Route every model call through the gateway so spend lands on the right project automatically, tag resources consistently, and provision through the catalog rather than around it. The moment cost shows up under "miscellaneous" or on someone's personal account, it stops being manageable and becomes a mystery that someone inherits later. Attribution isn't bureaucracy — it's the precondition for every other optimization on this list.
 
 ## Budgets and caps
 

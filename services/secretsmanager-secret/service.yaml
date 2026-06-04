@@ -8,7 +8,7 @@ description: >-
   Random cryptographic material stored in AWS Secrets Manager, returning a
   non-secret ARN a sibling ecs-service can inject (secrets:) or read at runtime
   (grants.secrets_read). The AWS-backed counterpart to random-secret, which keeps
-  material in Asgard's own store. The generated value is routed to the secret
+  material in the platform's own store. The generated value is routed to the secret
   store; only a reference is recorded.
 auto_approvable: true
 required_fields: [name]

@@ -60,7 +60,7 @@ Two rules that people break constantly:
 - **Never put variable content inside the cacheable region.** A timestamp, a request id, a per-user token anywhere in the prefix busts the cache, and you silently pay full price on every call while believing you're cached.
 - **Caches expire after a short idle period.** Sporadic, low-frequency query patterns don't benefit — by the time the next query arrives, the cache is gone. Caching pays off for bursts and steady traffic, not for one query an hour.
 
-When you route through the Asgard gateway, spend is attributed per project, so you can confirm on the Cost tab that your cache hit rate is actually saving you money rather than just believing it is.
+When you route through the gateway, spend is attributed per project, so you can confirm on the Cost tab that your cache hit rate is actually saving you money rather than just believing it is.
 
 ## Compressing a corpus that almost fits
 

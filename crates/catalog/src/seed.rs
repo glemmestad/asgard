@@ -93,7 +93,7 @@ pub const SEED: &[SeedModule] = &[
         tier: SeedTier::Minimal,
         languages: &[],
         keywords: &[],
-        summary: "The map an agent reads first: the build loop, the Asgard MCP tools, reading order, and when to stop and ask.",
+        summary: "The map an agent reads first: the build loop, the MCP tools, reading order, and when to stop and ask.",
         body: include_str!("../../../seed/AGENTS.md"),
     },
     SeedModule {
@@ -104,7 +104,7 @@ pub const SEED: &[SeedModule] = &[
         tier: SeedTier::Minimal,
         languages: &[],
         keywords: &[],
-        summary: "How the agent works: branch, register (the gate), request resources via Asgard, pass the eval/merge gate.",
+        summary: "How the agent works: branch, register (the gate), request resources via the control plane, pass the eval/merge gate.",
         body: include_str!("../../../seed/.agent/WORKFLOW.md"),
     },
     SeedModule {
@@ -148,7 +148,7 @@ pub const SEED: &[SeedModule] = &[
         tier: SeedTier::Standard,
         languages: &[],
         keywords: &[],
-        summary: "Reusable prompt patterns: ask for a plan, self-review, request a resource through Asgard, write a change summary.",
+        summary: "Reusable prompt patterns: ask for a plan, self-review, request a resource through the control plane, write a change summary.",
         body: include_str!("../../../seed/.agent/PROMPTS.md"),
     },
     // --- language add-ons ---

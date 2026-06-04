@@ -74,7 +74,7 @@ That post-processing step is the line between a real product and a plausible-loo
 A "what does our documentation say about X" service, end to end:
 
 ```python
-# Route everything through the Asgard gateway.
+# Route everything through the gateway.
 client = gateway_client(...)
 
 # 1. Retrieve a wide net from the project's vector store.

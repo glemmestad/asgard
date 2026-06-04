@@ -1,10 +1,10 @@
 # AGENTS.md
 
-This repository has adopted the **Asgard agent seed**. Both humans and AI agents read this file. If you are an AI agent that an engineer has pointed at this repo and told to "examine it and go build," this file is your map. Read it first.
+This repository has adopted the **agent seed**. Both humans and AI agents read this file. If you are an AI agent that an engineer has pointed at this repo and told to "examine it and go build," this file is your map. Read it first.
 
-Asgard is the enterprise's **control plane for AI and agent development**: a governed catalog of what exists, a gateway every model call routes through, policy, evals, audit, and cost attribution. You do not need to know how Asgard is implemented. You need to know how to *use* it, because building through Asgard is how your work comes out safe, observable, cost-attributed, and built to company standards — instead of as ungoverned shadow AI.
+The control plane is the enterprise's hub **for AI and agent development**: a governed catalog of what exists, a gateway every model call routes through, policy, evals, audit, and cost attribution. You do not need to know how the control plane is implemented. You need to know how to *use* it, because building through it is how your work comes out safe, observable, cost-attributed, and built to company standards — instead of as ungoverned shadow AI.
 
-The Asgard **MCP server is your front door.** There is no ticket queue and no human approver on the default path. You discover, register, provision, and call models by invoking MCP tools directly.
+The control plane's **MCP server is your front door.** There is no ticket queue and no human approver on the default path. You discover, register, provision, and call models by invoking MCP tools directly.
 
 ---
 
@@ -14,16 +14,16 @@ Do these in order. Stop as soon as you have enough context for the task in front
 
 1. **Examine this repo.** Understand what is being built here and who owns it. Read the existing manifests (`agent.yaml`, `prompt.yaml`, `mcp.yaml`, `eval.yaml`, `dataset.yaml`), the code, and the tests before changing anything.
 2. **Learn the standards.** Call `list_standards` to see which standard sets apply, then `get_standards` to fetch them. These are the enterprise's coding, security, and workflow conventions — your output must conform. The `.agent/` files in this repo are an offline copy; the MCP tools are the live source of truth, so prefer them when reachable.
-3. **Register the project.** Call `register_project` with the project name, owner, and intended data classification. This is a **hard gate**, not a formality: Asgard will not issue a gateway key, route a model call, or run a sandboxed invocation for an unregistered project, because every chargeable resource must carry a project owner for cost attribution and audit. Registration mints a stable `proj-YYYY-NNNN` id; record it (see "This project's id" below).
-4. **Build to the standards.** Write the code. When you need a shared capability (a model, an existing tool/MCP server, storage, a secret), discover it and request it through Asgard rather than wiring a provider directly. Verify your work end to end before claiming it is done.
+3. **Register the project.** Call `register_project` with the project name, owner, and intended data classification. This is a **hard gate**, not a formality: the control plane will not issue a gateway key, route a model call, or run a sandboxed invocation for an unregistered project, because every chargeable resource must carry a project owner for cost attribution and audit. Registration mints a stable `proj-YYYY-NNNN` id; record it (see "This project's id" below).
+4. **Build to the standards.** Write the code. When you need a shared capability (a model, an existing tool/MCP server, storage, a secret), discover it and request it through the control plane rather than wiring a provider directly. Verify your work end to end before claiming it is done.
 
 You should be able to go from an empty repo to a working, governed component **without filing a ticket or waiting on a person.** If you can't, that is a gap — surface it (see the escalation list at the bottom).
 
 ---
 
-## The Asgard MCP tools
+## The MCP tools
 
-These are the tools the Asgard MCP server exposes. Use them instead of inventing your own integrations.
+These are the tools the MCP server exposes. Use them instead of inventing your own integrations.
 
 | Tool | What it does | When you call it |
 |---|---|---|
@@ -41,7 +41,7 @@ These are the tools the Asgard MCP server exposes. Use them instead of inventing
 
 Two rules that the whole platform depends on:
 
-- **Every model call goes through `gateway_chat`.** Calling OpenAI/Anthropic/Bedrock (or any provider) directly bypasses budgets, the data-class × model policy, guardrails, and the audit trail. It is the failure mode Asgard exists to prevent.
+- **Every model call goes through `gateway_chat`.** Calling OpenAI/Anthropic/Bedrock (or any provider) directly bypasses budgets, the data-class × model policy, guardrails, and the audit trail. It is the failure mode the control plane exists to prevent.
 - **Every resource belongs to a registered project.** No anonymous spend. If you find yourself about to provision something for an unregistered project, register first.
 
 ---

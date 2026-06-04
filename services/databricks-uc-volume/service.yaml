@@ -7,7 +7,7 @@ classification_max: critical-path
 description: >-
   A Unity Catalog schema + managed volume — a governed namespace and storage for a
   project's data and artifacts under an existing catalog. Provisioned through
-  Asgard's terraform connector + the Databricks provider. Cheap and self-service
+  the platform's terraform connector + the Databricks provider. Cheap and self-service
   (auto-approvable); the project tag is recorded on the schema for attribution.
 auto_approvable: true
 required_fields: [name, catalog_name]

@@ -99,7 +99,7 @@ An agent is only as good as its tools. A few principles:
 
 ## Observability
 
-You cannot operate an agent you can't see. Log every step: the plan, the tool called, the arguments, the result, the token cost. Route model calls through the Asgard gateway so spend is attributed per project and every completion lands in the audit log. When an agent misbehaves — and it will — the difference between a five-minute fix and a lost afternoon is whether you can replay exactly what it did. Treat the step log as a first-class artifact, not an afterthought.
+You cannot operate an agent you can't see. Log every step: the plan, the tool called, the arguments, the result, the token cost. Route model calls through the gateway so spend is attributed per project and every completion lands in the audit log. When an agent misbehaves — and it will — the difference between a five-minute fix and a lost afternoon is whether you can replay exactly what it did. Treat the step log as a first-class artifact, not an afterthought.
 
 ## See also
 

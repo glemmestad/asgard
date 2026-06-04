@@ -5,12 +5,12 @@ status: live
 classification_min: poc
 description: >-
   A per-project LiteLLM virtual key: budgeted, project-tagged, minted on your
-  LiteLLM proxy through Asgard's governed request_resource flow. The project calls
-  LiteLLM directly with this key; Asgard pulls the key's spend back via the
+  LiteLLM proxy through the platform's governed request_resource flow. The project calls
+  LiteLLM directly with this key; the control plane pulls the key's spend back via the
   `litellm` cost source and attributes it per project. The key value lands in the
   secret store (never a record/log); only its alias is kept plaintext so cost can
   be read back. Distinct from the `litellm` inference module (the gateway upstream)
-  — this provisions a credential, it does not route inference through Asgard.
+  — this provisions a credential, it does not route inference through the gateway.
 auto_approvable: false
 required_fields: [max_budget_usd]
 secret_outputs: [api_key]

@@ -31,7 +31,8 @@ pub const STANDARDS: &[Standard] = &[
     Standard {
         id: "workflow",
         title: "Workflow",
-        summary: "Branch, register (the gate), request resources via Asgard, eval/merge gate.",
+        summary:
+            "Branch, register (the gate), request resources via the control plane, eval/merge gate.",
         body: include_str!("../../../seed/.agent/WORKFLOW.md"),
     },
 ];
