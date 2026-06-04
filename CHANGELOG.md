@@ -1,3 +1,10 @@
+## [0.4.1](https://github.com/glemmestad/asgard/compare/v0.4.0...v0.4.1) (2026-06-04)
+
+
+### Bug Fixes
+
+* resolve manifest module paths against modules_dir and rebrand UI title ([#10](https://github.com/glemmestad/asgard/issues/10)) ([25c5c26](https://github.com/glemmestad/asgard/commit/25c5c26d73b3754b65c35ed5f7a2e989ee5171b2))
+
 # [0.4.0](https://github.com/glemmestad/asgard/compare/v0.3.0...v0.4.0) (2026-06-04)
 
 
