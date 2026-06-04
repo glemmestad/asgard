@@ -1,3 +1,10 @@
+## [0.5.2](https://github.com/glemmestad/asgard/compare/v0.5.1...v0.5.2) (2026-06-04)
+
+
+### Bug Fixes
+
+* **release:** stamp workspace version directly; drop semantic-release-cargo ([#16](https://github.com/glemmestad/asgard/issues/16)) ([e146744](https://github.com/glemmestad/asgard/commit/e14674468e71f62fbe791156076e36776b2231b2))
+
 ## [0.5.1](https://github.com/glemmestad/asgard/compare/v0.5.0...v0.5.1) (2026-06-04)
 
 
