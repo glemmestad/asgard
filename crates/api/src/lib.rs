@@ -18,7 +18,7 @@ use tower_http::trace::TraceLayer;
 use asgard_catalog::{CatalogRepo, Entity, ListFilter, SchemaRegistry};
 use asgard_gateway::{ChatMessage, ChatRequest, Gateway, TRACE_HEADER};
 use asgard_identity::oidc::OidcConfig;
-use asgard_identity::IdentityService;
+use asgard_identity::{IdentityService, OidcRoleConfig};
 use asgard_provision::{ProvisionService, RollupDim};
 use asgard_registry::{CostDim, ProjectRegistry, RegisterInput};
 use asgard_storage::audit::{self, AuditQuery};
@@ -52,6 +52,15 @@ pub struct AppState {
     /// OIDC login configuration (enterprise upgrade). `None` = local-users only;
     /// the `/api/auth/oidc/*` routes 404 when absent.
     pub oidc: Option<OidcConfig>,
+    /// How OIDC sign-ins map to roles (admin emails + group-claim sync). `None`
+    /// when nothing is configured: OIDC users default to `member` and roles are
+    /// managed manually. When [`OidcRoleConfig::authoritative`] holds, the IdP
+    /// owns OIDC roles and the role API rejects manual changes to them.
+    pub oidc_roles: Option<OidcRoleConfig>,
+    /// When true, local username/password sign-in is fully disabled (no
+    /// exceptions, including the bootstrap admin) and the UI drops the password
+    /// form. Refused at startup unless OIDC is configured, to avoid lockout.
+    pub disable_local_login: bool,
     /// Dev escape hatch (rung 3): when true, session enforcement on human/admin
     /// routes is disabled. Off by default; only honored on a loopback bind (the
     /// binary refuses to set it otherwise). For throwaway local hacking only.
@@ -94,6 +103,8 @@ impl AppState {
             system_cost_key: None,
             cost_qa_model: "model:default/mock".to_string(),
             oidc: None,
+            oidc_roles: None,
+            disable_local_login: false,
             dev_insecure: false,
             force_https: false,
             login_throttle: LoginThrottle::default(),
@@ -121,6 +132,16 @@ impl AppState {
 
     pub fn with_oidc(mut self, oidc: Option<OidcConfig>) -> Self {
         self.oidc = oidc;
+        self
+    }
+
+    pub fn with_oidc_roles(mut self, roles: Option<OidcRoleConfig>) -> Self {
+        self.oidc_roles = roles;
+        self
+    }
+
+    pub fn with_disable_local_login(mut self, disable: bool) -> Self {
+        self.disable_local_login = disable;
         self
     }
 
@@ -1673,6 +1694,11 @@ async fn login(
     headers: HeaderMap,
     Json(b): Json<LoginBody>,
 ) -> Result<Response, ApiError> {
+    if st.disable_local_login {
+        return Err(ApiError::Forbidden(
+            "local sign-in is disabled; use single sign-on".into(),
+        ));
+    }
     let ip = client_ip(&headers);
     if !st.login_throttle.allowed(&ip) {
         return Ok((
@@ -1794,6 +1820,14 @@ async fn set_user_role_route(
     Json(b): Json<RoleBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    if st.oidc_roles.as_ref().is_some_and(|r| r.authoritative()) {
+        let target = st.identity.get_user(&id).await?;
+        if target.is_some_and(|u| u.provider == "oidc") {
+            return Err(ApiError::Forbidden(
+                "this user's role is managed by your identity provider".into(),
+            ));
+        }
+    }
     st.identity
         .set_role(&id, asgard_identity::Role::parse(&b.role))
         .await?;
@@ -1862,8 +1896,9 @@ async fn revoke_token(
 async fn auth_config(State(st): State<AppState>) -> Json<serde_json::Value> {
     let pol = st.registry.policy();
     Json(serde_json::json!({
-        "local": true,
+        "local": !st.disable_local_login,
         "oidc": st.oidc.is_some(),
+        "oidc_role_sync": st.oidc_roles.as_ref().is_some_and(|r| r.authoritative()),
         "system_name": st.system_name,
         "registration": {
             "require_manager": pol.require_manager,
@@ -1933,10 +1968,26 @@ async fn oidc_callback(
         .preferred_username
         .clone()
         .or_else(|| ui.email.clone())
-        .unwrap_or(ui.sub);
+        .unwrap_or_else(|| ui.sub.clone());
+    let (target_role, authoritative) = match st.oidc_roles.as_ref() {
+        Some(rc) => {
+            let groups = ui.groups(&rc.groups_claim);
+            (
+                rc.target_role(ui.email.as_deref(), &groups),
+                rc.authoritative(),
+            )
+        }
+        None => (None, false),
+    };
     let user = match st
         .identity
-        .upsert_oidc_user(&username, ui.email.as_deref(), ui.name.as_deref())
+        .upsert_oidc_user(
+            &username,
+            ui.email.as_deref(),
+            ui.name.as_deref(),
+            target_role,
+            authoritative,
+        )
         .await
     {
         Ok(u) => u,

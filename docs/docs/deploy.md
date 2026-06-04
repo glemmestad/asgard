@@ -33,7 +33,7 @@ an identity provider on you. Three rungs:
 | Rung | What | When |
 |---|---|---|
 | **1 — local users** | Built-in username/password accounts + sessions. On first boot, if no admin exists and `ASGARD_ADMIN_PASSWORD` is unset, Asgard **generates an admin password and logs it once**. | Default. Zero external dependencies. |
-| **2 — OIDC / SSO** | Authorization-code login against your IdP (Auth0, Okta, Entra, …). Coexists with local users, so the local admin remains a break-glass account. | Enterprise. Set the `ASGARD_OIDC_*` env. |
+| **2 — OIDC / SSO** | Authorization-code login against your IdP (Auth0, Okta, Entra, …). Coexists with local users by default (local admin = break-glass); roles can be driven from the IdP and local login can be turned off entirely (see [SSO-driven roles](#sso-driven-roles)). | Enterprise. Set the `ASGARD_OIDC_*` env. |
 | **3 — dev escape hatch** | `ASGARD_DEV_INSECURE=1` disables human-session enforcement. **Off by default, only honored on a loopback bind, logs a loud warning.** | Throwaway local hacking only. Never in a deployment. |
 
 Two things are gated independently of the human rung and are **always on**:
@@ -345,6 +345,68 @@ The local admin still works as a break-glass account alongside SSO. Live callbac
 URL / audience tuning is expected in-environment iteration — if the callback
 fails, the most common cause is a mismatched redirect URI.
 
+### SSO-driven roles
+
+By default a new SSO user lands as **member** and an admin promotes them from the
+Users page. Two env knobs let the IdP drive roles instead:
+
+```bash
+# Promote-only admin allowlist. These emails are made admin on every login.
+# Additive: never demotes, never locks the UI. A reliable break-glass.
+ASGARD_ADMIN_EMAILS=alice@corp.com,bob@corp.com
+
+# Authoritative group-claim sync. Setting either of these makes the IdP the SOLE
+# source of truth for OIDC roles: every login recomputes the role from the groups
+# claim (admin group → admin; else finance group → finance; else member, INCLUDING
+# demotion), and the Users page can no longer edit OIDC users' roles.
+ASGARD_OIDC_ADMIN_GROUPS=platform-admins
+ASGARD_OIDC_FINANCE_GROUPS=finance
+# Userinfo claim the group values are read from. Default `groups`. Auth0 custom
+# claims are namespaced, so usually something like the line below.
+ASGARD_OIDC_GROUPS_CLAIM=https://<host>/groups
+```
+
+Behavior:
+
+- **Neither group var set** → group sync is off; OIDC roles stay manually managed
+  (today's behavior). `ASGARD_ADMIN_EMAILS` still applies as a promote-only grant.
+- **A group var set** → authoritative sync is on. `ASGARD_ADMIN_EMAILS` is *unioned
+  in* as admin even in this mode, so a misfiring groups claim can't strip your named
+  break-glass admins.
+
+For Auth0, the groups claim is **not** emitted by default — add it in a **Login /
+Post-Login Action** and use a namespaced key (Auth0 silently drops non-namespaced
+custom claims):
+
+```js
+exports.onExecutePostLogin = async (event, api) => {
+  const ns = "https://<host>/";
+  const groups = (event.authorization && event.authorization.roles) || [];
+  api.idToken.setCustomClaim(ns + "groups", groups);
+  api.accessToken.setCustomClaim(ns + "groups", groups); // so /userinfo returns it
+};
+```
+
+Set `ASGARD_OIDC_GROUPS_CLAIM=https://<host>/groups` to match. The value must be in
+`/userinfo` (Asgard reads profile from there, not the ID token).
+
+### SSO-only: disabling local login
+
+```bash
+ASGARD_DISABLE_LOCAL_LOGIN=1
+```
+
+Fully disables username/password sign-in — for **everyone**, including the
+bootstrap admin. The login screen drops the password form and, when unauthenticated,
+**auto-redirects to the IdP** (no "Sign in with SSO" click). `POST /api/auth/login`
+returns `403`.
+
+- **Anti-lockout guard:** the flag is *ignored* (local login stays on, with a logged
+  error) unless OIDC is configured. Set up an SSO admin (`ASGARD_ADMIN_EMAILS` or an
+  admin group) and confirm you can sign in **before** flipping this on.
+- **Break-glass once disabled:** unset the env var and restart (or, on a loopback
+  bind, `ASGARD_DEV_INSECURE=1`). There is no in-app local fallback by design.
+
 ## Enterprise: arming provisioning
 
 Out of the box, provisioning is **unarmed** (the catalog is discoverable and the
@@ -435,6 +497,10 @@ plaintext, or the audit log.
 | `ASGARD_OIDC_DOMAIN` | IdP domain; presence enables SSO. Endpoints derived as `/authorize`, `/oauth/token`, `/userinfo`. | (off) |
 | `ASGARD_OIDC_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | OIDC web-app credentials + callback. | — |
 | `ASGARD_OIDC_SCOPES` | Space-separated scopes. | `openid email profile` |
+| `ASGARD_ADMIN_EMAILS` | Comma-separated emails promoted to admin on every SSO login. Additive, promote-only (never demotes), never locks the UI. | — |
+| `ASGARD_OIDC_ADMIN_GROUPS` / `_FINANCE_GROUPS` | Comma-separated group values → admin / finance. Setting either turns on **authoritative** group-claim sync (IdP owns OIDC roles incl. demotion; UI can't override). | — |
+| `ASGARD_OIDC_GROUPS_CLAIM` | Userinfo claim the group values are read from. Auth0 custom claims are namespaced (e.g. `https://<host>/groups`). | `groups` |
+| `ASGARD_DISABLE_LOCAL_LOGIN` | `1`/`true` fully disables username/password sign-in (everyone, incl. bootstrap admin); UI drops the form and auto-redirects to SSO. **Ignored unless OIDC is configured** (anti-lockout). | off |
 | `ASGARD_DEV_INSECURE` | `1`/`true` disables human-session enforcement. Loopback-only; ignored otherwise. | off |
 | `ASGARD_FORCE_HTTPS` | `1`/`true` forces `Secure` on auth cookies regardless of detected scheme — "HTTPS is required." Set this when TLS is mandatory everywhere. | off (adaptive) |
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |

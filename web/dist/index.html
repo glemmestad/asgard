@@ -503,6 +503,7 @@
     // (used by the governance scorecard's offender drill-in).
     let focusProject = null;
     let currentRole = 'member';
+    let APP_CFG = {};
     const isAdmin = () => currentRole === 'admin';
     // Cost views are visible to everyone — each is scoped server-side to the
     // projects the caller owns or manages (Admin/Finance see all). Only the Users
@@ -999,11 +1000,12 @@
         try {
           const us = await api('/api/users');
           if (!us.length) { out.innerHTML = empty('No users yet.'); return; }
+          const ssoManaged = u => APP_CFG.oidc_role_sync && u.provider === 'oidc';
           const rows = us.map(u => `<tr>
             <td><code>${esc(u.username)}</code>${u.active?'':' '+pill('disabled','red')}</td>
             <td>${esc(u.display_name||'')}</td>
             <td>${pill(u.provider, u.provider==='oidc'?'purple':'blue')}</td>
-            <td><select data-role="${esc(u.id)}">${ROLES.map(r=>`<option value="${r}"${u.role===r?' selected':''}>${r}</option>`).join('')}</select></td>
+            <td><select data-role="${esc(u.id)}"${ssoManaged(u)?' disabled title="Managed by your identity provider"':''}>${ROLES.map(r=>`<option value="${r}"${u.role===r?' selected':''}>${r}</option>`).join('')}</select>${ssoManaged(u)?' <span class="muted" style="font-size:11px">via SSO</span>':''}</td>
             <td class="r"><button class="pbtn danger" data-active="${esc(u.id)}" data-to="${u.active?'0':'1'}">${u.active?'disable':'enable'}</button></td>
           </tr>`).join('');
           out.innerHTML = `<div class="tablewrap"><table><thead><tr>
@@ -1748,25 +1750,54 @@
     async function showLogin() {
       let cfg = { local: true, oidc: false };
       try { cfg = await api('/api/auth/config'); } catch {}
+      APP_CFG = cfg;
       document.getElementById('nav').innerHTML = '';
       document.getElementById('aside').style.display = 'none';
       document.getElementById('view').className = 'wrap';
+      const localOn = cfg.local !== false;
+
+      // SSO-only deployment: skip the click and bounce straight to the IdP. Guard
+      // against a loop — if a rejected session cookie sends us right back, we'd
+      // redirect forever, so don't auto-redirect twice within 10s; fall through to
+      // a manual button instead. `?local=1` suppresses the auto-redirect for debug.
+      const debugLocal = new URLSearchParams(location.search).has('local');
+      let bounced = false;
+      if (cfg.oidc && !localOn && !debugLocal) {
+        const last = Number(sessionStorage.getItem('asg_sso_ts') || 0);
+        if (Date.now() - last > 10000) {
+          sessionStorage.setItem('asg_sso_ts', String(Date.now()));
+          location.href = '/api/auth/oidc/login';
+          return;
+        }
+        bounced = true;
+      }
+
       const sso = cfg.oidc
         ? `<button class="act" id="sso" style="margin-top:10px;width:100%">Sign in with SSO</button>`
         : '';
-      document.getElementById('view').innerHTML = `<div class="card" style="max-width:340px;margin:96px auto">
-        <div class="row" style="gap:10px;margin-bottom:14px"><span class="logo">A</span><span class="brand">Asgard</span></div>
-        <form id="loginf">
+      const form = localOn ? `<form id="loginf">
           <input id="u" placeholder="username" autocomplete="username" style="width:100%;margin:6px 0" />
           <input id="p" type="password" placeholder="password" autocomplete="current-password" style="width:100%;margin:6px 0" />
           <button class="act" type="submit" style="width:100%;margin-top:6px">Sign in</button>
-        </form>
+        </form>` : '';
+      const note = (!localOn && cfg.oidc)
+        ? `<p class="muted" style="margin:6px 0 0;font-size:12px">Single sign-on is required for this deployment.</p>`
+        : '';
+      document.getElementById('view').innerHTML = `<div class="card" style="max-width:340px;margin:96px auto">
+        <div class="row" style="gap:10px;margin-bottom:14px"><span class="logo">A</span><span class="brand">Asgard</span></div>
+        ${form}
         ${sso}
+        ${note}
         <p class="err" id="loginerr" style="min-height:1em;margin-bottom:0"></p>
       </div>`;
       applyBranding(cfg.system_name);
-      if (cfg.oidc) document.getElementById('sso').onclick = () => { location.href = '/api/auth/oidc/login'; };
-      document.getElementById('loginf').onsubmit = async (e) => {
+      if (bounced) document.getElementById('loginerr').textContent = "Sign-in didn't complete — try again.";
+      if (cfg.oidc) document.getElementById('sso').onclick = () => {
+        sessionStorage.setItem('asg_sso_ts', String(Date.now()));
+        location.href = '/api/auth/oidc/login';
+      };
+      const lf = document.getElementById('loginf');
+      if (lf) lf.onsubmit = async (e) => {
         e.preventDefault();
         try {
           await api('/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1786,10 +1817,11 @@
       document.querySelectorAll('.logo').forEach(e => e.textContent = name[0].toUpperCase());
     }
     async function boot() {
-      try { applyBranding((await api('/api/auth/config')).system_name); } catch {}
+      try { APP_CFG = await api('/api/auth/config'); applyBranding(APP_CFG.system_name); } catch {}
       let me;
       try { me = await api('/api/auth/me'); }
       catch { return showLogin(); }
+      sessionStorage.removeItem('asg_sso_ts');
       currentRole = (me && me.role) || 'member';
       active = 'start';
       document.getElementById('aside').style.display = '';

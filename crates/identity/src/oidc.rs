@@ -41,6 +41,26 @@ pub struct UserInfo {
     pub name: Option<String>,
     #[serde(default)]
     pub preferred_username: Option<String>,
+    /// Every other claim, kept so role mapping can read a group claim whose name
+    /// the operator chooses. Auth0 custom claims are namespaced (e.g.
+    /// `https://<app>/groups`), so the claim key can't be a fixed struct field.
+    #[serde(flatten)]
+    pub claims: std::collections::HashMap<String, serde_json::Value>,
+}
+
+impl UserInfo {
+    /// Group/role values pulled from a named claim. Accepts a JSON array of
+    /// strings or a single string; any other shape yields no groups.
+    pub fn groups(&self, claim: &str) -> Vec<String> {
+        match self.claims.get(claim) {
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            _ => Vec::new(),
+        }
+    }
 }
 
 impl OidcConfig {
@@ -122,6 +142,29 @@ mod tests {
             redirect_uri: "https://asgard.example.com/auth/callback".into(),
             scopes: vec!["openid".into(), "email".into(), "profile".into()],
         }
+    }
+
+    fn userinfo(claims: serde_json::Value) -> UserInfo {
+        serde_json::from_value(claims).unwrap()
+    }
+
+    #[test]
+    fn groups_claim_parsing() {
+        let ui = userinfo(serde_json::json!({
+            "sub": "abc",
+            "https://app/groups": ["admins", "finance"]
+        }));
+        assert_eq!(ui.groups("https://app/groups"), vec!["admins", "finance"]);
+        // single string is accepted as a one-element list
+        let ui = userinfo(serde_json::json!({ "sub": "abc", "groups": "admins" }));
+        assert_eq!(ui.groups("groups"), vec!["admins"]);
+        // missing or wrong-shaped claim yields nothing
+        assert!(userinfo(serde_json::json!({ "sub": "abc" }))
+            .groups("groups")
+            .is_empty());
+        assert!(userinfo(serde_json::json!({ "sub": "abc", "groups": 7 }))
+            .groups("groups")
+            .is_empty());
     }
 
     #[test]

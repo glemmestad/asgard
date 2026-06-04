@@ -723,5 +723,26 @@ grep -qi 'set-cookie: asgard_session=.*Secure' "$WORK/force.hdr" \
   && ok "ASGARD_FORCE_HTTPS forces Secure cookie even over plain http" || bad "force-https did not force Secure"
 kill "$SERVER3_PID" 2>/dev/null
 
+# 22. Disable local login (SSO-only): with ASGARD_DISABLE_LOCAL_LOGIN=1 and OIDC
+# configured, /api/auth/config advertises local:false (UI drops the password form)
+# and POST /api/auth/login is refused (403). The dummy OIDC env only satisfies the
+# anti-lockout guard — no IdP is contacted, since login is blocked before any redirect.
+PORT4=$((PORT+3)); BASE4="http://127.0.0.1:${PORT4}"
+ASGARD_DISABLE_LOCAL_LOGIN=1 \
+  ASGARD_OIDC_DOMAIN="idp.example.com" ASGARD_OIDC_CLIENT_ID="cid" \
+  ASGARD_OIDC_CLIENT_SECRET="sec" ASGARD_OIDC_REDIRECT_URI="${BASE4}/api/auth/oidc/callback" \
+  ASGARD_ADMIN_PASSWORD="e2e-admin-pw" ASGARD_DATABASE_URL="sqlite://${WORK}/nolocal.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT4}" --config "$WORK/asgard.yaml" >"$WORK/server4.log" 2>&1 &
+SERVER4_PID=$!
+for i in $(seq 1 50); do curl -fsS "$BASE4/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -fsS "$BASE4/api/auth/config" -o "$WORK/cfg4.json"
+grep -q '"local":false' "$WORK/cfg4.json" && grep -q '"oidc":true' "$WORK/cfg4.json" \
+  && ok "disable-local-login: /api/auth/config advertises local:false, oidc:true" \
+  || { bad "auth config did not reflect disabled local login"; cat "$WORK/cfg4.json"; }
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE4/api/auth/login" -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"e2e-admin-pw"}')
+[[ "$CODE" == "403" ]] && ok "disable-local-login: POST /api/auth/login is refused (403)" || bad "expected 403 for local login when disabled, got $CODE"
+kill "$SERVER4_PID" 2>/dev/null
+
 echo "RESULT: $PASS passed, $FAIL failed"
 [[ "$FAIL" == "0" ]]

@@ -103,6 +103,55 @@ impl Role {
     }
 }
 
+/// How OIDC sign-ins map to roles. Two independent knobs, set from env:
+///
+/// - `admin_emails` is an *additive, promote-only* admin grant applied on every
+///   login. It never demotes and never locks the UI — a break-glass list of
+///   humans who should always be admin, even if the groups claim misfires.
+/// - `admin_groups` / `finance_groups` turn on *authoritative* sync: when either
+///   is non-empty (see [`OidcRoleConfig::authoritative`]) the IdP is the sole
+///   source of truth and every login recomputes the role from the groups claim
+///   (incl. demotion to `member`); the UI may no longer override OIDC roles.
+#[derive(Debug, Clone, Default)]
+pub struct OidcRoleConfig {
+    pub admin_groups: Vec<String>,
+    pub finance_groups: Vec<String>,
+    pub admin_emails: Vec<String>,
+    /// Userinfo claim the group values are read from (e.g. `groups`).
+    pub groups_claim: String,
+}
+
+impl OidcRoleConfig {
+    /// IdP-authoritative role sync is on once any group mapping is configured.
+    pub fn authoritative(&self) -> bool {
+        !self.admin_groups.is_empty() || !self.finance_groups.is_empty()
+    }
+
+    /// The role to apply on this login. In authoritative mode this is always
+    /// `Some` (the fully-resolved role, demotion included); otherwise it is
+    /// `Some(Admin)` only for an admin-email user (a promote-only signal) and
+    /// `None` when nothing applies — leaving the role under manual control.
+    pub fn target_role(&self, email: Option<&str>, groups: &[String]) -> Option<Role> {
+        let is_admin_email = email
+            .map(|e| self.admin_emails.iter().any(|a| a.eq_ignore_ascii_case(e)))
+            .unwrap_or(false);
+        let in_any = |set: &[String]| groups.iter().any(|g| set.iter().any(|s| s == g));
+        if self.authoritative() {
+            Some(if is_admin_email || in_any(&self.admin_groups) {
+                Role::Admin
+            } else if in_any(&self.finance_groups) {
+                Role::Finance
+            } else {
+                Role::Member
+            })
+        } else if is_admin_email {
+            Some(Role::Admin)
+        } else {
+            None
+        }
+    }
+}
+
 impl User {
     pub fn role(&self) -> Role {
         Role::parse(&self.role)
@@ -307,25 +356,55 @@ impl IdentityService {
     }
 
     /// Provision (or update) a user from verified OIDC claims; keyed by username.
+    ///
+    /// `target_role` / `authoritative` come from [`OidcRoleConfig`]:
+    /// - new user: created with `target_role` (else `member`);
+    /// - existing + authoritative: role is overwritten to `target_role` every
+    ///   login (full sync, demotion included);
+    /// - existing + not authoritative: promoted to admin only if `target_role`
+    ///   is `Some(Admin)` and it isn't already admin — never demoted, so manual
+    ///   UI role management is preserved.
     pub async fn upsert_oidc_user(
         &self,
         username: &str,
         email: Option<&str>,
         display_name: Option<&str>,
+        target_role: Option<Role>,
+        authoritative: bool,
     ) -> Result<User, IdentityError> {
         if let Some(u) = self.get_user_by_username(username).await? {
+            let current = u.role();
+            let next = if authoritative {
+                target_role.unwrap_or(Role::Member)
+            } else if target_role == Some(Role::Admin) && current != Role::Admin {
+                Role::Admin
+            } else {
+                current
+            };
+            if next != current {
+                self.set_role(&u.id, next).await?;
+                return Ok(User {
+                    role: next.as_str().to_string(),
+                    is_admin: next.is_admin(),
+                    ..u
+                });
+            }
             return Ok(u);
         }
+        let role = target_role.unwrap_or(Role::Member);
+        let is_admin = role.is_admin();
         let id = asgard_storage::new_uid();
         let created_at = asgard_storage::now();
         sqlx::query(&self.db.q(
-            "INSERT INTO users (id, username, email, display_name, password_hash, provider, is_admin, created_at) \
-             VALUES (?, ?, ?, ?, NULL, 'oidc', 0, ?)",
+            "INSERT INTO users (id, username, email, display_name, password_hash, provider, is_admin, role, active, created_at) \
+             VALUES (?, ?, ?, ?, NULL, 'oidc', ?, ?, 1, ?)",
         ))
         .bind(&id)
         .bind(username)
         .bind(email)
         .bind(display_name)
+        .bind(is_admin as i64)
+        .bind(role.as_str())
         .bind(&created_at)
         .execute(self.db.pool())
         .await?;
@@ -335,8 +414,8 @@ impl IdentityService {
             email: email.map(str::to_string),
             display_name: display_name.map(str::to_string),
             provider: "oidc".to_string(),
-            is_admin: false,
-            role: Role::Member.as_str().to_string(),
+            is_admin,
+            role: role.as_str().to_string(),
             active: true,
             created_at,
         })
@@ -623,13 +702,128 @@ mod tests {
     async fn oidc_provisions_user() {
         let s = svc().await;
         let u = s
-            .upsert_oidc_user("dave", Some("dave@example.com"), Some("Dave"))
+            .upsert_oidc_user("dave", Some("dave@example.com"), Some("Dave"), None, false)
             .await
             .unwrap();
         assert_eq!(u.provider, "oidc");
-        // idempotent
-        let again = s.upsert_oidc_user("dave", None, None).await.unwrap();
+        assert_eq!(u.role, "member"); // default when no role config applies
+                                      // idempotent
+        let again = s
+            .upsert_oidc_user("dave", None, None, None, false)
+            .await
+            .unwrap();
         assert_eq!(again.id, u.id);
+        assert_eq!(again.role, "member");
+    }
+
+    #[test]
+    fn oidc_target_role_truth_table() {
+        let cfg = OidcRoleConfig {
+            admin_groups: vec!["platform-admins".into()],
+            finance_groups: vec!["finance".into()],
+            admin_emails: vec!["boss@corp.com".into()],
+            groups_claim: "groups".into(),
+        };
+        assert!(cfg.authoritative());
+        // group drives the role; no group -> demote to member (authoritative)
+        assert_eq!(
+            cfg.target_role(None, &["platform-admins".into()]),
+            Some(Role::Admin)
+        );
+        assert_eq!(
+            cfg.target_role(None, &["finance".into()]),
+            Some(Role::Finance)
+        );
+        assert_eq!(cfg.target_role(Some("x@corp.com"), &[]), Some(Role::Member));
+        // admin-email unions in even without the admin group
+        assert_eq!(
+            cfg.target_role(Some("BOSS@corp.com"), &[]),
+            Some(Role::Admin)
+        );
+
+        // no group config -> not authoritative; only admin-email promotes
+        let promote_only = OidcRoleConfig {
+            admin_emails: vec!["boss@corp.com".into()],
+            groups_claim: "groups".into(),
+            ..Default::default()
+        };
+        assert!(!promote_only.authoritative());
+        assert_eq!(
+            promote_only.target_role(Some("boss@corp.com"), &[]),
+            Some(Role::Admin)
+        );
+        assert_eq!(promote_only.target_role(Some("nobody@corp.com"), &[]), None);
+    }
+
+    #[tokio::test]
+    async fn oidc_authoritative_sync_promotes_and_demotes() {
+        let s = svc().await;
+        let cfg = OidcRoleConfig {
+            admin_groups: vec!["admins".into()],
+            groups_claim: "groups".into(),
+            ..Default::default()
+        };
+        // first login in the admin group -> admin
+        let u = s
+            .upsert_oidc_user(
+                "frank",
+                Some("frank@corp.com"),
+                None,
+                cfg.target_role(Some("frank@corp.com"), &["admins".into()]),
+                cfg.authoritative(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(u.role, "admin");
+        // next login without the group -> demoted to member
+        let again = s
+            .upsert_oidc_user(
+                "frank",
+                Some("frank@corp.com"),
+                None,
+                cfg.target_role(Some("frank@corp.com"), &[]),
+                cfg.authoritative(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.id, u.id);
+        assert_eq!(again.role, "member");
+        assert!(!again.is_admin);
+    }
+
+    #[tokio::test]
+    async fn oidc_promote_only_never_demotes_or_overrides_manual() {
+        let s = svc().await;
+        let cfg = OidcRoleConfig {
+            admin_emails: vec!["boss@corp.com".into()],
+            groups_claim: "groups".into(),
+            ..Default::default()
+        };
+        // admin-email promotes a fresh user
+        let u = s
+            .upsert_oidc_user(
+                "grace",
+                Some("boss@corp.com"),
+                None,
+                cfg.target_role(Some("boss@corp.com"), &[]),
+                cfg.authoritative(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(u.role, "admin");
+
+        // a non-listed user defaults to member, then a manual UI promotion sticks
+        let h = s
+            .upsert_oidc_user("heidi", Some("heidi@corp.com"), None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(h.role, "member");
+        s.set_role(&h.id, Role::Finance).await.unwrap();
+        let h2 = s
+            .upsert_oidc_user("heidi", Some("heidi@corp.com"), None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(h2.role, "finance"); // not clobbered on re-login
     }
 
     #[test]

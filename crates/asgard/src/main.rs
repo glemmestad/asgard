@@ -21,7 +21,7 @@ use asgard_gateway::{
     OpenAiProvider, Provider,
 };
 use asgard_identity::oidc::OidcConfig;
-use asgard_identity::IdentityService;
+use asgard_identity::{IdentityService, OidcRoleConfig};
 use asgard_policy::{CedarEngine, PolicyEngine};
 use asgard_provision::{
     AutoApprovePolicy, AwsCostExplorerSource, BuiltinSecretStore, CloudTarget,
@@ -593,6 +593,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         .ok()
         .map(|k| k.plaintext);
 
+    let oidc = build_oidc();
     let state = AppState::new(
         core.db.clone(),
         core.catalog.clone(),
@@ -606,7 +607,9 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     .with_system_name(std::env::var("ASGARD_SYSTEM_NAME").unwrap_or_default())
     .with_system_cost_key(system_cost_key)
     .with_cost_qa_model(cost_qa_model)
-    .with_oidc(build_oidc())
+    .with_oidc(oidc.clone())
+    .with_oidc_roles(build_oidc_roles())
+    .with_disable_local_login(resolve_disable_local_login(oidc.is_some()))
     .with_dev_insecure(resolve_dev_insecure(bind))
     .with_force_https(matches!(
         std::env::var("ASGARD_FORCE_HTTPS").as_deref(),
@@ -1317,6 +1320,72 @@ fn build_oidc() -> Option<OidcConfig> {
         redirect_uri,
         scopes,
     })
+}
+
+/// Build OIDC role mapping from env. `None` when nothing is set — OIDC users
+/// default to `member` and roles are managed manually (today's behavior).
+/// `ASGARD_ADMIN_EMAILS` alone is a promote-only admin grant; setting
+/// `ASGARD_OIDC_ADMIN_GROUPS` or `ASGARD_OIDC_FINANCE_GROUPS` turns on
+/// authoritative group-claim sync (IdP owns the role, UI can't override).
+fn build_oidc_roles() -> Option<OidcRoleConfig> {
+    let list = |k: &str| -> Vec<String> {
+        std::env::var(k)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let admin_emails = list("ASGARD_ADMIN_EMAILS");
+    let admin_groups = list("ASGARD_OIDC_ADMIN_GROUPS");
+    let finance_groups = list("ASGARD_OIDC_FINANCE_GROUPS");
+    if admin_emails.is_empty() && admin_groups.is_empty() && finance_groups.is_empty() {
+        return None;
+    }
+    let groups_claim = std::env::var("ASGARD_OIDC_GROUPS_CLAIM")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "groups".to_string());
+    let cfg = OidcRoleConfig {
+        admin_groups,
+        finance_groups,
+        admin_emails,
+        groups_claim,
+    };
+    if cfg.authoritative() {
+        tracing::info!(
+            "OIDC role sync enabled (claim={}): IdP groups are authoritative for admin/finance",
+            cfg.groups_claim
+        );
+    } else {
+        tracing::info!("OIDC admin-email allowlist enabled (promote-only)");
+    }
+    Some(cfg)
+}
+
+/// Resolve `ASGARD_DISABLE_LOCAL_LOGIN`. Refused (local login kept ON) unless
+/// OIDC is configured, so the flag can never lock everyone out — the same
+/// degrade-don't-trust posture as [`resolve_dev_insecure`].
+fn resolve_disable_local_login(oidc_present: bool) -> bool {
+    let on = matches!(
+        std::env::var("ASGARD_DISABLE_LOCAL_LOGIN").as_deref(),
+        Ok("1") | Ok("true")
+    );
+    if !on {
+        return false;
+    }
+    if oidc_present {
+        tracing::warn!(
+            "ASGARD_DISABLE_LOCAL_LOGIN=1: local username/password sign-in DISABLED; SSO only."
+        );
+        true
+    } else {
+        tracing::error!(
+            "ASGARD_DISABLE_LOCAL_LOGIN=1 ignored: OIDC is not configured, so disabling local login would lock everyone out. Local login stays ON."
+        );
+        false
+    }
 }
 
 /// Resolve the dev escape hatch (rung 3). Only honored on a loopback bind; if set
