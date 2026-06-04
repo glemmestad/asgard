@@ -18,12 +18,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Provides the `semantic-release-cargo prepare` binary used by the exec
+      # plugin to stamp the release version into the workspace Cargo.toml.
+      - uses: EricCrosson/install-github-release-binary@v2
+        with:
+          targets: semantic-release-cargo@2
       - id: semrel
         uses: cycjimmy/semantic-release-action@v4
         with:
           extra_plugins: |
             @semantic-release/changelog
             @semantic-release/git
+            @semantic-release/exec
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,7 +41,11 @@ jobs:
       contents: read
       packages: write
     steps:
+      # Build from the release commit (the version-bumped tag), not the push
+      # SHA — otherwise the binary compiles the pre-bump Cargo.toml version.
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
 
       - uses: docker/setup-buildx-action@v3
 
