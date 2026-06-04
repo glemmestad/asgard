@@ -10,7 +10,7 @@ required_fields: [name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/rds-postgres
+    module: aws/rds-postgres
     cloud: aws
 secret_outputs: [master_password, connection_url]
 cost:

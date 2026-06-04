@@ -10,7 +10,7 @@ required_fields: [name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/local-demo
+    module: local-demo
 cost:
   model: free
   estimated_monthly_usd: 0.0

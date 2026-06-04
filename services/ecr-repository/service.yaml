@@ -10,7 +10,7 @@ required_fields: [name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/ecr-repository
+    module: aws/ecr-repository
     cloud: aws
 cost:
   model: usage

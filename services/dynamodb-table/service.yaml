@@ -10,7 +10,7 @@ required_fields: [name, pk_name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/dynamodb-table
+    module: aws/dynamodb-table
     cloud: aws
 cost:
   model: usage

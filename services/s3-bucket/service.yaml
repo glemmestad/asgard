@@ -10,7 +10,7 @@ required_fields: [name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/s3-bucket
+    module: aws/s3-bucket
     cloud: aws
 cost:
   model: usage

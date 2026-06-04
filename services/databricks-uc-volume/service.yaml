@@ -14,7 +14,7 @@ required_fields: [name, catalog_name]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/databricks/uc-volume
+    module: databricks/uc-volume
     cloud: databricks
 cost:
   model: free

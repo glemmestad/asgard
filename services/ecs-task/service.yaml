@@ -10,7 +10,7 @@ required_fields: [name, image]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/ecs-task
+    module: aws/ecs-task
     cloud: aws
 cost:
   model: usage

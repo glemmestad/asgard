@@ -14,7 +14,7 @@ required_fields: [name, vpc_id, subnet_ids]
 provisioner:
   connector: terraform
   config:
-    module: ./modules/aws/alb
+    module: aws/alb
     cloud: aws
 cost:
   model: usage

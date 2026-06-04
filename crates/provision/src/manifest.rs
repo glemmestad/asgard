@@ -469,6 +469,36 @@ mod tests {
         assert!(ecs.required_fields.contains(&"subnet_ids".to_string()));
     }
 
+    // Terraform `module` paths must be relative to `modules_dir` (the modules-tree
+    // root, e.g. `aws/ecs-service`). A repo-root `modules/` prefix double-counts
+    // under the documented `ASGARD_TF_MODULES_DIR=/modules` (→ `/modules/modules/…`)
+    // and 500s every provision.
+    #[test]
+    fn terraform_module_paths_are_relative_to_modules_dir() {
+        let cat = ServiceCatalog::embedded().unwrap();
+        for m in cat.list() {
+            if m.connector() != "terraform" {
+                continue;
+            }
+            let module = m.connector_config();
+            let module = module
+                .get("module")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("terraform service '{}' has no config.module", m.id));
+            assert!(
+                !module.starts_with('/'),
+                "service '{}': module '{module}' must be relative to modules_dir, not absolute",
+                m.id
+            );
+            assert!(
+                !module.starts_with("modules/") && !module.starts_with("./modules/"),
+                "service '{}': module '{module}' must not carry a repo-root 'modules/' prefix — \
+                 it resolves against modules_dir (the modules-tree root)",
+                m.id
+            );
+        }
+    }
+
     #[test]
     fn validate_spec_enforces_required_fields() {
         let cat = ServiceCatalog::embedded().unwrap();
