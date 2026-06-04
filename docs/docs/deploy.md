@@ -360,6 +360,11 @@ ASGARD_TF_WORK_DIR=/data/asgard-tf                   # scratch only; can be ephe
 ASGARD_TF_ALLOWED=auth0:your-tenant                  # cloud:account allowlist
 ```
 
+`ASGARD_TF_ALLOWED` is a `cloud:account` allowlist (the *target*, not a service id —
+services are gated by the catalog). The **first entry also becomes the default
+target**, so a single-cloud deploy provisions without each `request_resource`
+naming `cloud`/`account`. Use the form `auth0:<tenant>` (or `aws:<account-id>`).
+
 This is the recommended path for a container deploy — no `asgard.yaml` needed for
 the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
 
@@ -435,7 +440,7 @@ plaintext, or the audit log.
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |
 | `ASGARD_TF_MODULES_DIR` | Arms the `terraform` connector **without a config file** — point it at the bundled modules (`/modules`). Presence is what registers the connector. | (off) |
 | `ASGARD_TF_WORK_DIR` | Scratch dir for Terraform working dirs. **State itself is kept (encrypted) in the DB**, so this may be ephemeral. | system temp |
-| `ASGARD_TF_ALLOWED` | Comma-separated `cloud:account` allowlist for env-armed provisioning, e.g. `auth0:your-tenant,aws:1234567890`. A request to anything not listed is refused. | — |
+| `ASGARD_TF_ALLOWED` | Comma-separated `cloud:account` allowlist for env-armed provisioning, e.g. `auth0:your-tenant,aws:1234567890`. A request to anything not listed is refused; the **first entry is also the default target**. | — |
 | `ASGARD_GIT_TOKEN` | Token for catalog source repos (GitHub/GitLab), if configured. | — |
 | `ASGARD_GUARDRAIL_MODE` | `enforce` (default) or `monitor`. | `enforce` |
 

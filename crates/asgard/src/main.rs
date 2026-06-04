@@ -1003,14 +1003,25 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
 /// Synthesize a provisioning config from env so a container-first deploy can arm
 /// provisioning without an `asgard.yaml`. Returns `None` unless
 /// `ASGARD_TF_MODULES_DIR` is set (the minimum to register the terraform
-/// connector). `ASGARD_TF_WORK_DIR` sets durable state storage;
+/// connector). `ASGARD_TF_WORK_DIR` sets the scratch dir (state lives in the DB);
 /// `ASGARD_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
 /// to anything not listed is refused). A config-file `provisioning:` block, when
 /// present, takes precedence over this entirely.
 fn provisioning_from_env() -> Option<ProvisioningCfg> {
     let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok()?;
-    let allowed = std::env::var("ASGARD_TF_ALLOWED")
-        .ok()
+    Some(provisioning_cfg_from_parts(
+        modules_dir,
+        std::env::var("ASGARD_TF_WORK_DIR").ok(),
+        std::env::var("ASGARD_TF_ALLOWED").ok(),
+    ))
+}
+
+fn provisioning_cfg_from_parts(
+    modules_dir: String,
+    work_dir: Option<String>,
+    allowed_csv: Option<String>,
+) -> ProvisioningCfg {
+    let allowed: Vec<TargetCfg> = allowed_csv
         .map(|s| {
             s.split(',')
                 .filter_map(|t| t.split_once(':'))
@@ -1021,15 +1032,25 @@ fn provisioning_from_env() -> Option<ProvisioningCfg> {
                 .collect()
         })
         .unwrap_or_default();
-    Some(ProvisioningCfg {
+    // Default the request target to the first allowed entry, so a single-cloud
+    // env-armed deploy provisions without every request having to name the
+    // cloud/account — otherwise requests fall back to the stub target and are
+    // refused by the (now env-replaced) allowlist.
+    let (default_cloud, default_account) = match allowed.first() {
+        Some(t) => (Some(t.cloud.clone()), Some(t.account.clone())),
+        None => (None, None),
+    };
+    ProvisioningCfg {
+        default_cloud,
+        default_account,
         allowed,
         terraform: Some(TerraformCfg {
             bin: default_tf_bin(),
             modules_dir: PathBuf::from(modules_dir),
-            work_dir: std::env::var("ASGARD_TF_WORK_DIR").ok().map(PathBuf::from),
+            work_dir: work_dir.map(PathBuf::from),
         }),
         ..Default::default()
-    })
+    }
 }
 
 /// The builtin store master key: `ASGARD_SECRET_KEY` env (64 hex chars) overrides
@@ -1349,5 +1370,33 @@ async fn static_handler(uri: Uri) -> Response {
             ([(header::CONTENT_TYPE, ct)], file.data.into_owned()).into_response()
         }
         None => (StatusCode::NOT_FOUND, "not found").into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn env_arming_defaults_target_to_the_sole_allowed_entry() {
+        let cfg = provisioning_cfg_from_parts(
+            "/modules".into(),
+            Some("/data/tf".into()),
+            Some("auth0:psiq-tenant".into()),
+        );
+        // The default target matches the allowlist, so a request that doesn't name
+        // a cloud/account still resolves to an allowed target (not the stub).
+        assert_eq!(cfg.default_cloud.as_deref(), Some("auth0"));
+        assert_eq!(cfg.default_account.as_deref(), Some("psiq-tenant"));
+        assert_eq!(cfg.allowed.len(), 1);
+        assert!(cfg.terraform.is_some());
+    }
+
+    #[test]
+    fn env_arming_without_allowlist_sets_no_default_target() {
+        let cfg = provisioning_cfg_from_parts("/modules".into(), None, None);
+        assert!(cfg.default_cloud.is_none());
+        assert!(cfg.default_account.is_none());
+        assert!(cfg.allowed.is_empty());
     }
 }
