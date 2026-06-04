@@ -236,9 +236,9 @@
     });
     const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; };
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-    // Theme (dark default, user-switchable, persisted).
+    // Theme (light default, user-switchable, persisted per browser in localStorage).
     const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('asgard-theme', t); } catch {} };
-    const theme = () => document.documentElement.getAttribute('data-theme') || 'dark';
+    const theme = () => document.documentElement.getAttribute('data-theme') || 'light';
     function toggleTheme() { applyTheme(theme() === 'light' ? 'dark' : 'light'); const b = document.getElementById('themebtn'); if (b) b.textContent = theme() === 'light' ? '☀' : '☾'; }
     // A confirmation gate for destructive actions. Resolves true only if confirmed.
     function confirmAction({ title, message, confirmLabel = 'Confirm' }) {
@@ -559,7 +559,8 @@
       return `<div class="step"><div class="n">1</div><div class="b">
         <h3>Create a Personal Access Token (PAT)</h3>
         <p class="muted" style="margin:0 0 6px;font-size:13px">The PAT is your key to ${SYS_NAME}'s MCP server — a long-lived <strong>user token</strong> tied to you. It lets your agent register projects and act on every project you own or manage; no per-project juggling.</p>
-        ${minted ? '' : `<div class="row" style="margin:0 0 8px"><button class="act" id="gs-token">Create a PAT</button></div>`}
+        ${minted ? '' : `<p class="muted" style="margin:0 0 8px;font-size:12px">Already have one? PATs are long-lived — reuse your existing token instead of minting another. It's shown only once, so create a new one only if you've lost it (and revoke stale tokens on the <a href="#" id="gs-to-users">Users page</a>).</p>
+        <div class="row" style="margin:0 0 8px"><button class="act" id="gs-token">Create a PAT</button></div>`}
         ${tokenBlock}
       </div></div>
       <div class="step"><div class="n">2</div><div class="b">
@@ -1837,7 +1838,7 @@
       document.getElementById('view').className = tabs[active].full ? 'full' : 'wrap';
       tabs[active].render();
     }
-    applyTheme((() => { try { return localStorage.getItem('asgard-theme') || 'dark'; } catch { return 'dark'; } })());
+    applyTheme((() => { try { return localStorage.getItem('asgard-theme') || 'light'; } catch { return 'light'; } })());
     const _tb = document.getElementById('themebtn');
     if (_tb) { _tb.textContent = theme() === 'light' ? '☀' : '☾'; _tb.onclick = toggleTheme; }
     boot();
