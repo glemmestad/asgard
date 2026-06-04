@@ -1763,6 +1763,7 @@
         ${sso}
         <p class="err" id="loginerr" style="min-height:1em;margin-bottom:0"></p>
       </div>`;
+      applyBranding(cfg.system_name);
       if (cfg.oidc) document.getElementById('sso').onclick = () => { location.href = '/api/auth/oidc/login'; };
       document.getElementById('loginf').onsubmit = async (e) => {
         e.preventDefault();
@@ -1776,7 +1777,14 @@
 
     // boot: require a session, then preload per-project series so sparklines
     // render on first paint. Falls back to the sign-in view when unauthenticated.
+    function applyBranding(name) {
+      name = (name && String(name).trim()) || 'Asgard';
+      document.title = name;
+      document.querySelectorAll('.brand').forEach(e => e.textContent = name);
+      document.querySelectorAll('.logo').forEach(e => e.textContent = name[0].toUpperCase());
+    }
     async function boot() {
+      try { applyBranding((await api('/api/auth/config')).system_name); } catch {}
       let me;
       try { me = await api('/api/auth/me'); }
       catch { return showLogin(); }
