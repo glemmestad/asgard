@@ -1,3 +1,10 @@
+# [0.8.0](https://github.com/glemmestad/asgard/compare/v0.7.0...v0.8.0) (2026-06-04)
+
+
+### Features
+
+* self-service-first provisioning, per-classification ceilings, mutable projects ([#20](https://github.com/glemmestad/asgard/issues/20)) ([33f34c0](https://github.com/glemmestad/asgard/commit/33f34c09fb152e42710ac2104aecb3641631ce03))
+
 # [0.7.0](https://github.com/glemmestad/asgard/compare/v0.6.0...v0.7.0) (2026-06-04)
 
 
