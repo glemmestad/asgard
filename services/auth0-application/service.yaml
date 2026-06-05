@@ -16,6 +16,11 @@ provisioner:
   connector: terraform
   config:
     module: auth0/application
+    # Operator-wide SSO/audience defaults, env-sourced. Unset vars drop out, so
+    # the module's no-op defaults apply and OSS deploys are unchanged.
+    defaults:
+      resource_server_template: "${AUTH0_RESOURCE_SERVER_TEMPLATE}"
+      enabled_connections: "${AUTH0_DEFAULT_CONNECTIONS:csv}"
 secret_outputs: [client_secret]
 cost:
   model: free

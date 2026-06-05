@@ -428,6 +428,10 @@ AWS_DEFAULT_REGION=us-west-2                          # standard provider env, a
 ASGARD_AWS_DEFAULT_ACCOUNT=123456789012              # default target + attribution account
 ASGARD_RDS_SUBNET_GROUP=my-db-subnets                # RDS placement; omit → default VPC
 ASGARD_RDS_SECURITY_GROUP_IDS=sg-123,sg-456          # RDS security groups (csv)
+
+# Auth0 (all optional; omit → bare client, no API, no enforced connection):
+AUTH0_RESOURCE_SERVER_TEMPLATE=https://api-{project}.example.com/   # {project} → project id; emitted as `audience`
+AUTH0_DEFAULT_CONNECTIONS=my-sso-connection          # existing tenant connections to enable (csv)
 ```
 
 `ASGARD_TF_MODULES_DIR` is the switch that arms real provisioning — set it and the
