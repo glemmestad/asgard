@@ -1,3 +1,10 @@
+# [0.11.0](https://github.com/glemmestad/asgard/compare/v0.10.0...v0.11.0) (2026-06-05)
+
+
+### Features
+
+* machine-judged promotion gate (async repo-reading code reviewer) ([#28](https://github.com/glemmestad/asgard/issues/28)) ([432cb71](https://github.com/glemmestad/asgard/commit/432cb7178526870318dde1442f9fe0493f7447e2))
+
 # [0.10.0](https://github.com/glemmestad/asgard/compare/v0.9.1...v0.10.0) (2026-06-05)
 
 
