@@ -1940,6 +1940,34 @@ pub fn http_router(
         .layer(from_fn_with_state(auth_state, mcp_auth))
 }
 
+/// The placeholder PAT the Getting-Started snippets show before a token is minted;
+/// a request carrying it verbatim is the classic "forgot to swap the token" setup
+/// mistake, worth a dedicated hint rather than a generic "invalid token".
+const PLACEHOLDER_PAT: &str = "asg_pat_your_user_token";
+
+/// Best-effort `scheme://host` for the running deployment, derived from request
+/// headers, so first-run auth errors can point the operator at a real Get-Started
+/// page instead of a generic instruction.
+fn self_origin(req: &Request) -> String {
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<your-asgard-host>");
+    let scheme = req
+        .headers()
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_else(|| {
+            if host.starts_with("localhost") || host.starts_with("127.") {
+                "http"
+            } else {
+                "https"
+            }
+        });
+    format!("{scheme}://{host}")
+}
+
 async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) -> Response {
     let token = req
         .headers()
@@ -1947,9 +1975,35 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(str::to_string);
-    let Some(token) = token else {
-        return (StatusCode::UNAUTHORIZED, "missing bearer credential").into_response();
+    let origin = self_origin(&req);
+    // An unset $ASGARD_PAT expands to nothing in the client's `claude mcp add`, so
+    // the stored header is `Bearer ` and the token arrives empty — the single most
+    // common first-run failure. Name it instead of treating it as a bad key.
+    let token = match token {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                format!(
+                    "no bearer token on the request. If you added the MCP server with \
+                     `$ASGARD_PAT`, it was unset when the command ran (the value is baked in \
+                     at add-time). Mint a PAT at {origin} → Get Started and put it in the \
+                     Authorization header."
+                ),
+            )
+                .into_response();
+        }
     };
+    if token == PLACEHOLDER_PAT {
+        return (
+            StatusCode::UNAUTHORIZED,
+            format!(
+                "the bearer token is still the placeholder `{PLACEHOLDER_PAT}`. Replace it with \
+                 a real PAT minted at {origin} → Get Started."
+            ),
+        )
+            .into_response();
+    }
     // A user PAT is prefix-distinct from a project key; resolve it to a user
     // principal. Anything else is treated as a project virtual key.
     if token.starts_with(PAT_PREFIX) {
@@ -1961,7 +2015,13 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
                 });
                 next.run(req).await
             }
-            Err(_) => (StatusCode::UNAUTHORIZED, "invalid or revoked user token").into_response(),
+            Err(_) => (
+                StatusCode::UNAUTHORIZED,
+                format!(
+                    "invalid or revoked user token. Mint a fresh PAT at {origin} → Get Started."
+                ),
+            )
+                .into_response(),
         };
     }
     match st.gateway_repo.verify_key(&token).await {
@@ -1969,7 +2029,14 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
             req.extensions_mut().insert(McpAuth::Project { project_id });
             next.run(req).await
         }
-        Ok(None) => (StatusCode::UNAUTHORIZED, "invalid or revoked gateway key").into_response(),
+        Ok(None) => (
+            StatusCode::UNAUTHORIZED,
+            format!(
+                "invalid or revoked credential. Use a project key, or your user PAT \
+                 (`{PAT_PREFIX}…`) minted at {origin} → Get Started."
+            ),
+        )
+            .into_response(),
         Err(e) => {
             tracing::warn!("mcp auth verify_key failed: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "auth check failed").into_response()

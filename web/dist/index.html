@@ -591,20 +591,24 @@
     function connectStep(token) {
       const base = location.origin + '/mcp';
       const minted = !!token;
-      const exportLine = `export ASGARD_PAT=${token || 'asg_pat_your_user_token'}`;
-      // Every client below reads the PAT from $ASGARD_PAT, so the literal token is
-      // never typed into the command or written into a config file. Codex sources
-      // it at call time via bearer_token_env_var.
-      const claude = `claude mcp add --transport http asgard ${base} \\\n  --header "Authorization: Bearer $ASGARD_PAT"`;
+      const pat = token || 'asg_pat_your_user_token';
+      const exportLine = `export ASGARD_PAT=${pat}`;
+      // Claude Code bakes the header at add-time — the shell expands $ASGARD_PAT
+      // right then, so an unset var silently stores an empty bearer and every call
+      // 401s. The expanded value lands in ~/.claude.json regardless, so the env-var
+      // indirection bought no secrecy here, only that footgun. Inline the token.
+      const claude = `claude mcp add --transport http asgard ${base} \\\n  --header "Authorization: Bearer ${pat}"`;
+      // Codex resolves bearer_token_env_var at call time, so the token stays out of
+      // config.toml — keep the env-var form, but it must be set in Codex's environment.
       const codex = `[mcp_servers.asgard]\nurl = "${base}"\nbearer_token_env_var = "ASGARD_PAT"`;
       const cursor = JSON.stringify({ mcpServers: { asgard: { url: base, headers: { Authorization: 'Bearer ${ASGARD_PAT}' } } } }, null, 2);
       const tokenBlock = minted
         ? `<div class="card" style="border-color:var(--teal);margin:10px 0 0">
             <p style="margin:0 0 6px;font-weight:700;color:var(--teal2)">✓ PAT created — shown once, copy it now</p>
             ${snip(token)}
-            <p class="muted" style="margin:10px 0 4px;font-size:12px">Then export it, so it lives in your environment and the snippets below pick it up — not the literal token in a command or config:</p>${snip(exportLine)}
+            <p class="muted" style="margin:10px 0 4px;font-size:12px">The Claude Code command below already has this token inline — copy and run it as-is. For Codex and Cursor, export it so they read it from your environment:</p>${snip(exportLine)}
             <p class="muted" style="margin:10px 0 0;font-size:11px">Need another, or want to revoke this one? Manage your tokens on the <a href="#" id="gs-to-users">Users page</a>.</p></div>`
-        : `<div id="gs-token-out"></div><p class="muted" style="margin:8px 0 0;font-size:12px">After creating it, export it as <code>ASGARD_PAT</code> so the snippets below resolve it.</p>`;
+        : `<div id="gs-token-out"></div><p class="muted" style="margin:8px 0 0;font-size:12px">Create the PAT and the snippets below fill in with your real token (and the export line for Codex/Cursor).</p>`;
       return `<div class="step"><div class="n">1</div><div class="b">
         <h3>Create a Personal Access Token (PAT)</h3>
         <p class="muted" style="margin:0 0 6px;font-size:13px">The PAT is your key to ${SYS_NAME}'s MCP server — a long-lived <strong>user token</strong> tied to you. It lets your agent register projects and act on every project you own or manage; no per-project juggling.</p>
@@ -614,9 +618,11 @@
       </div></div>
       <div class="step"><div class="n">2</div><div class="b">
         <h3>Connect your agent over MCP</h3>
-        <p class="muted" style="margin:0 0 6px;font-size:13px">Add ${SYS_NAME}'s MCP server to your agent. Each client below references <code>$ASGARD_PAT</code> — you never paste the literal token into the command.</p>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">Add ${SYS_NAME}'s MCP server to your agent.</p>
         <div class="muted" style="font-size:12px;margin-top:8px">Claude Code</div>${snip(claude)}
+        <p class="muted" style="margin:4px 0 0;font-size:11px">Prefer to keep the token out of <code>~/.claude.json</code>? Export it (above) and use <code>$ASGARD_PAT</code> in the header instead — but make sure it's set in the shell you run this command in.</p>
         <div class="muted" style="font-size:12px;margin-top:10px">Codex (<code>~/.codex/config.toml</code>)</div>${snip(codex)}
+        <p class="muted" style="margin:4px 0 0;font-size:11px">Codex reads <code>ASGARD_PAT</code> from its environment at call time — it must be set wherever Codex runs, not just the shell where you edited the config.</p>
         <div class="muted" style="font-size:12px;margin-top:10px">Cursor / generic Streamable-HTTP client (mcp.json)</div>${snip(cursor)}
         <p class="muted" style="margin:10px 0 0;font-size:12px">Once connected, <code>tools/list</code> shows <code>register_project</code>, <code>request_resource</code>, <code>seed_plan</code>, and the rest. Tell your agent: <em>"read the ${SYS_NAME} standards, register this project, then build."</em></p>
         <p class="muted" style="font-size:11px;margin-top:8px">Deploying an app or CI that lives in a single project? Register one below and mint a <strong>per-project key</strong> there instead — it's scoped to that one project.</p>

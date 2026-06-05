@@ -32,23 +32,29 @@ There are two kinds, and the difference matters:
 ## Connect your client
 
 Asgard exposes MCP over **Streamable HTTP at `https://<host>/mcp`**, authenticated
-with your **user token** as a bearer credential. Keep the literal token out of your
-shell history and config files by exporting it once and referencing the env var:
+with your **user token** as a bearer credential. Asgard's `/mcp` uses bearer-PAT
+auth (not OAuth), so the token is supplied by the client at setup rather than
+prompted on first connect. How it's supplied differs per client — see each below.
 
-```sh
-export ASGARD_PAT=asg_pat_your_user_token
-```
-
-> Asgard's `/mcp` uses bearer-PAT auth (not OAuth), so the token is supplied by the
-> client rather than prompted on first connect — referencing `$ASGARD_PAT` keeps it
-> in your environment instead of inline in a command or config.
+The easiest place to get a ready-to-paste, token-filled command is the **Getting
+Started** page in the running UI: mint a PAT and it generates the exact snippet for
+each client.
 
 ### Claude Code
 
+`claude mcp add` **bakes the header value at add-time** — the shell expands the
+token then and stores it in `~/.claude.json`. So put the real token in the command;
+an unset `$ASGARD_PAT` would silently store an empty bearer and every call would
+fail with `401`:
+
 ```sh
 claude mcp add --transport http asgard https://<host>/mcp \
-  --header "Authorization: Bearer $ASGARD_PAT"
+  --header "Authorization: Bearer asg_pat_your_user_token"
 ```
+
+To keep the token out of `~/.claude.json`, export it (`export
+ASGARD_PAT=asg_pat_…`) and use `$ASGARD_PAT` in the header instead — but only if
+it's set in the shell you run the command in, since it's expanded immediately.
 
 Then `claude mcp list` should show `asgard` connected, and the Asgard tools
 (`list_services`, `register_project`, `request_resource`, `seed_plan`, …) are
