@@ -281,8 +281,10 @@ pub async fn answer_cost_question(
         question,
         &tools,
         MAX_ROUNDS,
+        None,
     )
     .await
+    .map(|o| o.answer)
 }
 
 #[cfg(test)]

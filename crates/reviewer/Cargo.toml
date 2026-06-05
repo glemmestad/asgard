@@ -1,5 +1,5 @@
 [package]
-name = "asgard-registry"
+name = "asgard-reviewer"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,21 +8,17 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-asgard-storage.workspace = true
-asgard-catalog.workspace = true
 asgard-gateway.workspace = true
-asgard-workflow.workspace = true
+asgard-registry.workspace = true
+asgard-storage.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
-tracing.workspace = true
 async-trait.workspace = true
-schemars = { version = "1", optional = true }
-
-[features]
-schemars = ["dep:schemars"]
+tracing.workspace = true
+rust-embed.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-asgard-policy.workspace = true

@@ -217,6 +217,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/cost/rollup", post(cost_rollup))
         .route("/api/governance/metrics", get(governance_metrics))
         .route("/api/registry/sweep", post(registry_sweep))
+        .route("/api/reviews/run", post(run_reviews))
         .route("/api/groups", get(list_groups))
         .route("/api/standards", get(list_standards).post(put_standard))
         .route("/api/standards/{id}", get(get_standard))
@@ -258,6 +259,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/requests/{id}/approve", post(approve_request))
         .route("/api/requests/{id}/reject", post(reject_request))
         .route("/api/requests/{id}/fulfill", post(fulfill_request))
+        .route("/api/requests/{id}/escalate", post(escalate_request))
+        .route("/api/requests/{id}/reviews", get(request_reviews))
         .route("/api/audit", get(list_audit))
         .route("/api/users", get(list_users_route).post(create_user_route))
         .route("/api/users/{id}/role", post(set_user_role_route))
@@ -412,6 +415,12 @@ fn scope_for(user: &asgard_identity::User) -> Option<String> {
     } else {
         Some(user.email.clone().unwrap_or_default())
     }
+}
+
+/// The audit actor string for a user (email local-part, namespaced).
+fn actor_for(user: &asgard_identity::User) -> String {
+    let email = user.email.clone().unwrap_or_default();
+    format!("user:default/{}", email.split('@').next().unwrap_or("api"))
 }
 
 pub async fn serve(state: AppState, bind: &str) -> std::io::Result<()> {
@@ -1111,6 +1120,14 @@ async fn registry_sweep(
     Ok(Json(st.registry.sweep("system").await?))
 }
 
+/// Trigger one async code-review worker pass (ops/e2e): drain the review queue,
+/// finalizing each pending promotion's review. Idempotent and crash-safe; the
+/// periodic task in `serve()` runs the same routine on a schedule.
+async fn run_reviews(State(st): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let finalized = st.registry.drain_reviews(&st.workflow).await?;
+    Ok(Json(serde_json::json!({ "finalized": finalized })))
+}
+
 async fn list_groups(State(st): State<AppState>) -> Json<serde_json::Value> {
     let groups: Vec<serde_json::Value> = st
         .registry
@@ -1806,6 +1823,7 @@ async fn submit_request(
 struct ReqQuery {
     state: Option<String>,
     requester: Option<String>,
+    subject: Option<String>,
 }
 
 async fn list_requests(
@@ -1815,6 +1833,7 @@ async fn list_requests(
     let filter = RequestFilter {
         state: q.state.as_deref().map(WfState::parse),
         requester: q.requester,
+        subject: q.subject,
         limit: None,
     };
     Ok(Json(st.workflow.list(&filter).await?))
@@ -1864,6 +1883,56 @@ async fn reject_request(
             .reject(&id, &b.actor, b.reason.as_deref())
             .await?,
     ))
+}
+
+/// Submitter forwards a flagged promotion to its human approver. Authorized by
+/// project authority (the owner/manager), not the approver capability — this is
+/// the submitter's own choice, not an approval.
+async fn escalate_request(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+    let req = st
+        .workflow
+        .get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("request {id}")))?;
+    let actor = match req.subject.strip_prefix("project:") {
+        Some(pid) => {
+            let user = require_project_authority(&st, &headers, pid).await?;
+            actor_for(&user)
+        }
+        None => {
+            let user =
+                require_cap(&st, &headers, asgard_identity::Capability::ApproveRequests).await?;
+            actor_for(&user)
+        }
+    };
+    Ok(Json(st.workflow.escalate(&id, &actor).await?))
+}
+
+/// The machine-review verdicts recorded for a request (every attempt). Visible to
+/// a project authority or an admin/finance see-all role.
+async fn request_reviews(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let req = st
+        .workflow
+        .get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("request {id}")))?;
+    match req.subject.strip_prefix("project:") {
+        Some(pid) => {
+            require_project_authority(&st, &headers, pid).await?;
+        }
+        None => {
+            require_cap(&st, &headers, asgard_identity::Capability::ApproveRequests).await?;
+        }
+    }
+    Ok(Json(st.registry.promotion_reviews(&id).await?))
 }
 
 async fn fulfill_request(

@@ -26,7 +26,7 @@ pub use provider::{
     Provider,
 };
 pub use registry::{ModelInfo, ModelRegistry};
-pub use tools::{run_tool_loop, ToolDef, ToolExecutor};
+pub use tools::{run_tool_loop, ToolDef, ToolExecutor, ToolLoopOutcome};
 
 pub const TRACE_HEADER: &str = "x-asgard-trace-id";
 

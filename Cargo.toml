@@ -6,6 +6,7 @@ members = [
     "crates/policy",
     "crates/gateway",
     "crates/registry",
+    "crates/reviewer",
     "crates/provision",
     "crates/workflow",
     "crates/eval",
@@ -91,6 +92,7 @@ asgard-policy = { path = "crates/policy" }
 asgard-identity = { path = "crates/identity" }
 asgard-gateway = { path = "crates/gateway" }
 asgard-registry = { path = "crates/registry" }
+asgard-reviewer = { path = "crates/reviewer" }
 asgard-provision = { path = "crates/provision" }
 asgard-workflow = { path = "crates/workflow" }
 asgard-eval = { path = "crates/eval" }

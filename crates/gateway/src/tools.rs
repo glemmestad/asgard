@@ -26,9 +26,24 @@ pub trait ToolExecutor: Send + Sync {
     async fn call(&self, name: &str, args: &Value) -> Result<String, String>;
 }
 
-/// Run the bounded loop and return the model's final plain-text answer. The model
-/// only ever sees the grounding text and tool outputs, so the answer is grounded
-/// by construction. Capped at `max_rounds` tool turns.
+/// The model's final answer plus the cost it accrued. `cost_usd` sums every
+/// `complete()` call the loop made (the model navigates over several rounds), so a
+/// caller can attribute the *full* spend — not just the last round.
+#[derive(Debug)]
+pub struct ToolLoopOutcome {
+    pub answer: String,
+    pub cost_usd: f64,
+}
+
+/// Run the bounded loop and return the model's final plain-text answer (+ the total
+/// cost it accrued). The model only ever sees the grounding text and tool outputs,
+/// so the answer is grounded by construction. Capped at `max_rounds` tool turns.
+///
+/// `require_tool`, when set, forbids the model from answering until it has called
+/// that tool at least once — a premature answer is pushed back and the loop
+/// continues. This is the control-flow enforcement of "actually consult the
+/// evidence" (e.g. the code reviewer must `read_file` before judging), since a
+/// prompt instruction alone the model can — and does — skip.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_tool_loop(
     gateway: &Gateway,
@@ -39,23 +54,29 @@ pub async fn run_tool_loop(
     question: &str,
     tools: &dyn ToolExecutor,
     max_rounds: usize,
-) -> Result<String, GatewayError> {
+    require_tool: Option<&str>,
+) -> Result<ToolLoopOutcome, GatewayError> {
     let catalog = tools
         .tools()
         .iter()
         .map(|t| format!("- {}: {}", t.name, t.description))
         .collect::<Vec<_>>()
         .join("\n");
+    let required = require_tool
+        .map(|t| format!("\nRequired before final answer: call `{t}` at least once."))
+        .unwrap_or_default();
     let prompt = format!(
         "{grounding}\n\nYou may call a tool by replying with ONLY a JSON object of the \
          form tool-name plus args (keys \"tool\" and \"args\"). Available tools:\n{catalog}\n\n\
          Answer ONLY from tool outputs. If the data isn't available, say exactly \
-         \"I don't have that data.\" When you can answer, reply in plain prose with \
-         no JSON.\n\nQuestion: {question}"
+         \"I don't have that data.\" When you can answer, answer the Question exactly \
+         in the format it requests.{required}\n\nQuestion: {question}"
     );
     let mut messages = vec![ChatMessage::user(prompt)];
 
     let mut last = String::new();
+    let mut cost_usd = 0.0;
+    let mut required_satisfied = require_tool.is_none();
     for _ in 0..max_rounds.max(1) {
         let resp = gateway
             .complete(
@@ -71,9 +92,13 @@ pub async fn run_tool_loop(
                 data_class.clone(),
             )
             .await?;
+        cost_usd += resp.cost_usd;
         last = resp.content.clone();
         match parse_tool_call(&resp.content) {
             Some((name, args)) => {
+                if require_tool == Some(name.as_str()) {
+                    required_satisfied = true;
+                }
                 let result = tools
                     .call(&name, &args)
                     .await
@@ -81,10 +106,34 @@ pub async fn run_tool_loop(
                 messages.push(ChatMessage::assistant(resp.content));
                 messages.push(ChatMessage::user(format!("Tool {name} result: {result}")));
             }
-            None => return Ok(resp.content),
+            // Tried to answer before consulting the required tool — push back and
+            // make it actually inspect the evidence before concluding.
+            None if !required_satisfied => {
+                let req = require_tool.unwrap_or_default();
+                messages.push(ChatMessage::assistant(resp.content));
+                messages.push(ChatMessage::user(format!(
+                    "You have not called `{req}` yet. Inspect the actual contents with `{req}` \
+                     before answering — do not answer from the file listing alone. Call `{req}` now."
+                )));
+            }
+            None => {
+                return Ok(ToolLoopOutcome {
+                    answer: resp.content,
+                    cost_usd,
+                })
+            }
         }
     }
-    Ok(last)
+    if !required_satisfied {
+        return Err(GatewayError::Provider(format!(
+            "required tool '{}' was not called before the tool loop exhausted {max_rounds} round(s)",
+            require_tool.unwrap_or_default()
+        )));
+    }
+    Ok(ToolLoopOutcome {
+        answer: last,
+        cost_usd,
+    })
 }
 
 /// Extract a `{"tool": ..., "args": ...}` request from a model reply, scanning
@@ -182,6 +231,26 @@ mod tests {
         }
     }
 
+    struct NoToolProvider;
+    #[async_trait]
+    impl Provider for NoToolProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn chat(
+            &self,
+            route_model: &str,
+            _req: &ChatRequest,
+        ) -> Result<ChatResponse, ProviderError> {
+            Ok(ChatResponse {
+                completion_tokens: 3,
+                prompt_tokens: 3,
+                content: "I can answer without tools.".into(),
+                model: route_model.to_string(),
+            })
+        }
+    }
+
     async fn gateway_with(provider: Arc<dyn Provider>) -> (Gateway, String) {
         let path = std::env::temp_dir().join(format!("asgard-tl-{}.db", asgard_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
@@ -220,7 +289,7 @@ mod tests {
             round: Mutex::new(0),
         }))
         .await;
-        let answer = run_tool_loop(
+        let outcome = run_tool_loop(
             &gw,
             &key,
             "model:default/mock",
@@ -229,12 +298,40 @@ mod tests {
             "What is total spend?",
             &OneTool,
             4,
+            None,
         )
         .await
         .unwrap();
         assert!(
-            answer.contains("12.34"),
+            outcome.answer.contains("12.34"),
             "final answer should follow the tool result"
+        );
+        // Cost accrues across both rounds (the tool call + the answer).
+        assert!(
+            outcome.cost_usd > 0.0,
+            "tool-loop should attribute its spend"
+        );
+    }
+
+    #[tokio::test]
+    async fn loop_fails_if_required_tool_never_runs() {
+        let (gw, key) = gateway_with(Arc::new(NoToolProvider)).await;
+        let err = run_tool_loop(
+            &gw,
+            &key,
+            "model:default/mock",
+            Some("internal".into()),
+            "Cost facts follow.",
+            "What is total spend?",
+            &OneTool,
+            2,
+            Some("spend"),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(err, GatewayError::Provider(ref e) if e.contains("required tool 'spend'")),
+            "got {err:?}"
         );
     }
 }

@@ -8,6 +8,14 @@
 # Postgres.
 set -uo pipefail
 
+# Hermetic run: the review gate must not depend on the operator's ambient model
+# credentials. Export the inference-only keys EMPTY (not unset) so the binary's
+# dotenv load can't fill them from a developer .env — an empty var counts as "not
+# configured" — so the default boot is genuinely offline (review gate disabled).
+# (Leave LITELLM_*/DATABRICKS_* alone: they double as provisioning-connector inputs.)
+export OPENAI_MASTER_KEY="" ANTHROPIC_MASTER_KEY=""
+unset ASGARD_REVIEW_ALLOW_MOCK 2>/dev/null || true
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8071}"
 BASE="http://127.0.0.1:${PORT}"
@@ -23,6 +31,7 @@ cleanup() {
   [[ -n "${SERVER3_PID:-}" ]] && kill "$SERVER3_PID" 2>/dev/null
   [[ -n "${SERVER4_PID:-}" ]] && kill "$SERVER4_PID" 2>/dev/null
   [[ -n "${SERVER5_PID:-}" ]] && kill "$SERVER5_PID" 2>/dev/null
+  [[ -n "${SERVER6_PID:-}" ]] && kill "$SERVER6_PID" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -161,17 +170,33 @@ curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: applica
 PSTATE=$(jget "$WORK/prom.json" "['state']")
 RID=$(jget "$WORK/prom.json" "['id']")
 [[ "$PSTATE" == "approved" ]] && ok "clean POC->Light auto-approves" || bad "expected auto-approve, got $PSTATE"
+# With no LLM wired (offline), the review gate is disabled — no reviewer runs.
+RR=$(jget "$WORK/prom.json" "['payload']['reviewers_ran']")
+[[ "$RR" == "[]" ]] && ok "review gate disabled without LLM access (no reviewer ran)" || bad "expected no reviewer offline, got reviewers_ran=$RR"
 curl -fsS -X POST "$BASE/api/requests/${RID}/fulfill" -H 'content-type: application/json' \
   -d '{"actor":"user:default/e2e"}' -o "$WORK/promf.json"
 curl -fsS "$BASE/api/projects/${P2}" -o "$WORK/p2b.json"
 NC=$(jget "$WORK/p2b.json" "['classification']")
 [[ "$NC" == "light-operational" ]] && ok "fulfilment mutates classification to Light" || bad "classification not promoted ($NC)"
-# Light -> Wide always routes to a human even with complete evidence.
+# Light -> Wide with incomplete Wide evidence: the machine evidence gap is
+# self-fixable, so it returns to the submitter (flagged), not straight to a human.
+# (This self-service routing is deterministic and holds even with the LLM gate off.)
 curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: application/json' \
   -d '{"target":"wide-operational"}' -o "$WORK/prom2.json"
 WSTATE=$(jget "$WORK/prom2.json" "['state']")
-WAPP=$(jget "$WORK/prom2.json" "['approver']")
-[[ "$WSTATE" == "requested" && "$WAPP" == "group:default/platform" ]] && ok "Light->Wide routes to platform review" || bad "Wide routing wrong (state=$WSTATE approver=$WAPP)"
+WRID=$(jget "$WORK/prom2.json" "['id']")
+[[ "$WSTATE" == "flagged" ]] && ok "incomplete Wide returns to the submitter (flagged, self-service)" || bad "expected flagged, got state=$WSTATE"
+# Re-running supersedes the flagged attempt rather than piling up open requests.
+curl -fsS -X POST "$BASE/api/projects/${P2}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"wide-operational"}' -o "$WORK/prom2b.json"
+WRID2=$(jget "$WORK/prom2b.json" "['id']")
+OPENW=$(curl -fsS "$BASE/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:${P2}'))")&state=flagged" | python3 -c "import json,sys;print(len(json.load(sys.stdin)))")
+[[ "$WRID2" != "$WRID" && "$OPENW" == "1" ]] && ok "re-running supersedes the prior flagged promotion (one open)" || bad "supersede wrong (rid=$WRID rid2=$WRID2 open=$OPENW)"
+# The submitter forwards the current flagged promotion to a human; Wide -> platform.
+curl -fsS -X POST "$BASE/api/requests/${WRID2}/escalate" -o "$WORK/esc.json"
+ESTATE=$(jget "$WORK/esc.json" "['state']")
+EAPP=$(jget "$WORK/esc.json" "['approver']")
+[[ "$ESTATE" == "requested" && "$EAPP" == "group:default/platform" ]] && ok "escalate forwards a flagged promotion to platform review" || bad "escalate wrong (state=$ESTATE approver=$EAPP)"
 # A two-step jump (Light -> Critical) is rejected.
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/projects/${P2}/promotion" \
   -H 'content-type: application/json' -d '{"target":"critical-path"}')
@@ -186,7 +211,8 @@ DC=$(jget "$WORK/dem.json" "['classification']")
 [[ "$DC" == "poc" ]] && ok "demote moves classification down (Light->POC)" || bad "demote wrong ($DC)"
 curl -fsS "$BASE/api/audit?entity=project:${P2}" -o "$WORK/p2aud.json"
 grep -q 'project.promoted' "$WORK/p2aud.json" && grep -q 'project.demoted' "$WORK/p2aud.json" \
-  && ok "promotion + demotion are audited" || bad "promotion/demotion audit records missing"
+  && grep -q 'project.promotion_flagged' "$WORK/p2aud.json" \
+  && ok "promotion + demotion + review-flag are audited" || bad "promotion/demotion/flag audit records missing"
 
 # 5d. Review-date engine (WS3): a project past its review deadline is flagged
 # expired by the sweep (lifecycle untouched — expiry blocks nothing); the first
@@ -270,7 +296,8 @@ grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe
 grep -q '"mcp_catalog_list"' "$WORK/tools.out" && grep -q '"mcp_catalog_publish"' "$WORK/tools.out" \
   && ok "MCP exposes the catalog tools (mcp_catalog_list, mcp_catalog_publish)" || bad "mcp_catalog tools missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \
-  && ok "MCP exposes promotion tools (request_promotion, promotion_status)" || bad "promotion tools missing from MCP"
+  && grep -q '"escalate_promotion"' "$WORK/tools.out" \
+  && ok "MCP exposes promotion tools (request_promotion, promotion_status, escalate_promotion)" || bad "promotion tools missing from MCP"
 # Control plane issues credentials but does not run inference: gateway_credential
 # stays, gateway_chat is gone (the project LLM key is used out-of-band).
 grep -q '"gateway_credential"' "$WORK/tools.out" && ok "MCP exposes gateway_credential (mint the project LLM key)" || bad "gateway_credential tool missing from MCP"
@@ -859,24 +886,99 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE4/api/auth/login" -H
 [[ "$CODE" == "403" ]] && ok "disable-local-login: POST /api/auth/login is refused (403)" || bad "expected 403 for local login when disabled, got $CODE"
 kill "$SERVER4_PID" 2>/dev/null
 
-# 23. Horizontal scale-out (Postgres only): a second replica boots against the
+# 23. Async code-review gate (the deep reviewer). With ASGARD_REVIEW_ALLOW_MOCK=1
+# the gate is on (mock judge); the reviewer reads the actual repo over the Local
+# backend. A clean repo parks in `reviewing`, the background worker reads it and
+# approves; a repo carrying the review-fail marker is flagged — the gate judged the
+# CODE, not the form. The whole async path (enqueue → worker → finalize) runs here.
+PORT5=$((PORT+4)); BASE5="http://127.0.0.1:${PORT5}"
+mkdir -p "$WORK/repo_ok/src" "$WORK/repo_bad/src"
+printf 'fn main() {}\n' > "$WORK/repo_ok/src/main.rs"
+printf '# Clean fixture\n' > "$WORK/repo_ok/README.md"
+printf 'fn main() {}\n' > "$WORK/repo_bad/src/main.rs"
+: > "$WORK/repo_bad/.asgard-review-fail"
+ASGARD_REVIEW_ALLOW_MOCK=1 ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite://${WORK}/review.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/asgard.yaml" >"$WORK/server5.log" 2>&1 &
+SERVER5_PID=$!
+for i in $(seq 1 50); do curl -fsS "$BASE5/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
+curl -fsS "$BASE5/healthz" >/dev/null 2>&1 || { bad "review server did not start"; cat "$WORK/server5.log"; }
+grep -q 'review gate enabled' "$WORK/server5.log" \
+  && ok "review gate ENABLED under ASGARD_REVIEW_ALLOW_MOCK=1 (mock judge)" \
+  || { bad "review gate not enabled under mock override"; cat "$WORK/server5.log"; }
+
+# Current state of a workflow request by id (scoped to its project subject).
+req_state() { # $1=base $2=pid $3=request-id
+  curl -fsS "$1/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:'+'$2'))")" \
+    | python3 -c "import json,sys;rs=json.load(sys.stdin);print(next((r['state'] for r in rs if r['id']=='$3'),'?'))"
+}
+
+REG_OK=$(cat <<JSON
+{"name":"Async OK","owner_email":"carol@corp.example","manager_email":"dave@corp.example","group":"platform","classification":"poc","data_class":"internal","budget_usd":10,"repo_or_source_url":"$WORK/repo_ok","business_owner":"carol@corp.example","technical_owner":"dave@corp.example","team_or_org_of_record":"Platform","support_contact":"oncall@corp.example","runbook_url":"https://rb","monitoring_or_logs_url":"https://logs","ci_status_url":"N/A","critical_flow_test_or_eval_url":"https://eval","state_loss_posture":"stateless","requested_classification":"light-operational","primary_data_flows":["s3 -> warehouse"]}
+JSON
+)
+curl -fsS -X POST "$BASE5/api/projects" -H 'content-type: application/json' -d "$REG_OK" -o "$WORK/r_ok.json"
+POK=$(jget "$WORK/r_ok.json" "['project_id']")
+curl -fsS -X POST "$BASE5/api/projects/${POK}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pok.json"
+SOK=$(jget "$WORK/pok.json" "['state']")
+RIDOK=$(jget "$WORK/pok.json" "['id']")
+[[ "$SOK" == "reviewing" ]] && ok "clean Light + LLM → parks in async review (state=reviewing)" || bad "expected reviewing, got $SOK"
+# Drive the worker (the periodic loop does this on a schedule; the endpoint is the
+# same idempotent routine). A clean repo → approved.
+curl -fsS -X POST "$BASE5/api/reviews/run" -o "$WORK/run1.json"
+STOK=$(req_state "$BASE5" "$POK" "$RIDOK")
+[[ "$STOK" == "approved" ]] && ok "worker reads a clean repo and approves the promotion" || bad "expected approved after worker, got $STOK"
+curl -fsS "$BASE5/api/requests/${RIDOK}/reviews" -o "$WORK/revok.json"
+python3 -c "import json,sys;rs=json.load(open('$WORK/revok.json'));sys.exit(0 if any(r['reviewer_id']=='code-review' and r['disposition']=='pass' for r in rs) else 1)" \
+  && ok "clean-repo code-review verdict persisted (disposition=pass)" || { bad "code-review pass verdict not persisted"; cat "$WORK/revok.json"; }
+
+# Same evidence, a repo carrying the review-fail marker → the reviewer flags it.
+REG_BAD=$(cat <<JSON
+{"name":"Async Bad","owner_email":"carol@corp.example","manager_email":"dave@corp.example","group":"platform","classification":"poc","data_class":"internal","budget_usd":10,"repo_or_source_url":"$WORK/repo_bad","business_owner":"carol@corp.example","technical_owner":"dave@corp.example","team_or_org_of_record":"Platform","support_contact":"oncall@corp.example","runbook_url":"https://rb","monitoring_or_logs_url":"https://logs","ci_status_url":"N/A","critical_flow_test_or_eval_url":"https://eval","state_loss_posture":"stateless","requested_classification":"light-operational","primary_data_flows":["s3 -> warehouse"]}
+JSON
+)
+curl -fsS -X POST "$BASE5/api/projects" -H 'content-type: application/json' -d "$REG_BAD" -o "$WORK/r_bad.json"
+PBAD=$(jget "$WORK/r_bad.json" "['project_id']")
+curl -fsS -X POST "$BASE5/api/projects/${PBAD}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pbad.json"
+RIDBAD=$(jget "$WORK/pbad.json" "['id']")
+[[ "$(jget "$WORK/pbad.json" "['state']")" == "reviewing" ]] && ok "machine-clean Light w/ marker repo also parks in review" || bad "expected reviewing for bad repo"
+curl -fsS -X POST "$BASE5/api/reviews/run" -o "$WORK/run2.json"
+STBAD=$(req_state "$BASE5" "$PBAD" "$RIDBAD")
+[[ "$STBAD" == "flagged" ]] && ok "worker reads the marker repo and FLAGS it (judged the code, not the form)" || bad "expected flagged after worker, got $STBAD"
+curl -fsS "$BASE5/api/requests/${RIDBAD}/reviews" -o "$WORK/revbad.json"
+python3 -c "import json,sys;rs=json.load(open('$WORK/revbad.json'));sys.exit(0 if any(r['reviewer_id']=='code-review' and r['disposition']=='concern' for r in rs) else 1)" \
+  && ok "flagged-repo code-review verdict persisted (disposition=concern)" || { bad "code-review concern verdict not persisted"; cat "$WORK/revbad.json"; }
+curl -fsS "$BASE5/api/audit?entity=project:${PBAD}" -o "$WORK/badaud.json"
+grep -q 'project.promotion_flagged' "$WORK/badaud.json" \
+  && ok "async review flag is audited (project.promotion_flagged)" || bad "flag audit record missing for async review"
+# Re-running supersedes the in-flight/flagged attempt (one open promotion).
+curl -fsS -X POST "$BASE5/api/projects/${PBAD}/promotion" -H 'content-type: application/json' \
+  -d '{"target":"light-operational"}' -o "$WORK/pbad2.json"
+RIDBAD2=$(jget "$WORK/pbad2.json" "['id']")
+OPENB=$(curl -fsS "$BASE5/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:${PBAD}'))")" \
+  | python3 -c "import json,sys;rs=json.load(sys.stdin);print(sum(1 for r in rs if r['state'] in ('reviewing','flagged','requested')))")
+[[ "$RIDBAD2" != "$RIDBAD" && "$OPENB" == "1" ]] && ok "re-running supersedes the prior review attempt (one open)" || bad "supersede wrong (rid=$RIDBAD rid2=$RIDBAD2 open=$OPENB)"
+kill "$SERVER5_PID" 2>/dev/null
+
+# 24. Horizontal scale-out (Postgres only): a second replica boots against the
 # same database and serves, proving N>1 is safe — the leader-leased loops and the
 # migration advisory lock coexist on a shared DB. SQLite is single-process by
 # design (one file, one writer), so this is skipped there.
 if [[ "$DB_URL" == postgres* ]]; then
-  PORT5=$((PORT+4)); BASE5="http://127.0.0.1:${PORT5}"
+  PORT6=$((PORT+5)); BASE6="http://127.0.0.1:${PORT6}"
   ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="$DB_URL" \
-    "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/asgard.yaml" >"$WORK/server5.log" 2>&1 &
-  SERVER5_PID=$!
-  for _ in $(seq 1 50); do curl -fsS "$BASE5/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
-  curl -fsS "$BASE5/readyz" >/dev/null 2>&1 \
+    "$BIN" serve --bind "127.0.0.1:${PORT6}" --config "$WORK/asgard.yaml" >"$WORK/server6.log" 2>&1 &
+  SERVER6_PID=$!
+  for _ in $(seq 1 50); do curl -fsS "$BASE6/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+  curl -fsS "$BASE6/readyz" >/dev/null 2>&1 \
     && ok "second replica is ready against the same Postgres (N>1 safe)" \
-    || { bad "second replica did not become ready on shared Postgres"; cat "$WORK/server5.log"; }
-  for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server5.log" && break; sleep 0.2; done
-  grep -q "cost rollup" "$WORK/server5.log" \
+    || { bad "second replica did not become ready on shared Postgres"; cat "$WORK/server6.log"; }
+  for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server6.log" && break; sleep 0.2; done
+  grep -q "cost rollup" "$WORK/server6.log" \
     && ok "second replica's leased loops run against the shared DB" \
     || bad "second replica's rollup loop did not run on shared DB"
-  kill "$SERVER5_PID" 2>/dev/null
+  kill "$SERVER6_PID" 2>/dev/null
 fi
 
 echo "RESULT: $PASS passed, $FAIL failed"

@@ -1,0 +1,8 @@
+id: llm-judge
+name: LLM Judge
+kind: llm-judge
+enabled: true
+dimensions: [evidence-coherence]
+# `auto` = use whatever real model the operator wired (resolved at runtime). The
+# review gate only runs when a real LLM is reachable, so this never stays mock.
+model: auto

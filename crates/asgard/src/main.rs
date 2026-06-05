@@ -33,6 +33,10 @@ use asgard_registry::{
     ClassificationRequirements, GovernanceConfig, GroupAllowlist, GroupEntry, ProjectRegistry,
     RegistrationPolicy, ReviewConfig,
 };
+use asgard_reviewer::{
+    CodeReview, LlmJudge, RegistryStandards, ReviewDepth, ReviewDepthMap, ReviewService,
+    ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
+};
 use asgard_storage::{leases::Leases, Db};
 use asgard_workflow::WorkflowEngine;
 
@@ -219,6 +223,14 @@ struct Config {
     /// empty=default posture).
     #[serde(default)]
     classification_requirements: std::collections::BTreeMap<String, Vec<String>>,
+    /// Per-tier code-review depth, keyed by target tier (`light-operational` /
+    /// `wide-operational` / `critical-path`): which standard ids to judge against,
+    /// the tool-loop round budget, and whether to skip. Any tier present overrides
+    /// the shipped default (POC skip; Light `coding`; Wide +`security`; Critical
+    /// +`workflow`); absent tiers keep the default (mirrors
+    /// `classification_requirements`' empty=default posture).
+    #[serde(default)]
+    review_depth: std::collections::BTreeMap<String, ReviewDepthCfg>,
     /// Review-date engine thresholds (WS3): POC review window, automatic-extension
     /// allowance, and sweep cadence. Defaults are the policy doc's 90 days / 1.
     #[serde(default)]
@@ -229,6 +241,22 @@ struct Config {
     governance: GovernanceCfg,
     #[serde(default)]
     provisioning: Option<ProvisioningCfg>,
+    /// Operator overlay for reviewer manifests: files named `reviewer.yaml` under
+    /// here add or override the embedded reviewers (e.g. disable the built-in
+    /// `llm-judge`, or add an external `webhook` reviewer). No recompile.
+    #[serde(default)]
+    reviewers_dir: Option<PathBuf>,
+}
+
+impl Config {
+    /// Reviewer overlay dir: config value, else the `ASGARD_REVIEWERS_DIR` env var.
+    fn reviewers_dir(&self) -> Option<PathBuf> {
+        self.reviewers_dir.clone().or_else(|| {
+            std::env::var("ASGARD_REVIEWERS_DIR")
+                .ok()
+                .map(PathBuf::from)
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -240,6 +268,10 @@ struct ReviewCfg {
     /// How often the review sweep runs (seconds). Absent = daily.
     #[serde(default)]
     sweep_secs: Option<u64>,
+    /// How often the async code-review worker drains its queue (seconds). Absent
+    /// = 15s.
+    #[serde(default)]
+    worker_secs: Option<u64>,
 }
 
 impl Default for ReviewCfg {
@@ -248,8 +280,28 @@ impl Default for ReviewCfg {
             poc_window_days: default_poc_window(),
             auto_extensions: default_auto_extensions(),
             sweep_secs: None,
+            worker_secs: None,
         }
     }
+}
+
+/// One tier's code-review depth override (see `Config::review_depth`).
+#[derive(Debug, Clone, Deserialize)]
+struct ReviewDepthCfg {
+    /// Skip code review for this tier entirely.
+    #[serde(default)]
+    skip: bool,
+    /// Standard ids to judge against (e.g. `["coding", "security"]`).
+    #[serde(default)]
+    standards: Vec<String>,
+    /// Tool-loop round budget (how many `list_files`/`read_file` cycles the model
+    /// gets to navigate the repo). Absent = 8.
+    #[serde(default = "default_review_rounds")]
+    max_rounds: usize,
+}
+
+fn default_review_rounds() -> usize {
+    8
 }
 
 fn default_poc_window() -> i64 {
@@ -570,6 +622,11 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         .first()
         .map(|m| m.model_ref.clone())
         .unwrap_or_else(|| "model:default/mock".to_string());
+    // The review gate needs a real model to judge anything. It's enabled only when a
+    // real inference backend is active (an OpenAI/Anthropic key, or an enabled
+    // openai-compatible gateway module like LiteLLM) — the offline mock does not
+    // count. `ASGARD_REVIEW_ALLOW_MOCK=1` forces it on for dev/tests (mock judge).
+    let has_real_llm = !inf_models.is_empty();
     let mut model_registry = ModelRegistry::from_catalog(&core.catalog).await?;
     model_registry.insert(default_mock_model());
     for m in inf_models {
@@ -584,16 +641,6 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         guardrail_mode(),
     ));
     let workflow = Arc::new(WorkflowEngine::new(core.db.clone(), core.policy.clone()));
-    let registry = ProjectRegistry::new(
-        core.db.clone(),
-        core.gateway_repo.clone(),
-        core.catalog.clone(),
-        build_allowlist(&config),
-        build_registration_policy(&config),
-    )
-    .with_requirements(build_requirements(&config))
-    .with_review_config(build_review_config(&config))
-    .with_governance_config(build_governance_config(&config));
     let lease_ttl = config.lease_ttl_secs.unwrap_or(600) as i64;
     let leases = Leases::new(core.db.clone(), asgard_storage::new_uid());
     let mut provision =
@@ -602,14 +649,10 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     if let Some(secs) = config.provision_wait_secs {
         provision.set_wait_budget_secs(secs);
     }
-    maybe_seed_admin(&core.identity).await;
-    if let Err(e) = registry.seed_knowledge().await {
-        tracing::warn!("seeding starter guidance/recipes failed: {e}");
-    }
 
-    // A platform-owned system project + gateway key so the dashboard's cost Q&A
-    // works without a human pasting a key. Spend is attributed and governed like
-    // any other project's calls.
+    // A platform-owned system project + gateway key so the dashboard's cost Q&A and
+    // the built-in review judge work without a human pasting a key. Spend is
+    // attributed and governed like any other project's calls.
     let _ = core
         .gateway_repo
         .ensure_project("proj-asgard-system", 0.0, "internal")
@@ -620,6 +663,62 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         .await
         .ok()
         .map(|k| k.plaintext);
+
+    let review_enabled = has_real_llm || review_allow_mock();
+    let mut registry = ProjectRegistry::new(
+        core.db.clone(),
+        core.gateway_repo.clone(),
+        core.catalog.clone(),
+        build_allowlist(&config),
+        build_registration_policy(&config),
+    )
+    .with_requirements(build_requirements(&config))
+    .with_review_config(build_review_config(&config))
+    .with_governance_config(build_governance_config(&config));
+
+    // The machine-review panel: built-in `llm-judge` (in-process, system-key) plus
+    // external `webhook` delegation, dispatched by manifest `kind`. Attached only
+    // when a real LLM is reachable; otherwise promotion stays a pure presence check.
+    if review_enabled {
+        let reviewer_catalog = ReviewerCatalog::load(config.reviewers_dir().as_deref())
+            .unwrap_or_else(|e| {
+                tracing::warn!("reviewer catalog load failed: {e}; using embedded defaults");
+                ReviewerCatalog::embedded().unwrap_or_default()
+            });
+        let mut reviewer_registry = ReviewerRegistry::new();
+        reviewer_registry.register(
+            "llm-judge",
+            Arc::new(LlmJudge::new(gateway.clone(), system_cost_key.clone())),
+        );
+        reviewer_registry.register("webhook", Arc::new(WebhookReviewer::new()));
+        // The deep async reviewer: reads the repo over Asgard's git token and judges
+        // it against the org standards, depth per target tier. Runs in the worker.
+        reviewer_registry.register(
+            "code-review",
+            Arc::new(CodeReview::new(
+                gateway.clone(),
+                system_cost_key.clone(),
+                Arc::new(RegistryStandards::new(core.db.clone())),
+                build_review_depth(&config),
+            )),
+        );
+        let review_service = Arc::new(ReviewService::new(
+            reviewer_catalog,
+            reviewer_registry,
+            cost_qa_model.clone(),
+        ));
+        registry = registry.with_reviewer_panel(review_service);
+        tracing::info!("review gate enabled (model: {cost_qa_model})");
+    } else {
+        tracing::info!(
+            "review gate DISABLED: no LLM access — set an OpenAI/Anthropic key or enable an \
+             LLM gateway module (LiteLLM/etc.) to turn it on; promotion uses the presence check"
+        );
+    }
+    maybe_seed_admin(&core.identity).await;
+    if let Err(e) = registry.seed_knowledge().await {
+        tracing::warn!("seeding starter guidance/recipes failed: {e}");
+    }
 
     let oidc = build_oidc();
     let state = AppState::new(
@@ -758,6 +857,26 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
                         Err(e) => tracing::warn!("review sweep failed: {e}"),
                     }
                     let _ = lease.release("loop:review").await;
+                }
+            }
+        });
+    }
+
+    // Async code-review worker: drain the `review_jobs` queue — reclaim crashed
+    // leases, run each pending promotion's reviewer panel, and finalize (approve /
+    // request / flag, or fail closed). Crash-safe (state in the DB); runs even when
+    // review is disabled so any leftover `Reviewing` promotion still drains.
+    {
+        let reg = state.registry.clone();
+        let wf = state.workflow.clone();
+        let secs = config.review.worker_secs.unwrap_or(15).max(1);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                match reg.drain_reviews(&wf).await {
+                    Ok(n) if n > 0 => tracing::info!("review worker: finalized {n} promotion(s)"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("review worker pass failed: {e}"),
                 }
             }
         });
@@ -906,6 +1025,32 @@ fn build_registration_policy(config: &Config) -> RegistrationPolicy {
 
 fn build_requirements(config: &Config) -> ClassificationRequirements {
     ClassificationRequirements::from_overrides(config.classification_requirements.clone())
+}
+
+/// Resolve operator `review_depth` overrides over the shipped per-tier defaults:
+/// any tier present replaces that tier's depth; absent tiers keep the default.
+fn build_review_depth(config: &Config) -> ReviewDepthMap {
+    let mut map = ReviewDepthMap::default();
+    for (tier, cfg) in &config.review_depth {
+        map = map.with_override(
+            tier,
+            ReviewDepth {
+                skip: cfg.skip,
+                standard_ids: cfg.standards.clone(),
+                max_rounds: cfg.max_rounds,
+            },
+        );
+    }
+    map
+}
+
+/// Dev/test escape hatch: run the review gate against the mock model when no real
+/// LLM is wired. Off by default — production review needs real LLM access.
+fn review_allow_mock() -> bool {
+    matches!(
+        std::env::var("ASGARD_REVIEW_ALLOW_MOCK").as_deref(),
+        Ok("1") | Ok("true")
+    )
 }
 
 fn build_review_config(config: &Config) -> ReviewConfig {
@@ -1296,12 +1441,20 @@ fn build_inference(
 
     for m in catalog.list() {
         let Some(inf) = &m.inference else { continue };
-        let key = std::env::var(&inf.api_key_env).ok();
-        let base = inf.base_url.clone().or_else(|| {
-            inf.base_url_env
-                .as_ref()
-                .and_then(|e| std::env::var(e).ok())
-        });
+        // An empty env var is "not configured", not "configured blank" — a stray
+        // `OPENAI_MASTER_KEY=` must not silently activate a provider.
+        let key = std::env::var(&inf.api_key_env)
+            .ok()
+            .filter(|k| !k.trim().is_empty());
+        let base = inf
+            .base_url
+            .clone()
+            .or_else(|| {
+                inf.base_url_env
+                    .as_ref()
+                    .and_then(|e| std::env::var(e).ok())
+            })
+            .filter(|b| !b.trim().is_empty());
         let active = match inf.kind.as_str() {
             "openai" | "anthropic" => key.is_some(),
             // openai-compatible covers LiteLLM, vLLM, Databricks Model Serving, … —

@@ -60,7 +60,18 @@ ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite:///tmp/asgard.db" \
   provider → spend + usage + audit. Providers: Mock (default, offline) +
   OpenAI/Anthropic (live when their `*_MASTER_KEY` env is set).
 - **registry** — project registration (the gate), `proj-YYYY-NNNN` minting,
-  cost rollups over `usage_events` (dims denormalized per row).
+  cost rollups over `usage_events` (dims denormalized per row). Also the
+  **promotion gate**: pure `promotion::evaluate` → `request_promotion` →
+  `finalize_promotion` routing, and the async **`review_jobs`** queue
+  (`review_jobs.rs` + `drain_reviews`/`run_review_job`) the code reviewer runs in.
+- **reviewer** — the machine-review panel feeding the promotion gate
+  **escalate-only** (may add exception signals → `flagged`/human; never relaxes a
+  gate). Manifest+`kind` dispatch like provision: `llm-judge` (inline, judges the
+  evidence record) + `webhook` (external) + **`code-review`** (async — reads the
+  repo over the GH/GL API via `repo.rs`, *no clone*, judges it against the
+  standards store per tier, `run_tool_loop`). The whole panel is **off unless a
+  real LLM is reachable** (`ASGARD_REVIEW_ALLOW_MOCK=1` forces a deterministic mock
+  for dev/e2e). See `docs/docs/review-gate.md`.
 - **provision** — manifest service catalog (`manifest.rs`) + connectors
   (`connectors/terraform.rs` is the universal path) + cost rollup/dashboard
   (`cost/`). Cost dims are denormalized onto `cost_rollup` rows.
