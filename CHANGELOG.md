@@ -1,3 +1,10 @@
+# [0.9.0](https://github.com/glemmestad/asgard/compare/v0.8.4...v0.9.0) (2026-06-05)
+
+
+### Features
+
+* **provision:** optional SSO connections + dedicated audience for auth0-application ([#25](https://github.com/glemmestad/asgard/issues/25)) ([4c5ad19](https://github.com/glemmestad/asgard/commit/4c5ad1920facd934974ab5baa64e98b3cae6a392))
+
 ## [0.8.4](https://github.com/glemmestad/asgard/compare/v0.8.3...v0.8.4) (2026-06-05)
 
 
