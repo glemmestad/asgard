@@ -4,7 +4,9 @@ const config = {
   title: 'Asgard',
   tagline: 'Open-source control plane for AI & agent development',
   url: 'https://asgard.dev',
-  baseUrl: '/',
+  // Served by the Asgard binary under /docs (embedded via rust-embed), so every
+  // asset and route is prefixed accordingly.
+  baseUrl: '/docs/',
   onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
   i18n: { defaultLocale: 'en', locales: ['en'] },
@@ -27,6 +29,7 @@ const config = {
       title: 'Asgard',
       items: [
         { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
+        { href: '/', label: '← App', position: 'right' },
       ],
     },
     footer: {

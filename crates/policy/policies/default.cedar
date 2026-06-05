@@ -37,6 +37,19 @@ when { !(context has data_class) || context.data_class != "restricted" };
 permit (principal, action == Action::"deploy", resource)
 when { context has provision_tier && context.provision_tier == "review" };
 
+// Access grants ride the "deploy" action: granting a consumer access to a target
+// in your OWN project auto-approves for non-restricted data (and inherits the
+// restricted-data security approval above). Your own resources are self-service —
+// authority over both resources is enforced before the request is filed, and
+// cross-project sharing is out of scope. The access level rides as context.level
+// (present only on grants). To gate grants specifically (enterprise tightening),
+// uncomment and adapt — the annotated permit adds an approval obligation on top of
+// the auto-permit, so it composes without editing the rules above:
+//
+// @approval("group:default/platform")
+// permit (principal, action == Action::"deploy", resource)
+// when { context has level && context.level != "read" };
+
 // Classification promotion (WS2). Rust computes the evidence facts
 // (target_classification / evidence_complete / has_exception / risk_accepted)
 // and carries them on the request context; routing lives here so an operator
@@ -85,6 +98,12 @@ when {
 // (platform review).
 @approval("group:default/platform")
 permit (principal, action == Action::"extend", resource);
+
+// A budget increase above the classification's self-service ceiling is a human
+// decision (platform review). The registry files this request only when the
+// requested amount exceeds the ceiling, so it always routes to a human.
+@approval("group:default/platform")
+permit (principal, action == Action::"set_budget", resource);
 
 // Reads are always allowed.
 permit (principal, action == Action::"read", resource);

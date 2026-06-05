@@ -123,6 +123,7 @@ pub struct RequestFilter {
     pub limit: Option<i64>,
 }
 
+#[derive(Clone)]
 pub struct WorkflowEngine {
     db: Db,
     policy: Arc<dyn PolicyEngine>,
@@ -139,6 +140,7 @@ impl WorkflowEngine {
             "access" | "invoke" => "invoke",
             "promotion" => "promote",
             "review-extension" => "extend",
+            "budget" => "set_budget",
             _ => "deploy",
         }
     }
@@ -278,6 +280,14 @@ impl WorkflowEngine {
     }
 
     pub async fn fulfill(&self, id: &str, actor: &str) -> Result<WorkflowRequest, WorkflowError> {
+        // Idempotent: the async provisioning worker and the reconciler can both
+        // drive the same request to completion, so a second fulfill is a no-op
+        // rather than an InvalidTransition (Fulfilled has no outgoing edge).
+        if let Some(req) = self.get(id).await? {
+            if req.state == State::Fulfilled {
+                return Ok(req);
+            }
+        }
         self.transition(id, State::Fulfilled, None, None, actor)
             .await
     }

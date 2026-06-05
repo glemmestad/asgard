@@ -23,6 +23,9 @@ pub struct ProvisionedRecord {
     pub request_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// Failure detail for a `failed` / `destroy_failed` row; empty otherwise.
+    #[serde(default)]
+    pub error: String,
 }
 
 #[derive(Clone)]
@@ -42,8 +45,8 @@ impl ProvisionRepo {
     pub async fn record(&self, rec: &ProvisionedRecord) -> Result<(), ProvisionError> {
         sqlx::query(&self.db.q("INSERT INTO provisioned_resources \
              (id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
-              backend, dry_run, request_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+              backend, dry_run, request_id, created_at, updated_at, error) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"))
         .bind(&rec.id)
         .bind(&rec.project_id)
         .bind(&rec.rtype)
@@ -58,6 +61,7 @@ impl ProvisionRepo {
         .bind(&rec.request_id)
         .bind(&rec.created_at)
         .bind(&rec.updated_at)
+        .bind(&rec.error)
         .execute(self.db.pool())
         .await?;
         Ok(())
@@ -69,7 +73,7 @@ impl ProvisionRepo {
     ) -> Result<Vec<ProvisionedRecord>, ProvisionError> {
         let rows = sqlx::query(&self.db.q(
             "SELECT id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
-             backend, dry_run, request_id, created_at, updated_at \
+             backend, dry_run, request_id, created_at, updated_at, error \
              FROM provisioned_resources WHERE project_id = ? ORDER BY created_at DESC",
         ))
         .bind(project_id)
@@ -87,7 +91,7 @@ impl ProvisionRepo {
     ) -> Result<Option<ProvisionedRecord>, ProvisionError> {
         let row = sqlx::query(&self.db.q(
             "SELECT id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
-             backend, dry_run, request_id, created_at, updated_at \
+             backend, dry_run, request_id, created_at, updated_at, error \
              FROM provisioned_resources WHERE request_id = ? ORDER BY created_at LIMIT 1",
         ))
         .bind(request_id)
@@ -99,7 +103,7 @@ impl ProvisionRepo {
     pub async fn get(&self, id: &str) -> Result<Option<ProvisionedRecord>, ProvisionError> {
         let row = sqlx::query(&self.db.q(
             "SELECT id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
-             backend, dry_run, request_id, created_at, updated_at \
+             backend, dry_run, request_id, created_at, updated_at, error \
              FROM provisioned_resources WHERE id = ?",
         ))
         .bind(id)
@@ -144,6 +148,137 @@ impl ProvisionRepo {
         Ok(total.unwrap_or(0.0))
     }
 
+    /// Like [`infra_total_for_project`](Self::infra_total_for_project) but counts
+    /// in-flight (`provisioning`) rows as committed too, so concurrent async
+    /// requests can't both clear the headroom check before either row flips to
+    /// `provisioned`. Admission-only — billing/rollup still counts `provisioned`.
+    pub async fn infra_committed_for_project(
+        &self,
+        project_id: &str,
+    ) -> Result<f64, ProvisionError> {
+        let total: Option<f64> = sqlx::query_scalar(
+            &self
+                .db
+                .q("SELECT SUM(est_monthly_usd) FROM provisioned_resources \
+             WHERE project_id = ? AND state IN ('provisioning', 'provisioned')"),
+        )
+        .bind(project_id)
+        .fetch_one(self.db.pool())
+        .await?;
+        Ok(total.unwrap_or(0.0))
+    }
+
+    /// The active record for a name, if any — `provisioning` (in-flight) or
+    /// `provisioned` (live). Used to make a repeat request idempotent (return the
+    /// existing record) without blocking recreate after `failed`/`destroyed`.
+    pub async fn get_active_by_name(
+        &self,
+        project_id: &str,
+        rtype: &str,
+        name: &str,
+    ) -> Result<Option<ProvisionedRecord>, ProvisionError> {
+        let row = sqlx::query(&self.db.q(
+            "SELECT id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
+             backend, dry_run, request_id, created_at, updated_at, error \
+             FROM provisioned_resources \
+             WHERE project_id = ? AND rtype = ? AND name = ? \
+             AND state IN ('provisioning', 'provisioned') ORDER BY created_at DESC LIMIT 1",
+        ))
+        .bind(project_id)
+        .bind(rtype)
+        .bind(name)
+        .fetch_optional(self.db.pool())
+        .await?;
+        Ok(row.map(row_to_record))
+    }
+
+    /// Work-state rows that no live worker is driving: state `provisioning` or
+    /// `destroying`, and either unclaimed (`worker_owner IS NULL`) or whose claim
+    /// heartbeat (`updated_at`) is older than `stale`. The reconciler re-drives
+    /// these — the orphan/crash recovery path.
+    pub async fn list_reclaimable(
+        &self,
+        stale: &str,
+        limit: i64,
+    ) -> Result<Vec<ProvisionedRecord>, ProvisionError> {
+        let sql = format!(
+            "SELECT id, project_id, rtype, name, spec, outputs, tags, est_monthly_usd, state, \
+             backend, dry_run, request_id, created_at, updated_at, error \
+             FROM provisioned_resources \
+             WHERE state IN ('provisioning', 'destroying') \
+             AND (worker_owner IS NULL OR updated_at < ?) \
+             ORDER BY created_at LIMIT {limit}"
+        );
+        let rows = sqlx::query(&self.db.q(&sql))
+            .bind(stale)
+            .fetch_all(self.db.pool())
+            .await?;
+        Ok(rows.into_iter().map(row_to_record).collect())
+    }
+
+    /// Claim a work-state row for this worker (CAS): succeeds only if the row is
+    /// still in `expect_state` and is unclaimed or its heartbeat is stale. Returns
+    /// `true` if this caller won the claim. This is the dedup guard — only one
+    /// worker (eager spawn or reconciler, across replicas) proceeds to apply.
+    pub async fn claim(
+        &self,
+        id: &str,
+        expect_state: &str,
+        owner: &str,
+        stale: &str,
+    ) -> Result<bool, ProvisionError> {
+        let res = sqlx::query(&self.db.q(
+            "UPDATE provisioned_resources SET worker_owner = ?, updated_at = ? \
+             WHERE id = ? AND state = ? AND (worker_owner IS NULL OR updated_at < ?)",
+        ))
+        .bind(owner)
+        .bind(asgard_storage::now())
+        .bind(id)
+        .bind(expect_state)
+        .bind(stale)
+        .execute(self.db.pool())
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
+    /// Refresh the claim heartbeat while a long apply/destroy runs, so the
+    /// reconciler's stale check doesn't reclaim work that's still in progress.
+    pub async fn heartbeat(&self, id: &str, owner: &str) -> Result<(), ProvisionError> {
+        sqlx::query(&self.db.q(
+            "UPDATE provisioned_resources SET updated_at = ? WHERE id = ? AND worker_owner = ?",
+        ))
+        .bind(asgard_storage::now())
+        .bind(id)
+        .bind(owner)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Terminal transition: set the final `state` (`provisioned`/`failed`/
+    /// `destroyed`/`destroy_failed`), persist `outputs` + `error`, and release the
+    /// claim (`worker_owner = NULL`).
+    pub async fn finish(
+        &self,
+        id: &str,
+        state: &str,
+        outputs: &serde_json::Value,
+        error: &str,
+    ) -> Result<(), ProvisionError> {
+        sqlx::query(&self.db.q(
+            "UPDATE provisioned_resources SET state = ?, outputs = ?, error = ?, \
+             worker_owner = NULL, updated_at = ? WHERE id = ?",
+        ))
+        .bind(state)
+        .bind(outputs.to_string())
+        .bind(error)
+        .bind(asgard_storage::now())
+        .bind(id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     /// Recurring infra cost estimate per project (provisioned resources only).
     pub async fn infra_cost_by_project(&self) -> Result<Vec<(String, f64)>, ProvisionError> {
         let rows = sqlx::query(
@@ -183,5 +318,6 @@ fn row_to_record(r: sqlx::any::AnyRow) -> ProvisionedRecord {
         request_id: r.get("request_id"),
         created_at: r.get("created_at"),
         updated_at: r.get("updated_at"),
+        error: r.get("error"),
     }
 }

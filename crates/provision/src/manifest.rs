@@ -75,6 +75,39 @@ pub struct ServiceManifest {
     /// human review — without a rules DSL.
     #[serde(default)]
     pub variants: Option<Variants>,
+    /// Target side of an access grant: the access this resource can hand out, as
+    /// `level → provider-native actions` (e.g. `read: [s3:GetObject, …]`). Only the
+    /// resource knows its own verbs.
+    #[serde(default)]
+    pub access_levels: BTreeMap<String, Vec<String>>,
+    /// Target side: how a grant against this resource is implemented. The mechanism
+    /// is owned by the target service, so a new kind of target (EKS/IRSA, Athena/Lake
+    /// Formation, …) ships its own module with no core change.
+    #[serde(default)]
+    pub grant: Option<GrantCfg>,
+    /// Consumer side: the output key holding the identity a grant attaches access to
+    /// (e.g. `task_role_arn`). Present on resources that can be granted access.
+    #[serde(default)]
+    pub principal_output: Option<String>,
+    /// Consumer side: the kind of principal this resource provides (e.g. `iam-role`).
+    /// Must match the target's `grant.principal_kind`.
+    #[serde(default)]
+    pub principal_kind: Option<String>,
+    /// Latency hint only: when true, a provision request returns its `provisioning`
+    /// record immediately instead of waiting the inline budget for completion (the
+    /// apply runs in the background either way). Set on slow services (RDS, ALB,
+    /// ECS). Never a correctness lever — the durability is the same regardless.
+    #[serde(default)]
+    pub long_running: bool,
+}
+
+/// How a grant against a target resource is bound. `module` is the connector
+/// payload (for terraform, the TF module path); `principal_kind` is the identity
+/// shape this mechanism accepts (e.g. `iam-role`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantCfg {
+    pub module: String,
+    pub principal_kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -451,18 +484,20 @@ mod tests {
             inf.chat_path.as_deref(),
             Some("/serving-endpoints/{model}/invocations")
         );
-        // Cost-bearing Databricks compute gates to human review; UC volume is self-service.
-        assert!(!cat.get("databricks-sql-warehouse").unwrap().auto_approvable);
-        assert!(!cat.get("databricks-model-serving").unwrap().auto_approvable);
+        // Cost-bearing services are self-service by default; the classification
+        // floor + budget caps gate them, not a blanket review. Only credential-
+        // minting (litellm-key) keeps a hard human gate.
+        assert!(cat.get("databricks-sql-warehouse").unwrap().auto_approvable);
+        assert!(cat.get("databricks-model-serving").unwrap().auto_approvable);
         assert!(cat.get("databricks-uc-volume").unwrap().auto_approvable);
         let s3 = cat.get("s3-bucket").unwrap();
         assert_eq!(s3.connector(), "terraform");
         assert_eq!(s3.cost.estimated_monthly_usd, 5.0);
         assert!(s3.auto_approvable);
-        assert!(!cat.get("rds-postgres").unwrap().auto_approvable);
-        // Cost-bearing, IAM-shaping primitives must gate to human review.
-        assert!(!cat.get("ecs-service").unwrap().auto_approvable);
-        assert!(!cat.get("alb").unwrap().auto_approvable);
+        assert!(cat.get("rds-postgres").unwrap().auto_approvable);
+        // Cost-bearing primitives are self-service; budget + classification gate them.
+        assert!(cat.get("ecs-service").unwrap().auto_approvable);
+        assert!(cat.get("alb").unwrap().auto_approvable);
         let ecs = cat.get("ecs-service").unwrap();
         assert_eq!(ecs.connector(), "terraform");
         assert!(ecs.required_fields.contains(&"vpc_id".to_string()));
@@ -475,27 +510,30 @@ mod tests {
     // and 500s every provision.
     #[test]
     fn terraform_module_paths_are_relative_to_modules_dir() {
-        let cat = ServiceCatalog::embedded().unwrap();
-        for m in cat.list() {
-            if m.connector() != "terraform" {
-                continue;
-            }
-            let module = m.connector_config();
-            let module = module
-                .get("module")
-                .and_then(|v| v.as_str())
-                .unwrap_or_else(|| panic!("terraform service '{}' has no config.module", m.id));
+        fn assert_relative(id: &str, module: &str) {
             assert!(
                 !module.starts_with('/'),
-                "service '{}': module '{module}' must be relative to modules_dir, not absolute",
-                m.id
+                "service '{id}': module '{module}' must be relative to modules_dir, not absolute"
             );
             assert!(
                 !module.starts_with("modules/") && !module.starts_with("./modules/"),
-                "service '{}': module '{module}' must not carry a repo-root 'modules/' prefix — \
-                 it resolves against modules_dir (the modules-tree root)",
-                m.id
+                "service '{id}': module '{module}' must not carry a repo-root 'modules/' prefix — \
+                 it resolves against modules_dir (the modules-tree root)"
             );
+        }
+        let cat = ServiceCatalog::embedded().unwrap();
+        for m in cat.list() {
+            // A terraform service may omit config.module when the module is supplied
+            // per-request (e.g. access-grant uses the target's grant.module).
+            if m.connector() == "terraform" {
+                if let Some(module) = m.connector_config().get("module").and_then(|v| v.as_str()) {
+                    assert_relative(&m.id, module);
+                }
+            }
+            // Per-target grant modules resolve the same way and need the same shape.
+            if let Some(g) = &m.grant {
+                assert_relative(&m.id, &g.module);
+            }
         }
     }
 

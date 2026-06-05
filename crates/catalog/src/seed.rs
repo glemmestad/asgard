@@ -97,6 +97,17 @@ pub const SEED: &[SeedModule] = &[
         body: include_str!("../../../seed/AGENTS.md"),
     },
     SeedModule {
+        id: "gitignore",
+        title: ".gitignore — keep secrets out of git",
+        kind: SeedKind::Core,
+        path: ".gitignore",
+        tier: SeedTier::Minimal,
+        languages: &[],
+        keywords: &[],
+        summary: "Excludes .env and credentials (control-plane resources mint secrets locally), plus build output and editor noise. Write this first.",
+        body: include_str!("../../../seed/.gitignore"),
+    },
+    SeedModule {
         id: "workflow",
         title: "Workflow",
         kind: SeedKind::Core,
@@ -558,6 +569,24 @@ mod tests {
     fn js_alias_selects_typescript_addon() {
         let p = plan(&["js".into()], "node service", SeedTier::Minimal);
         assert!(p.iter().any(|m| m.id == "lang-typescript"));
+    }
+
+    #[test]
+    fn bare_bootstrap_inlines_the_agents_entry_point() {
+        // The no-args `bootstrap` call (no languages, no task) must still return the
+        // AGENTS.md entry point with its real inlined body — that's the whole
+        // "set up a repo in one call". A regression guard against it handing back an
+        // empty/stub plan that "talks about the seed" without pulling files over.
+        let p = plan(&[], "", SeedTier::Standard);
+        let agents = p
+            .iter()
+            .find(|m| m.id == "agents")
+            .expect("AGENTS.md (id 'agents') must be in the bare plan");
+        assert_eq!(agents.path, "AGENTS.md");
+        assert!(
+            agents.body.len() > 500 && agents.body.contains("register_project"),
+            "AGENTS.md body must be the real inlined doc, not a stub"
+        );
     }
 
     #[test]

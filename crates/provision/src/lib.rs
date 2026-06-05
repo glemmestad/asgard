@@ -27,6 +27,7 @@ mod tfstate;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde::Serialize;
@@ -34,7 +35,9 @@ use serde::Serialize;
 use asgard_registry::{ProjectRegistry, Registration, RegistryError};
 use asgard_storage::audit::{self, AuditRecord};
 use asgard_storage::Db;
-use asgard_workflow::{NewRequest, State, WorkflowEngine, WorkflowError, WorkflowRequest};
+use asgard_workflow::{
+    NewRequest, RequestFilter, State, WorkflowEngine, WorkflowError, WorkflowRequest,
+};
 
 pub use connectors::{ExecConnector, LiteLlmConnector, TerraformConnector};
 pub use cost::{
@@ -67,6 +70,8 @@ pub enum ProvisionError {
     RefNotFound(String),
     #[error("backend error: {0}")]
     Backend(String),
+    #[error("state conflict: {0}")]
+    Conflict(String),
     #[error("not permitted: {0}")]
     NotPermitted(String),
     #[error("request not found: {0}")]
@@ -89,24 +94,37 @@ pub struct CloudTarget {
     pub account: String,
 }
 
-/// When a resource request may skip human approval. All conditions must hold:
-/// the project's classification is in `classifications` (POC by default), the
-/// resource's estimated monthly cost is within `max_resource_monthly_usd`, and
-/// the project's total committed spend stays within `max_project_monthly_usd`.
+/// When a resource request may skip human approval: the self-service envelope is
+/// a per-classification monthly ceiling. A request auto-approves when its
+/// manifest opts in, the variant doesn't force review, and the project's total
+/// committed infra spend (existing + this request) stays within the ceiling for
+/// its classification. A classification with no configured ceiling never
+/// auto-approves — every request at that tier routes to a human. Higher trust
+/// tiers get larger envelopes; the project's own `budget_usd` is deliberately
+/// not part of this — self-service authority is org policy, not self-set.
 #[derive(Debug, Clone)]
 pub struct AutoApprovePolicy {
-    pub classifications: Vec<String>,
-    pub max_resource_monthly_usd: f64,
-    pub max_project_monthly_usd: f64,
+    pub ceilings: BTreeMap<String, f64>,
 }
 
 impl Default for AutoApprovePolicy {
     fn default() -> Self {
         AutoApprovePolicy {
-            classifications: vec!["poc".to_string()],
-            max_resource_monthly_usd: 50.0,
-            max_project_monthly_usd: 500.0,
+            ceilings: BTreeMap::from([
+                ("poc".to_string(), 500.0),
+                ("light-operational".to_string(), 2500.0),
+                ("wide-operational".to_string(), 10_000.0),
+                ("critical-path".to_string(), 25_000.0),
+            ]),
         }
+    }
+}
+
+impl AutoApprovePolicy {
+    /// The self-service ceiling for a classification, or `None` if that tier
+    /// never auto-approves.
+    pub fn ceiling(&self, classification: &str) -> Option<f64> {
+        self.ceilings.get(classification).copied()
     }
 }
 
@@ -345,7 +363,24 @@ pub struct ProvisionService {
     repo: ProvisionRepo,
     forecast_window_days: i64,
     anomaly_z: f64,
+    /// Handle the background worker uses to mark a request Fulfilled once its
+    /// apply lands. `None` in bare unit tests (no async dispatch) — provisioning
+    /// then runs inline and the workflow is left to the caller.
+    workflow: Option<Arc<WorkflowEngine>>,
+    /// This process's id, used as the row-lease `worker_owner` so a claim is
+    /// attributable and a crashed claim is reclaimable.
+    instance_id: String,
+    /// How long a request waits inline for its apply before returning the
+    /// `provisioning` record for the caller to poll (0 for `long_running`).
+    wait_budget: Duration,
 }
+
+/// A work-state row is reclaimable once its claim heartbeat is older than this.
+/// Comfortably above the connector's 600s lease TTL and the 60s heartbeat, so a
+/// live apply is never reclaimed mid-flight; a crashed one recovers ~15 min on.
+const STALE_SECS: i64 = 900;
+/// Claim heartbeat cadence while a long apply/destroy runs.
+const HEARTBEAT_SECS: u64 = 60;
 
 /// What one `roll_up_costs` pass touched, for logging and the e2e proof.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -383,7 +418,23 @@ impl ProvisionService {
             repo,
             forecast_window_days: 60,
             anomaly_z: 3.0,
+            workflow: None,
+            instance_id: asgard_storage::new_uid(),
+            wait_budget: Duration::from_secs(5),
         }
+    }
+
+    /// Give the service the workflow handle its background apply worker needs to
+    /// transition a request to Fulfilled. Set in `build_provision` (and in tests
+    /// that exercise the async path).
+    pub fn set_workflow(&mut self, workflow: Arc<WorkflowEngine>) {
+        self.workflow = Some(workflow);
+    }
+
+    /// Inline wait budget (seconds) a fast request blocks for completion before
+    /// returning its `provisioning` record to poll. 0 disables the wait.
+    pub fn set_wait_budget_secs(&mut self, secs: u64) {
+        self.wait_budget = Duration::from_secs(secs);
     }
 
     /// Register a connector under its name (`terraform`, `exec`, …).
@@ -422,6 +473,13 @@ impl ProvisionService {
 
     pub fn set_auto_approve(&mut self, auto: AutoApprovePolicy) {
         self.auto = auto;
+    }
+
+    /// The self-service monthly ceiling for a classification (`None` if that tier
+    /// never auto-approves). Callers use it to apply the budget rule and to
+    /// default a new project's budget to half the ceiling.
+    pub fn auto_approve_ceiling(&self, classification: &str) -> Option<f64> {
+        self.auto.ceiling(classification)
     }
 
     pub fn connectors(&self) -> Vec<String> {
@@ -847,6 +905,31 @@ impl ProvisionService {
         spec: serde_json::Value,
         requester: &str,
     ) -> Result<RequestOutcome, ProvisionError> {
+        self.request_inner(
+            workflow,
+            registry,
+            project_id,
+            resource_type,
+            name,
+            spec,
+            requester,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn request_inner(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+        project_id: &str,
+        resource_type: &str,
+        name: &str,
+        spec: serde_json::Value,
+        requester: &str,
+        config_override: Option<serde_json::Value>,
+    ) -> Result<RequestOutcome, ProvisionError> {
         let reg = registry.require_active(project_id).await?;
         let manifest = self
             .catalog
@@ -859,25 +942,37 @@ impl ProvisionService {
             ));
         }
 
-        let cloud = spec
-            .get("cloud")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&self.default_cloud)
-            .to_string();
+        // Allowlist gate: unchanged — the target is the spec's cloud/account or the
+        // global default, so which targets an operator has armed still governs.
         let account = spec
             .get("account")
             .and_then(|v| v.as_str())
             .unwrap_or(&self.default_account)
             .to_string();
+        let gate_cloud = spec
+            .get("cloud")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.default_cloud)
+            .to_string();
         let target = CloudTarget {
-            cloud: cloud.clone(),
+            cloud: gate_cloud.clone(),
             account: account.clone(),
         };
         if !self.allowed.contains(&target) {
             return Err(ProvisionError::NotPermitted(format!(
-                "target {cloud}/{account} is not an allowed provisioning target"
+                "target {gate_cloud}/{account} is not an allowed provisioning target"
             )));
         }
+        // Recorded cloud (attribution/tags only — not the gate): the resource's own
+        // manifest cloud, so an AWS bucket isn't mislabeled with the default cloud
+        // (e.g. an auth0-first allowlist tagging it `auth0`).
+        let cfg = manifest.connector_config();
+        let cloud = spec
+            .get("cloud")
+            .and_then(|v| v.as_str())
+            .or_else(|| cfg.get("cloud").and_then(|v| v.as_str()))
+            .unwrap_or(&self.default_cloud)
+            .to_string();
 
         // Resolve the variant (cost/tier/approval keyed to the spec) and enforce
         // the service's tier availability — a hard gate, not a review.
@@ -890,20 +985,16 @@ impl ProvisionService {
         // review, the project is at an auto-approvable classification, and both the
         // per-resource and project-total cost limits hold (variant cost).
         let est = resolved.estimated_monthly_usd;
-        let infra_so_far = self.repo.infra_total_for_project(project_id).await?;
-        let class_ok = self
+        // Count in-flight (`provisioning`) spend too, so two concurrent async
+        // requests can't both clear the ceiling before either row flips to
+        // `provisioned`.
+        let infra_so_far = self.repo.infra_committed_for_project(project_id).await?;
+        let committed = reg.spent_usd + infra_so_far + est;
+        let within_ceiling = self
             .auto
-            .classifications
-            .iter()
-            .any(|c| c == &reg.classification);
-        let within_resource = est <= self.auto.max_resource_monthly_usd;
-        let within_project =
-            (reg.spent_usd + infra_so_far + est) <= self.auto.max_project_monthly_usd;
-        let auto_ok = manifest.auto_approvable
-            && !resolved.force_review
-            && class_ok
-            && within_resource
-            && within_project;
+            .ceiling(&reg.classification)
+            .is_some_and(|ceiling| committed <= ceiling);
+        let auto_ok = manifest.auto_approvable && !resolved.force_review && within_ceiling;
         let tier_str = if auto_ok { "self_service" } else { "review" };
         let sla_seconds = if auto_ok { None } else { Some(7 * 24 * 3600) };
 
@@ -911,7 +1002,7 @@ impl ProvisionService {
         // (strings/ints/bools only — no floats, no arbitrary nested records). The
         // raw spec is carried as a JSON string and the cost estimate is derived
         // from the manifest at provision time rather than passed through here.
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "project_id": project_id,
             "resource_type": resource_type,
             "name": name,
@@ -921,6 +1012,19 @@ impl ProvisionService {
             "cloud": cloud,
             "account": account,
         });
+        // A per-request connector-module override (the target's grant mechanism)
+        // rides as a Cedar-safe string. `level` is surfaced to the policy context so
+        // an operator can gate grants by access level without a code change.
+        if let Some(m) = config_override
+            .as_ref()
+            .and_then(|c| c.get("module"))
+            .and_then(|v| v.as_str())
+        {
+            payload["config_module"] = serde_json::json!(m);
+        }
+        if let Some(level) = spec.get("level").and_then(|v| v.as_str()) {
+            payload["level"] = serde_json::json!(level);
+        }
         let req = workflow
             .submit(NewRequest {
                 kind: format!("provision:{resource_type}"),
@@ -932,12 +1036,8 @@ impl ProvisionService {
             .await?;
 
         if req.state == State::Approved {
-            let (request, record) = self.do_provision(workflow, &reg, req, requester).await?;
-            Ok(RequestOutcome {
-                request,
-                provisioned: Some(record),
-                pending_approval: false,
-            })
+            let budget = self.budget_for(Some(manifest));
+            self.enqueue_and_wait(workflow, &reg, req, budget).await
         } else {
             let pending = req.state == State::Requested;
             Ok(RequestOutcome {
@@ -948,6 +1048,129 @@ impl ProvisionService {
         }
     }
 
+    /// Grant a consumer resource access to a target resource at `level`. Resolves
+    /// the consumer's principal identity and the target's ARN + action set from
+    /// their records and manifests, then flows the binding through the normal
+    /// request/approve/fulfill lifecycle using the *target's* grant mechanism
+    /// (`grant.module`). Same-project only — both resources must belong to
+    /// `project_id` (the caller's authority over it is enforced upstream).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn request_grant(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+        project_id: &str,
+        consumer_resource_id: &str,
+        target_resource_id: &str,
+        level: &str,
+        requester: &str,
+    ) -> Result<RequestOutcome, ProvisionError> {
+        let consumer = self
+            .repo
+            .get(consumer_resource_id)
+            .await?
+            .ok_or_else(|| ProvisionError::NotFound(consumer_resource_id.to_string()))?;
+        let target = self
+            .repo
+            .get(target_resource_id)
+            .await?
+            .ok_or_else(|| ProvisionError::NotFound(target_resource_id.to_string()))?;
+
+        if consumer.project_id != project_id || target.project_id != project_id {
+            return Err(ProvisionError::NotPermitted(
+                "consumer and target must belong to the same project".into(),
+            ));
+        }
+        if consumer.state != "provisioned" || target.state != "provisioned" {
+            return Err(ProvisionError::InvalidSpec(
+                "both resources must be provisioned before granting access".into(),
+            ));
+        }
+
+        let cm = self
+            .catalog
+            .get(&consumer.rtype)
+            .ok_or_else(|| ProvisionError::Unsupported(consumer.rtype.clone()))?;
+        let tm = self
+            .catalog
+            .get(&target.rtype)
+            .ok_or_else(|| ProvisionError::Unsupported(target.rtype.clone()))?;
+
+        let grant = tm.grant.as_ref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!("'{}' is not a grantable target", target.rtype))
+        })?;
+        let principal_kind = cm.principal_kind.as_deref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' cannot be granted access (declares no principal)",
+                consumer.rtype
+            ))
+        })?;
+        if principal_kind != grant.principal_kind {
+            return Err(ProvisionError::InvalidSpec(format!(
+                "principal-kind mismatch: '{}' provides '{}', '{}' grants to '{}'",
+                consumer.rtype, principal_kind, target.rtype, grant.principal_kind
+            )));
+        }
+        let principal_output = cm.principal_output.as_deref().ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' declares no principal_output",
+                consumer.rtype
+            ))
+        })?;
+        let principal_role_arn = consumer
+            .outputs
+            .get(principal_output)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProvisionError::InvalidSpec(format!(
+                    "consumer '{}' has no output '{principal_output}'",
+                    consumer.name
+                ))
+            })?
+            .to_string();
+        let target_arn = target
+            .outputs
+            .get("arn")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                ProvisionError::InvalidSpec(format!("target '{}' has no 'arn' output", target.name))
+            })?
+            .to_string();
+        let actions = tm.access_levels.get(level).ok_or_else(|| {
+            ProvisionError::InvalidSpec(format!(
+                "'{}' has no access level '{level}' (known: {})",
+                target.rtype,
+                tm.access_levels
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+
+        let spec = serde_json::json!({
+            "consumer_resource_id": consumer_resource_id,
+            "target_resource_id": target_resource_id,
+            "level": level,
+            "principal_role_arn": principal_role_arn,
+            "target_arn": target_arn,
+            "actions": actions,
+        });
+        let name = format!("grant-{}-{}-{}", consumer.name, target.name, level);
+        let config_override = serde_json::json!({ "module": grant.module });
+        self.request_inner(
+            workflow,
+            registry,
+            project_id,
+            "access-grant",
+            &name,
+            spec,
+            requester,
+            Some(config_override),
+        )
+        .await
+    }
+
     /// Tear down a provisioned resource (project decommission / cleanup). Routes
     /// to the manifest's connector and marks the record destroyed.
     pub async fn deprovision(
@@ -955,18 +1178,21 @@ impl ProvisionService {
         resource_id: &str,
         actor: &str,
     ) -> Result<ProvisionedRecord, ProvisionError> {
+        let _ = actor;
         let rec = self
             .repo
             .get(resource_id)
             .await?
             .ok_or_else(|| ProvisionError::NotFound(resource_id.to_string()))?;
-        let (backend, preq) = self.backend_and_req(&rec);
-        backend.destroy(&preq, &rec.outputs).await?;
-        self.repo.mark_destroyed(resource_id).await?;
-        let _ = actor;
-        let mut out = rec;
-        out.state = "destroyed".into();
-        Ok(out)
+        if rec.state == "destroyed" || rec.state == "destroying" {
+            return Ok(rec);
+        }
+        // Mark the work item, then drive the teardown in the background (or inline
+        // without a workflow handle) and wait the service's budget for completion.
+        self.repo.mark_state(resource_id, "destroying").await?;
+        self.dispatch(resource_id).await?;
+        let budget = self.budget_for(self.catalog.get(&rec.rtype));
+        self.inline_wait(resource_id, budget).await
     }
 
     /// The connector + a re-drive request for an existing record — the shape every
@@ -1100,22 +1326,42 @@ impl ProvisionService {
         request_id: &str,
         actor: &str,
     ) -> Result<RequestOutcome, ProvisionError> {
+        let _ = actor;
         let req = workflow
             .get(request_id)
             .await?
             .ok_or_else(|| ProvisionError::NotFound(request_id.to_string()))?;
+        // Idempotent alias: a request already fulfilled (e.g. auto-enqueued on
+        // approval) returns its record rather than erroring on a second fulfill.
+        if req.state == State::Fulfilled {
+            if let Some(rec) = self.repo.get_by_request(request_id).await? {
+                return Ok(RequestOutcome {
+                    request: req,
+                    provisioned: Some(rec),
+                    pending_approval: false,
+                });
+            }
+        }
+        if req.state != State::Approved {
+            return Err(ProvisionError::NotPermitted(format!(
+                "request is {}, must be approved before provisioning",
+                req.state.as_str()
+            )));
+        }
         let project_id = req
             .payload
             .get("project_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ProvisionError::InvalidSpec("request has no project_id".into()))?;
-        let reg = registry.require_active(project_id).await?;
-        let (request, record) = self.do_provision(workflow, &reg, req, actor).await?;
-        Ok(RequestOutcome {
-            request,
-            provisioned: Some(record),
-            pending_approval: false,
-        })
+            .ok_or_else(|| ProvisionError::InvalidSpec("request has no project_id".into()))?
+            .to_string();
+        let reg = registry.require_active(&project_id).await?;
+        let resource_type = req
+            .payload
+            .get("resource_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let budget = self.budget_for(self.catalog.get(resource_type));
+        self.enqueue_and_wait(workflow, &reg, req, budget).await
     }
 
     /// The connector name + its config for a service id (empty config if the
@@ -1127,25 +1373,40 @@ impl ProvisionService {
         }
     }
 
-    async fn do_provision(
+    /// Persist the intent (a `provisioning` record) for an approved request, then
+    /// hand it to the background worker and wait `budget` for completion. The
+    /// record is written *before* any apply runs, so a dropped call / crash leaves
+    /// a tracked row the reconciler heals — never an orphan.
+    async fn enqueue_and_wait(
         &self,
         workflow: &WorkflowEngine,
         reg: &Registration,
         req: WorkflowRequest,
-        actor: &str,
-    ) -> Result<(WorkflowRequest, ProvisionedRecord), ProvisionError> {
-        if req.state != State::Approved {
-            return Err(ProvisionError::NotPermitted(format!(
-                "request is {}, must be approved before provisioning",
-                req.state.as_str()
-            )));
-        }
-        // Idempotent retry: if a prior fulfill recorded the resource but failed to
-        // transition the request, don't re-provision or write a duplicate row —
-        // just (re)advance the workflow to Fulfilled.
+        budget: Duration,
+    ) -> Result<RequestOutcome, ProvisionError> {
+        let rec = self.enqueue_apply(reg, &req).await?;
+        self.dispatch(&rec.id).await?;
+        let rec = self.inline_wait(&rec.id, budget).await?;
+        let request = workflow.get(&req.id).await?.unwrap_or(req);
+        Ok(RequestOutcome {
+            request,
+            provisioned: Some(rec),
+            pending_approval: false,
+        })
+    }
+
+    /// Write the `provisioning` record (the durable work item) for an approved
+    /// request, or return the existing one if this request was already enqueued
+    /// (retry) or the name is already active (a duplicate request — its workflow
+    /// is fulfilled as satisfied). Tags/est are computed here exactly as the
+    /// connector's `plan` would, so cost rollups are unchanged.
+    async fn enqueue_apply(
+        &self,
+        reg: &Registration,
+        req: &WorkflowRequest,
+    ) -> Result<ProvisionedRecord, ProvisionError> {
         if let Some(existing) = self.repo.get_by_request(&req.id).await? {
-            let fulfilled = workflow.fulfill(&req.id, actor).await?;
-            return Ok((fulfilled, existing));
+            return Ok(existing);
         }
         let resource_type = req
             .payload
@@ -1178,67 +1439,284 @@ impl ProvisionService {
             .and_then(|s| serde_json::from_str(s).ok())
             .unwrap_or_else(|| serde_json::json!({}));
 
+        if let Some(existing) = self
+            .repo
+            .get_active_by_name(&reg.project_id, &resource_type, &name)
+            .await?
+        {
+            if let Some(wf) = &self.workflow {
+                let _ = wf.fulfill(&req.id, "system").await;
+            }
+            return Ok(existing);
+        }
+
         let manifest = self.catalog.get(&resource_type);
         let connector = manifest
             .map(|m| m.connector().to_string())
             .unwrap_or_else(|| "stub".to_string());
-        let config = manifest
-            .map(|m| m.connector_config())
-            .unwrap_or_else(|| serde_json::json!({}));
-        // Record the resolved *variant* cost (e.g. the chosen instance size), not
-        // the service's base estimate, so the rollup reflects what was provisioned.
+        let backend = self.connector_backend(&connector);
         let est = manifest
             .map(|m| m.resolve(&spec).estimated_monthly_usd)
             .unwrap_or(0.0);
-        let secret_outputs = manifest
-            .map(|m| m.secret_outputs.clone())
-            .unwrap_or_default();
-        let backend = self.connector_backend(&connector);
-        if !backend.supports(&resource_type) {
-            return Err(ProvisionError::Unsupported(format!(
-                "connector '{connector}' does not support '{resource_type}'"
-            )));
-        }
-
-        let preq = ProvisionRequest {
-            resource_type: resource_type.clone(),
-            name: name.clone(),
-            ctx: ResourceContext::from_registration(reg, &cloud, &account),
-            spec: spec.clone(),
-            config,
-            estimated_monthly_usd: est,
-            secret_outputs,
-        };
-        let plan = backend.plan(&preq).await?;
-        let mut provisioned = backend.apply(&preq, &plan).await?;
-        self.route_secrets(
-            &reg.project_id,
-            &name,
-            &preq.secret_outputs,
-            &mut provisioned,
-        )
-        .await?;
-
+        let ctx = ResourceContext::from_registration(reg, &cloud, &account);
         let now = asgard_storage::now();
-        let record = ProvisionedRecord {
+        let rec = ProvisionedRecord {
             id: asgard_storage::new_uid(),
             project_id: reg.project_id.clone(),
             rtype: resource_type,
             name,
             spec,
-            outputs: provisioned.outputs,
-            tags: plan.tags,
-            est_monthly_usd: plan.estimated_monthly_usd,
-            state: "provisioned".into(),
+            outputs: serde_json::json!({}),
+            tags: ctx.tags(),
+            est_monthly_usd: est,
+            state: "provisioning".into(),
             backend: backend.name().to_string(),
             dry_run: backend.dry_run(),
             request_id: Some(req.id.clone()),
             created_at: now.clone(),
             updated_at: now,
+            error: String::new(),
         };
-        self.repo.record(&record).await?;
-        let fulfilled = workflow.fulfill(&req.id, actor).await?;
-        Ok((fulfilled, record))
+        self.repo.record(&rec).await?;
+        Ok(rec)
+    }
+
+    /// Run the work item: spawn the worker (production) or run it inline (no
+    /// workflow handle wired — bare unit tests, which then provision synchronously).
+    async fn dispatch(&self, id: &str) -> Result<(), ProvisionError> {
+        if self.workflow.is_some() {
+            let svc = self.clone();
+            let id = id.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = svc.drive_core(&id).await {
+                    tracing::warn!("provision worker {id} failed: {e}");
+                }
+            });
+            Ok(())
+        } else {
+            self.drive_core(id).await
+        }
+    }
+
+    /// The single idempotent worker body for one work-state row, called by the
+    /// eager dispatch and by the reconciler. Claims the row (only one worker wins),
+    /// heartbeats while the connector runs, then records the terminal state. Apply
+    /// also fulfills the workflow request. A failed apply/destroy is recorded with
+    /// its error (not retried in place — a `failed` row is re-requested, not re-armed).
+    async fn drive_core(&self, id: &str) -> Result<(), ProvisionError> {
+        let Some(rec) = self.repo.get(id).await? else {
+            return Ok(());
+        };
+        let action = match rec.state.as_str() {
+            "provisioning" => Action::Apply,
+            "destroying" => Action::Destroy,
+            _ => return Ok(()),
+        };
+        let stale = stale_cutoff();
+        if !self
+            .repo
+            .claim(id, &rec.state, &self.instance_id, &stale)
+            .await?
+        {
+            return Ok(());
+        }
+        let hb = self.spawn_heartbeat(id);
+        let result = match action {
+            Action::Apply => self.run_apply(&rec).await,
+            Action::Destroy => self.run_destroy(&rec).await,
+        };
+        hb.abort();
+        match result {
+            Ok(outputs) => {
+                // Fulfill the request before flipping the record to its terminal
+                // state, so a caller that observes `provisioned` also sees the
+                // workflow `Fulfilled` — no window for the inline wait to slip
+                // between the two.
+                if matches!(action, Action::Apply) {
+                    if let (Some(wf), Some(req_id)) = (&self.workflow, &rec.request_id) {
+                        let _ = wf.fulfill(req_id, "system").await;
+                    }
+                }
+                let terminal = match action {
+                    Action::Apply => "provisioned",
+                    Action::Destroy => "destroyed",
+                };
+                self.repo.finish(id, terminal, &outputs, "").await?;
+                Ok(())
+            }
+            Err(e) => {
+                let terminal = match action {
+                    Action::Apply => "failed",
+                    Action::Destroy => "destroy_failed",
+                };
+                self.repo
+                    .finish(id, terminal, &rec.outputs, &e.to_string())
+                    .await?;
+                Err(e)
+            }
+        }
+    }
+
+    /// Resolve the connector + spec from a `provisioning` record and run
+    /// `plan`+`apply`, routing secret outputs to the store. Returns the outputs to
+    /// persist. Mirrors what the old inline `do_provision` did, minus the record
+    /// write (the caller owns the terminal transition).
+    async fn run_apply(
+        &self,
+        rec: &ProvisionedRecord,
+    ) -> Result<serde_json::Value, ProvisionError> {
+        let manifest = self.catalog.get(&rec.rtype);
+        let connector = manifest
+            .map(|m| m.connector().to_string())
+            .unwrap_or_else(|| "stub".to_string());
+        let mut config = manifest
+            .map(|m| m.connector_config())
+            .unwrap_or_else(|| serde_json::json!({}));
+        // Per-request module override (a grant's target mechanism) rides on the
+        // workflow payload, not the record — read it back for the apply.
+        if let (Some(wf), Some(req_id)) = (&self.workflow, &rec.request_id) {
+            if let Ok(Some(req)) = wf.get(req_id).await {
+                if let Some(m) = req.payload.get("config_module").and_then(|v| v.as_str()) {
+                    if let Some(obj) = config.as_object_mut() {
+                        obj.insert("module".into(), serde_json::json!(m));
+                    }
+                }
+            }
+        }
+        let secret_outputs = manifest
+            .map(|m| m.secret_outputs.clone())
+            .unwrap_or_default();
+        let backend = self.connector_backend(&connector);
+        if !backend.supports(&rec.rtype) {
+            return Err(ProvisionError::Unsupported(format!(
+                "connector '{connector}' does not support '{}'",
+                rec.rtype
+            )));
+        }
+        let preq = ProvisionRequest {
+            resource_type: rec.rtype.clone(),
+            name: rec.name.clone(),
+            ctx: ctx_from_record(rec),
+            spec: rec.spec.clone(),
+            config,
+            estimated_monthly_usd: rec.est_monthly_usd,
+            secret_outputs,
+        };
+        let plan = backend.plan(&preq).await?;
+        let mut provisioned = backend.apply(&preq, &plan).await?;
+        self.route_secrets(
+            &rec.project_id,
+            &rec.name,
+            &preq.secret_outputs,
+            &mut provisioned,
+        )
+        .await?;
+        Ok(provisioned.outputs)
+    }
+
+    /// Tear down a `destroying` record via its connector; keeps the recorded
+    /// outputs on the destroyed row.
+    async fn run_destroy(
+        &self,
+        rec: &ProvisionedRecord,
+    ) -> Result<serde_json::Value, ProvisionError> {
+        let (backend, preq) = self.backend_and_req(rec);
+        backend.destroy(&preq, &rec.outputs).await?;
+        Ok(rec.outputs.clone())
+    }
+
+    /// Keep the claim heartbeat fresh while a long apply/destroy runs, so the
+    /// reconciler's stale check doesn't reclaim in-flight work. Aborted on finish.
+    fn spawn_heartbeat(&self, id: &str) -> tokio::task::JoinHandle<()> {
+        let repo = self.repo.clone();
+        let id = id.to_string();
+        let owner = self.instance_id.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(HEARTBEAT_SECS)).await;
+                if repo.heartbeat(&id, &owner).await.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Poll a record until it leaves its work state or `budget` elapses, then
+    /// return the current record. Check-before-sleep so an instant (stub) apply
+    /// returns without burning a tick; `budget == 0` returns the work-state record
+    /// immediately (the `long_running` fast path).
+    async fn inline_wait(
+        &self,
+        id: &str,
+        budget: Duration,
+    ) -> Result<ProvisionedRecord, ProvisionError> {
+        let deadline = Instant::now() + budget;
+        loop {
+            let rec = self
+                .repo
+                .get(id)
+                .await?
+                .ok_or_else(|| ProvisionError::NotFound(id.to_string()))?;
+            if !is_work_state(&rec.state) || Instant::now() >= deadline {
+                return Ok(rec);
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
+    /// Inline-wait budget for a service: 0 for `long_running` (return immediately
+    /// and poll), the configured budget otherwise.
+    fn budget_for(&self, manifest: Option<&ServiceManifest>) -> Duration {
+        if manifest.map(|m| m.long_running).unwrap_or(false) {
+            Duration::ZERO
+        } else {
+            self.wait_budget
+        }
+    }
+
+    /// Heal interrupted work. Sweep 1: re-drive stale/orphaned `provisioning` and
+    /// `destroying` rows (a dropped call, a crashed worker, a redeploy mid-apply).
+    /// Sweep 2: enqueue `Approved` provision requests that never got a record — the
+    /// durable form of "approved ⇒ will deploy", covering an approve-then-crash gap.
+    /// Lease-gated by the caller so only one replica runs it.
+    pub async fn reconcile(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+    ) -> Result<usize, ProvisionError> {
+        let mut n = 0;
+        let stale = stale_cutoff();
+        for rec in self.repo.list_reclaimable(&stale, 50).await? {
+            let _ = self.dispatch(&rec.id).await;
+            n += 1;
+        }
+        let approved = workflow
+            .list(&RequestFilter {
+                state: Some(State::Approved),
+                requester: None,
+                subject: None,
+                limit: Some(200),
+            })
+            .await?;
+        for req in approved {
+            if !req.kind.starts_with("provision:") {
+                continue;
+            }
+            if self.repo.get_by_request(&req.id).await?.is_some() {
+                continue;
+            }
+            let Some(project_id) = req.payload.get("project_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Ok(reg) = registry.require_active(project_id).await else {
+                continue;
+            };
+            let _ = self
+                .enqueue_and_wait(workflow, &reg, req, Duration::ZERO)
+                .await;
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// Move every sensitive output value into the secret store, replacing it in
@@ -1412,6 +1890,24 @@ fn day_of_month(day: &str) -> f64 {
     parse_day(day).day() as f64
 }
 
+/// Which connector op a work-state row needs driven.
+#[derive(Clone, Copy)]
+enum Action {
+    Apply,
+    Destroy,
+}
+
+/// States in which a row is an outstanding work item (the reconciler drives these
+/// and the inline-wait blocks on them).
+fn is_work_state(state: &str) -> bool {
+    state == "provisioning" || state == "destroying"
+}
+
+/// The heartbeat cutoff before which a claimed row is considered abandoned.
+fn stale_cutoff() -> String {
+    asgard_storage::plus_seconds(&asgard_storage::now(), -STALE_SECS)
+}
+
 fn ctx_from_record(rec: &ProvisionedRecord) -> ResourceContext {
     let g = |k: &str| rec.tags.get(k).cloned().unwrap_or_default();
     ResourceContext {
@@ -1458,7 +1954,8 @@ mod tests {
             allow,
             RegistrationPolicy::default(),
         );
-        let svc = ProvisionService::new(ProvisionRepo::new(db.clone()));
+        let mut svc = ProvisionService::new(ProvisionRepo::new(db.clone()));
+        svc.set_workflow(Arc::new(workflow.clone()));
         let reg = registry
             .register(
                 RegisterInput {
@@ -1550,6 +2047,281 @@ mod tests {
         // The persisted record reflects the teardown.
         let rec = svc.repo().get(&rid).await.unwrap().unwrap();
         assert_eq!(rec.state, "destroyed");
+    }
+
+    #[tokio::test]
+    async fn resource_cloud_comes_from_its_manifest_not_the_default() {
+        // default_cloud is "stub" in the test service, but s3-bucket's manifest
+        // declares cloud: aws — the record must carry the manifest's cloud (the
+        // bug was an AWS bucket tagged with the global default).
+        let (wf, reg, svc, pid) = harness().await;
+        let out = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "assets",
+                serde_json::json!({"name": "assets"}),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.tags.get("cloud").map(String::as_str), Some("aws"));
+    }
+
+    /// Insert a provisioned record directly (bypassing a connector) so grant
+    /// resolution can be exercised against realistic outputs.
+    async fn seed_record(
+        svc: &ProvisionService,
+        pid: &str,
+        rtype: &str,
+        name: &str,
+        outputs: serde_json::Value,
+    ) -> String {
+        let now = asgard_storage::now();
+        let rec = ProvisionedRecord {
+            id: asgard_storage::new_uid(),
+            project_id: pid.to_string(),
+            rtype: rtype.to_string(),
+            name: name.to_string(),
+            spec: serde_json::json!({}),
+            outputs,
+            tags: Default::default(),
+            est_monthly_usd: 0.0,
+            state: "provisioned".into(),
+            backend: "stub".into(),
+            dry_run: true,
+            request_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+            error: String::new(),
+        };
+        let id = rec.id.clone();
+        svc.repo().record(&rec).await.unwrap();
+        id
+    }
+
+    const ROLE_ARN: &str = "arn:aws:iam::123456789012:role/proj-task-role";
+    const BUCKET_ARN: &str = "arn:aws:s3:::proj-assets";
+
+    #[tokio::test]
+    async fn request_grant_self_service_write_auto_approves() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+
+        let out = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+
+        // Your own resources are self-service — no approval.
+        assert!(!out.pending_approval);
+        assert_eq!(out.request.state, State::Fulfilled);
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.rtype, "access-grant");
+        assert_eq!(rec.spec["principal_role_arn"], ROLE_ARN);
+        assert_eq!(rec.spec["target_arn"], BUCKET_ARN);
+        let actions: Vec<String> = serde_json::from_value(rec.spec["actions"].clone()).unwrap();
+        assert!(actions.contains(&"s3:PutObject".to_string()));
+        assert!(actions.contains(&"s3:GetObject".to_string()));
+    }
+
+    #[tokio::test]
+    async fn request_grant_read_level_omits_write_actions() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let out = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "read",
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let actions: Vec<String> =
+            serde_json::from_value(out.provisioned.unwrap().spec["actions"].clone()).unwrap();
+        assert!(actions.contains(&"s3:GetObject".to_string()));
+        assert!(!actions.contains(&"s3:PutObject".to_string()));
+    }
+
+    #[tokio::test]
+    async fn request_grant_unknown_level_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "admin",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("access level"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_missing_principal_output_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(&svc, &pid, "ecs-service", "web", serde_json::json!({})).await;
+        let target = seed_record(
+            &svc,
+            &pid,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("task_role_arn"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_non_grantable_target_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        // random-secret declares no `grant` mechanism.
+        let target = seed_record(
+            &svc,
+            &pid,
+            "random-secret",
+            "api-key",
+            serde_json::json!({"arn": "x"}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("grantable"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn request_grant_cross_project_is_rejected() {
+        let (wf, reg, svc, pid) = harness().await;
+        let other = register_with_class(&reg, "light-operational").await;
+        let consumer = seed_record(
+            &svc,
+            &pid,
+            "ecs-service",
+            "web",
+            serde_json::json!({"task_role_arn": ROLE_ARN}),
+        )
+        .await;
+        // Target lives in a different project.
+        let target = seed_record(
+            &svc,
+            &other,
+            "s3-bucket",
+            "assets",
+            serde_json::json!({"arn": BUCKET_ARN}),
+        )
+        .await;
+        let err = svc
+            .request_grant(
+                &wf,
+                &reg,
+                &pid,
+                &consumer,
+                &target,
+                "write",
+                "user:default/a",
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("same project"), "got: {err}");
     }
 
     #[tokio::test]
@@ -1772,7 +2544,13 @@ mod tests {
 
     #[tokio::test]
     async fn review_resource_parks_for_approval_then_fulfills() {
-        let (wf, reg, svc, pid) = harness().await;
+        let (wf, reg, mut svc, pid) = harness().await;
+        // rds-postgres is self-service by default now; drop the POC ceiling below its
+        // estimate so it parks. The request→approve→fulfill cascade is what's under
+        // test here, not the trigger that sends it to review.
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 1.0)]),
+        });
         let out = svc
             .request(
                 &wf,
@@ -1795,17 +2573,30 @@ mod tests {
         wf.approve(&out.request.id, "user:default/lead", Some("ok"))
             .await
             .unwrap();
+        // rds-postgres is long_running: fulfill enqueues and returns the
+        // `provisioning` record immediately while the apply runs in the
+        // background. Poll to the terminal state; the workflow fulfills with it.
         let done = svc
             .fulfill(&wf, &reg, &out.request.id, "system")
             .await
             .unwrap();
-        assert_eq!(done.request.state, State::Fulfilled);
-        assert_eq!(done.provisioned.unwrap().rtype, "rds-postgres");
+        let rid = done.provisioned.unwrap().id;
+        let rec = await_state(&svc, &rid, "provisioned").await;
+        assert_eq!(rec.rtype, "rds-postgres");
+        assert_eq!(
+            wf.get(&out.request.id).await.unwrap().unwrap().state,
+            State::Fulfilled
+        );
     }
 
     #[tokio::test]
-    async fn non_poc_classification_requires_approval() {
-        let (wf, reg, svc, _pid) = harness().await;
+    async fn classification_without_ceiling_requires_approval() {
+        let (wf, reg, mut svc, _pid) = harness().await;
+        // Only POC has a self-service envelope; wide-operational has none, so even a
+        // cheap, auto-approvable resource routes to a human at that tier.
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 500.0)]),
+        });
         let pid = register_with_class(&reg, "wide-operational").await;
         let out = svc
             .request(
@@ -1821,7 +2612,7 @@ mod tests {
             .unwrap();
         assert!(
             out.pending_approval,
-            "above-POC classification must require approval even for a self-service type"
+            "a classification with no configured ceiling must require approval"
         );
     }
 
@@ -1829,9 +2620,7 @@ mod tests {
     async fn over_cost_limit_requires_approval() {
         let (wf, reg, mut svc, pid) = harness().await;
         svc.set_auto_approve(AutoApprovePolicy {
-            classifications: vec!["poc".into()],
-            max_resource_monthly_usd: 1.0, // s3 est is 5.0 → over the cap
-            max_project_monthly_usd: 500.0,
+            ceilings: BTreeMap::from([("poc".into(), 1.0)]), // s3 est 5.0 → over the ceiling
         });
         let out = svc
             .request(
@@ -1888,7 +2677,10 @@ mod tests {
 
     #[tokio::test]
     async fn ec2_small_variant_auto_approves_big_variant_reviews() {
-        let (wf, reg, svc, pid) = harness().await; // poc
+        let (wf, reg, mut svc, pid) = harness().await; // poc
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 100.0)]),
+        });
         let micro = svc
             .request(
                 &wf,
@@ -1901,7 +2693,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!micro.pending_approval, "t3.micro ($7) is under the cap");
+        assert!(
+            !micro.pending_approval,
+            "t3.micro ($7) is under the ceiling"
+        );
         assert_eq!(micro.provisioned.unwrap().est_monthly_usd, 7.0);
 
         let big = svc
@@ -1916,7 +2711,10 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(big.pending_approval, "m7i.4xlarge ($500) is over the cap");
+        assert!(
+            big.pending_approval,
+            "m7i.4xlarge ($500) is over the ceiling"
+        );
     }
 
     #[tokio::test]
@@ -1944,9 +2742,7 @@ mod tests {
         let (wf, reg, mut svc, _pid) = harness().await;
         let pid = register_with_class(&reg, "wide-operational").await;
         svc.set_auto_approve(AutoApprovePolicy {
-            classifications: vec!["wide-operational".into()],
-            max_resource_monthly_usd: 100_000.0,
-            max_project_monthly_usd: 100_000.0,
+            ceilings: BTreeMap::from([("wide-operational".into(), 100_000.0)]),
         });
         let out = svc
             .request(
@@ -2056,5 +2852,252 @@ mod tests {
             .await
             .unwrap();
         assert!(rotated.version >= 2);
+    }
+
+    // ---- async provisioning engine ----
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Semaphore;
+
+    /// A connector whose `apply` parks on a semaphore, so a test can observe the
+    /// in-flight `provisioning` window deterministically and count real applies.
+    struct BlockingProvisioner {
+        gate: Arc<Semaphore>,
+        applies: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provisioner for BlockingProvisioner {
+        fn name(&self) -> &str {
+            "blocking"
+        }
+        fn dry_run(&self) -> bool {
+            true
+        }
+        fn supports(&self, _r: &str) -> bool {
+            true
+        }
+        async fn plan(&self, req: &ProvisionRequest) -> Result<Plan, ProvisionError> {
+            Ok(Plan {
+                summary: String::new(),
+                tags: req.ctx.tags(),
+                estimated_monthly_usd: req.estimated_monthly_usd,
+            })
+        }
+        async fn apply(
+            &self,
+            _req: &ProvisionRequest,
+            _plan: &Plan,
+        ) -> Result<Provisioned, ProvisionError> {
+            self.gate.acquire().await.unwrap().forget();
+            self.applies.fetch_add(1, Ordering::SeqCst);
+            Ok(Provisioned {
+                outputs: serde_json::json!({ "ok": true }),
+                resource_ids: vec![],
+                sensitive_keys: vec![],
+            })
+        }
+    }
+
+    fn provisioning_row(pid: &str, name: &str) -> ProvisionedRecord {
+        let now = asgard_storage::now();
+        ProvisionedRecord {
+            id: asgard_storage::new_uid(),
+            project_id: pid.to_string(),
+            rtype: "s3-bucket".into(),
+            name: name.into(),
+            spec: serde_json::json!({ "name": name }),
+            outputs: serde_json::json!({}),
+            tags: BTreeMap::from([("project".to_string(), pid.to_string())]),
+            est_monthly_usd: 10.0,
+            state: "provisioning".into(),
+            backend: "blocking".into(),
+            dry_run: true,
+            request_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+            error: String::new(),
+        }
+    }
+
+    async fn await_state(svc: &ProvisionService, id: &str, want: &str) -> ProvisionedRecord {
+        for _ in 0..300 {
+            let r = svc.repo().get(id).await.unwrap().unwrap();
+            if r.state == want {
+                return r;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("resource {id} never reached state {want}");
+    }
+
+    #[tokio::test]
+    async fn claim_is_exclusive_then_reclaimable_when_stale() {
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "c");
+        svc.repo().record(&rec).await.unwrap();
+        let now = asgard_storage::now();
+        let past = asgard_storage::plus_seconds(&now, -600);
+        let future = asgard_storage::plus_seconds(&now, 600);
+        // Unclaimed → first owner wins; a live claim blocks a second owner.
+        assert!(svc
+            .repo()
+            .claim(&rec.id, "provisioning", "owner-1", &past)
+            .await
+            .unwrap());
+        assert!(!svc
+            .repo()
+            .claim(&rec.id, "provisioning", "owner-2", &past)
+            .await
+            .unwrap());
+        // Once the heartbeat is stale (cutoff in the future), it's reclaimable.
+        assert!(svc
+            .repo()
+            .claim(&rec.id, "provisioning", "owner-2", &future)
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn infra_committed_counts_in_flight_but_total_does_not() {
+        let (_wf, _reg, svc, pid) = harness().await;
+        let mut a = provisioning_row(&pid, "a");
+        a.est_monthly_usd = 50.0;
+        svc.repo().record(&a).await.unwrap();
+        let mut b = provisioning_row(&pid, "b");
+        b.est_monthly_usd = 30.0;
+        b.state = "provisioned".into();
+        svc.repo().record(&b).await.unwrap();
+        assert_eq!(
+            svc.repo().infra_committed_for_project(&pid).await.unwrap(),
+            80.0
+        );
+        assert_eq!(
+            svc.repo().infra_total_for_project(&pid).await.unwrap(),
+            30.0
+        );
+    }
+
+    #[tokio::test]
+    async fn list_reclaimable_finds_unclaimed_work() {
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "stale");
+        svc.repo().record(&rec).await.unwrap();
+        let future = asgard_storage::plus_seconds(&asgard_storage::now(), 600);
+        let rows = svc.repo().list_reclaimable(&future, 50).await.unwrap();
+        assert!(rows.iter().any(|r| r.id == rec.id));
+    }
+
+    #[tokio::test]
+    async fn drive_core_provisions_an_orphaned_row() {
+        // A `provisioning` record left behind by a crashed worker (no live driver)
+        // converges to `provisioned` when the reconciler drives it. Routes to the
+        // stub connector (s3-bucket's `terraform` is unregistered here).
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "orphan");
+        svc.repo().record(&rec).await.unwrap();
+        svc.drive_core(&rec.id).await.unwrap();
+        let got = svc.repo().get(&rec.id).await.unwrap().unwrap();
+        assert_eq!(got.state, "provisioned");
+    }
+
+    #[tokio::test]
+    async fn request_returns_provisioning_while_apply_is_in_flight() {
+        let (wf, reg, mut svc, pid) = harness().await;
+        let gate = Arc::new(Semaphore::new(0));
+        let applies = Arc::new(AtomicUsize::new(0));
+        svc.register_backend(
+            "terraform",
+            Arc::new(BlockingProvisioner {
+                gate: gate.clone(),
+                applies: applies.clone(),
+            }),
+        );
+        svc.set_wait_budget_secs(0);
+        let out = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "blk",
+                serde_json::json!({ "name": "blk" }),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        // The record exists (intent persisted) but apply is parked, so it's still
+        // provisioning and the request is not yet fulfilled.
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.state, "provisioning");
+        assert_eq!(out.request.state, State::Approved);
+        assert_eq!(applies.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            rec.tags.get("project").map(String::as_str),
+            Some(pid.as_str())
+        );
+        // Release the apply; the background worker finishes and fulfills.
+        gate.add_permits(1);
+        let done = await_state(&svc, &rec.id, "provisioned").await;
+        assert_eq!(done.state, "provisioned");
+        assert_eq!(applies.load(Ordering::SeqCst), 1);
+        let req = wf.get(&out.request.id).await.unwrap().unwrap();
+        assert_eq!(req.state, State::Fulfilled);
+    }
+
+    #[tokio::test]
+    async fn concurrent_drives_apply_exactly_once() {
+        let (_wf, _reg, mut svc, pid) = harness().await;
+        let applies = Arc::new(AtomicUsize::new(0));
+        svc.register_backend(
+            "terraform",
+            Arc::new(BlockingProvisioner {
+                gate: Arc::new(Semaphore::new(1)),
+                applies: applies.clone(),
+            }),
+        );
+        let rec = provisioning_row(&pid, "race");
+        svc.repo().record(&rec).await.unwrap();
+        // Two workers race the same row; the claim CAS lets exactly one apply.
+        let (a, b) = tokio::join!(svc.drive_core(&rec.id), svc.drive_core(&rec.id));
+        a.unwrap();
+        b.unwrap();
+        assert_eq!(applies.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            svc.repo().get(&rec.id).await.unwrap().unwrap().state,
+            "provisioned"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_request_is_idempotent() {
+        let (wf, reg, svc, pid) = harness().await;
+        let first = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "dup",
+                serde_json::json!({ "name": "dup" }),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let id1 = first.provisioned.unwrap().id;
+        let second = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "dup",
+                serde_json::json!({ "name": "dup" }),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.provisioned.unwrap().id, id1);
+        assert_eq!(svc.repo().list_by_project(&pid).await.unwrap().len(), 1);
     }
 }

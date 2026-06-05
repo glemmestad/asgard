@@ -37,12 +37,21 @@ use asgard_reviewer::{
     CodeReview, LlmJudge, RegistryStandards, ReviewDepth, ReviewDepthMap, ReviewService,
     ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
 };
-use asgard_storage::Db;
+use asgard_storage::{leases::Leases, Db};
 use asgard_workflow::WorkflowEngine;
 
 #[derive(RustEmbed)]
 #[folder = "../../web/dist"]
 struct WebAssets;
+
+// The Docusaurus site, served at /docs. It's produced by a Node build
+// (`docs/build`), which exists in the release image (the Dockerfile builds it
+// before the binary) but not on a bare `cargo build` — `allow_missing` keeps
+// those builds compiling, and the handler serves a placeholder when empty.
+#[derive(RustEmbed)]
+#[folder = "../../docs/build"]
+#[allow_missing = true]
+struct DocsAssets;
 
 #[derive(Parser)]
 #[command(
@@ -184,6 +193,20 @@ struct Config {
     sources: Vec<SourceCfg>,
     #[serde(default)]
     reconcile_secs: Option<u64>,
+    /// Seconds a fast provision request waits inline for its apply before
+    /// returning the `provisioning` record to poll. Absent = 5. `long_running`
+    /// services ignore it and return immediately.
+    #[serde(default)]
+    provision_wait_secs: Option<u64>,
+    /// How often the provisioning reconciler re-drives orphaned/stale work-state
+    /// rows and enqueues approved-but-recordless requests. Absent = 60.
+    #[serde(default)]
+    provision_reconcile_secs: Option<u64>,
+    /// Lease TTL (seconds) for cross-instance coordination — the leader-leased
+    /// background loops and the per-resource Terraform lock. Absent = 600. Only
+    /// relevant when running more than one replica (Postgres).
+    #[serde(default)]
+    lease_ttl_secs: Option<u64>,
     /// Operator-configured cost-centers a project may register against. Empty =
     /// open mode (any group accepted, recorded as-is).
     #[serde(default)]
@@ -394,12 +417,10 @@ struct TargetCfg {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 struct AutoApproveCfg {
+    /// classification → monthly self-service ceiling (USD). A classification
+    /// absent from the map never auto-approves.
     #[serde(default)]
-    classifications: Vec<String>,
-    #[serde(default)]
-    max_resource_monthly_usd: f64,
-    #[serde(default)]
-    max_project_monthly_usd: f64,
+    ceilings: std::collections::BTreeMap<String, f64>,
 }
 
 /// AWS **cost** configuration (Cost Explorer reads). AWS *provisioning* is the
@@ -620,6 +641,14 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         guardrail_mode(),
     ));
     let workflow = Arc::new(WorkflowEngine::new(core.db.clone(), core.policy.clone()));
+    let lease_ttl = config.lease_ttl_secs.unwrap_or(600) as i64;
+    let leases = Leases::new(core.db.clone(), asgard_storage::new_uid());
+    let mut provision =
+        build_provision(core.db.clone(), &config, Some((leases.clone(), lease_ttl)));
+    provision.set_workflow(workflow.clone());
+    if let Some(secs) = config.provision_wait_secs {
+        provision.set_wait_budget_secs(secs);
+    }
 
     // A platform-owned system project + gateway key so the dashboard's cost Q&A and
     // the built-in review judge work without a human pasting a key. Spend is
@@ -686,7 +715,6 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
              LLM gateway module (LiteLLM/etc.) to turn it on; promotion uses the presence check"
         );
     }
-    let provision = build_provision(core.db.clone(), &config);
     maybe_seed_admin(&core.identity).await;
     if let Err(e) = registry.seed_knowledge().await {
         tracing::warn!("seeding starter guidance/recipes failed: {e}");
@@ -724,10 +752,18 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             config.sources.clone(),
             git_token.clone(),
         );
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                reconcile_all(&cat, &reg, &srcs, tok.clone()).await;
+                if lease
+                    .try_acquire("loop:reconcile", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    reconcile_all(&cat, &reg, &srcs, tok.clone()).await;
+                    let _ = lease.release("loop:reconcile").await;
+                }
             }
         });
     }
@@ -736,13 +772,21 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     {
         let prov = state.provision.clone();
         let secs = config.reconcile_secs.unwrap_or(120).max(60);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                match prov.rotate_due_secrets().await {
-                    Ok(n) if n > 0 => tracing::info!("rotated {n} due secret(s)"),
-                    Ok(_) => {}
-                    Err(e) => tracing::warn!("secret rotation sweep failed: {e}"),
+                if lease
+                    .try_acquire("loop:rotation", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    match prov.rotate_due_secrets().await {
+                        Ok(n) if n > 0 => tracing::info!("rotated {n} due secret(s)"),
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("secret rotation sweep failed: {e}"),
+                    }
+                    let _ = lease.release("loop:rotation").await;
                 }
             }
         });
@@ -759,22 +803,30 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             .and_then(|p| p.rollup_secs)
             .unwrap_or(3600)
             .max(1);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
-                let day = chrono::Utc::now()
-                    .date_naive()
-                    .format("%Y-%m-%d")
-                    .to_string();
-                match prov.roll_up_costs(&reg, &day).await {
-                    Ok(s) => tracing::info!(
-                        "cost rollup {}: {} project(s), {} row(s), {} forecast(s), {} anomaly(ies)",
-                        s.day,
-                        s.projects,
-                        s.rows,
-                        s.forecasts,
-                        s.anomalies
-                    ),
-                    Err(e) => tracing::warn!("cost rollup failed: {e}"),
+                if lease
+                    .try_acquire("loop:rollup", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    let day = chrono::Utc::now()
+                        .date_naive()
+                        .format("%Y-%m-%d")
+                        .to_string();
+                    match prov.roll_up_costs(&reg, &day).await {
+                        Ok(s) => tracing::info!(
+                            "cost rollup {}: {} project(s), {} row(s), {} forecast(s), {} anomaly(ies)",
+                            s.day,
+                            s.projects,
+                            s.rows,
+                            s.forecasts,
+                            s.anomalies
+                        ),
+                        Err(e) => tracing::warn!("cost rollup failed: {e}"),
+                    }
+                    let _ = lease.release("loop:rollup").await;
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
             }
@@ -786,17 +838,25 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     {
         let reg = state.registry.clone();
         let secs = config.review.sweep_secs.unwrap_or(86_400).max(1);
+        let lease = leases.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-                match reg.sweep("system").await {
-                    Ok(s) => tracing::info!(
-                        "review sweep: {} checked, {} newly expired, {} lapsed exception(s)",
-                        s.checked,
-                        s.newly_expired.len(),
-                        s.expired_exceptions.len()
-                    ),
-                    Err(e) => tracing::warn!("review sweep failed: {e}"),
+                if lease
+                    .try_acquire("loop:review", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    match reg.sweep("system").await {
+                        Ok(s) => tracing::info!(
+                            "review sweep: {} checked, {} newly expired, {} lapsed exception(s)",
+                            s.checked,
+                            s.newly_expired.len(),
+                            s.expired_exceptions.len()
+                        ),
+                        Err(e) => tracing::warn!("review sweep failed: {e}"),
+                    }
+                    let _ = lease.release("loop:review").await;
                 }
             }
         });
@@ -818,6 +878,37 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
                     Ok(_) => {}
                     Err(e) => tracing::warn!("review worker pass failed: {e}"),
                 }
+            }
+        });
+    }
+
+    // Periodic provisioning reconciler: re-drive orphaned/stale apply + destroy
+    // work and enqueue approved-but-recordless requests, so a dropped call, crash,
+    // or redeploy can't leave a resource un-provisioned or untracked. Work-then-
+    // sleep so leftover work heals on startup. Leader-leased to one replica.
+    {
+        let prov = state.provision.clone();
+        let reg = state.registry.clone();
+        let wf = state.workflow.clone();
+        let secs = config.provision_reconcile_secs.unwrap_or(60).max(5);
+        let lease = leases.clone();
+        tokio::spawn(async move {
+            loop {
+                if lease
+                    .try_acquire("loop:provision-reconcile", lease_ttl)
+                    .await
+                    .unwrap_or(false)
+                {
+                    match prov.reconcile(wf.as_ref(), &reg).await {
+                        Ok(n) if n > 0 => {
+                            tracing::info!("provision reconcile: drove {n} work item(s)")
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("provision reconcile failed: {e}"),
+                    }
+                    let _ = lease.release("loop:provision-reconcile").await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
             }
         });
     }
@@ -904,7 +995,8 @@ async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Re
     .with_requirements(build_requirements(&config))
     .with_review_config(build_review_config(&config))
     .with_governance_config(build_governance_config(&config));
-    let provision = build_provision(core.db.clone(), &config);
+    let mut provision = build_provision(core.db.clone(), &config, None);
+    provision.set_workflow(workflow.clone());
     let project = std::env::var("ASGARD_PROJECT").ok();
     let server = asgard_mcp::AsgardMcp::new(
         core.catalog,
@@ -979,7 +1071,7 @@ fn build_governance_config(config: &Config) -> GovernanceConfig {
 /// gateway cost source, the builtin secret store, plus the `terraform` connector
 /// (the universal provisioning path, incl. all AWS resources), the AWS cost
 /// sources, and the guardrails the operator configures in asgard.yaml.
-fn build_provision(db: Db, config: &Config) -> ProvisionService {
+fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> ProvisionService {
     let mut svc = ProvisionService::new(ProvisionRepo::new(db.clone()));
     // The exec connector is harmless without a manifest command, so it's always
     // available; gateway spend is always a cost source.
@@ -1070,13 +1162,12 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
             db.clone(),
             master_key.unwrap_or(DEV_SECRET_KEY),
         ));
-        svc.register_backend(
-            "terraform",
-            Arc::new(
-                TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
-                    .with_state(tf_state),
-            ),
-        );
+        let mut connector = TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
+            .with_state(tf_state);
+        if let Some((leases, ttl)) = &leases {
+            connector = connector.with_leases(leases.clone(), *ttl);
+        }
+        svc.register_backend("terraform", Arc::new(connector));
         tracing::info!(
             "terraform connector registered (modules={}, durable state in DB)",
             tf.modules_dir.display()
@@ -1115,19 +1206,17 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
         p.forecast_window_days.unwrap_or(0),
         p.anomaly_z.unwrap_or(0.0),
     );
-    if let Some(aa) = &p.auto_approve {
-        let mut auto = AutoApprovePolicy::default();
-        if !aa.classifications.is_empty() {
-            auto.classifications = aa.classifications.clone();
-        }
-        if aa.max_resource_monthly_usd > 0.0 {
-            auto.max_resource_monthly_usd = aa.max_resource_monthly_usd;
-        }
-        if aa.max_project_monthly_usd > 0.0 {
-            auto.max_project_monthly_usd = aa.max_project_monthly_usd;
-        }
-        svc.set_auto_approve(auto);
+    // Self-service ceilings: defaults, overridden by an asgard.yaml block, then by
+    // ASGARD_AUTO_APPROVE_CEILINGS (per-tier merge) so an image-only deploy can
+    // tune them without a config file or a recompile.
+    let mut auto = AutoApprovePolicy::default();
+    if let Some(aa) = p.auto_approve.as_ref().filter(|aa| !aa.ceilings.is_empty()) {
+        auto.ceilings = aa.ceilings.clone();
     }
+    if let Some(env_ceilings) = auto_approve_ceilings_from_env() {
+        auto.ceilings.extend(env_ceilings);
+    }
+    svc.set_auto_approve(auto);
     // AWS cost sources (provisioning is handled by the terraform connector). The
     // Cost Explorer reads are independent of any provisioning arming.
     if let Some(aws) = &p.aws {
@@ -1159,21 +1248,50 @@ fn build_provision(db: Db, config: &Config) -> ProvisionService {
 /// `ASGARD_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
 /// to anything not listed is refused). A config-file `provisioning:` block, when
 /// present, takes precedence over this entirely.
+/// `ASGARD_AUTO_APPROVE_CEILINGS` is a comma-separated `classification=usd` list,
+/// e.g. `poc=500,light-operational=2500`. Merged onto the defaults per tier.
+fn auto_approve_ceilings_from_env() -> Option<std::collections::BTreeMap<String, f64>> {
+    let raw = std::env::var("ASGARD_AUTO_APPROVE_CEILINGS").ok()?;
+    let map: std::collections::BTreeMap<String, f64> = raw
+        .split(',')
+        .filter_map(|kv| kv.split_once('='))
+        .filter_map(|(k, v)| {
+            v.trim()
+                .parse::<f64>()
+                .ok()
+                .map(|n| (k.trim().to_string(), n))
+        })
+        .collect();
+    (!map.is_empty()).then_some(map)
+}
+
 fn provisioning_from_env() -> Option<ProvisioningCfg> {
-    let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok()?;
+    let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok();
+    let services_dir = std::env::var("ASGARD_SERVICES_DIR").ok();
+    // Arm if either the terraform modules or a service-definition overlay is set,
+    // so a customer can add their own `service.yaml`s (over the embedded catalog)
+    // by pointing one env var at a dir — whether that dir is baked into a derived
+    // image, an EFS/volume mount, or synced from object storage by a sidecar.
+    if modules_dir.is_none() && services_dir.is_none() {
+        return None;
+    }
     Some(provisioning_cfg_from_parts(
         modules_dir,
+        services_dir,
         std::env::var("ASGARD_TF_WORK_DIR").ok(),
         std::env::var("ASGARD_TF_ALLOWED").ok(),
+        std::env::var("ASGARD_AWS_DEFAULT_ACCOUNT").ok(),
     ))
 }
 
 fn provisioning_cfg_from_parts(
-    modules_dir: String,
+    modules_dir: Option<String>,
+    services_dir: Option<String>,
     work_dir: Option<String>,
     allowed_csv: Option<String>,
+    aws_default_account: Option<String>,
 ) -> ProvisioningCfg {
-    let allowed: Vec<TargetCfg> = allowed_csv
+    let mut allowed: Vec<TargetCfg> = allowed_csv
         .map(|s| {
             s.split(',')
                 .filter_map(|t| t.split_once(':'))
@@ -1184,6 +1302,26 @@ fn provisioning_cfg_from_parts(
                 .collect()
         })
         .unwrap_or_default();
+    // `ASGARD_AWS_DEFAULT_ACCOUNT` sets the AWS-wide default target. Since a deploy
+    // provisions into that account, make sure it's an allowed target (prepend it,
+    // so it's also the default below) — otherwise the request gate would refuse it.
+    if let Some(acct) = aws_default_account
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty())
+    {
+        if !allowed
+            .iter()
+            .any(|t| t.cloud == "aws" && t.account == acct)
+        {
+            allowed.insert(
+                0,
+                TargetCfg {
+                    cloud: "aws".to_string(),
+                    account: acct,
+                },
+            );
+        }
+    }
     // Default the request target to the first allowed entry, so a single-cloud
     // env-armed deploy provisions without every request having to name the
     // cloud/account — otherwise requests fall back to the stub target and are
@@ -1196,9 +1334,12 @@ fn provisioning_cfg_from_parts(
         default_cloud,
         default_account,
         allowed,
-        terraform: Some(TerraformCfg {
+        services_dir: services_dir.map(PathBuf::from),
+        // The terraform connector arms only when a modules dir is given; a
+        // services-only overlay still loads (its services use other connectors).
+        terraform: modules_dir.map(|m| TerraformCfg {
             bin: default_tf_bin(),
-            modules_dir: PathBuf::from(modules_dir),
+            modules_dir: PathBuf::from(m),
             work_dir: work_dir.map(PathBuf::from),
         }),
         ..Default::default()
@@ -1586,6 +1727,14 @@ fn load_config(path: Option<PathBuf>) -> Config {
 
 async fn static_handler(uri: Uri, system_name: String) -> Response {
     let raw = uri.path().trim_start_matches('/');
+    // The embedded docs site owns everything under /docs. Branch here, before the
+    // UI's SPA fallback, so a missing docs page serves the docs 404 — not the app.
+    if raw == "docs" {
+        return docs_handler("");
+    }
+    if let Some(rest) = raw.strip_prefix("docs/") {
+        return docs_handler(rest);
+    }
     let path = if raw.is_empty() { "index.html" } else { raw };
     // Serve the requested asset; fall back to the SPA shell for client-side routes.
     let (served, file) = match WebAssets::get(path) {
@@ -1608,6 +1757,55 @@ async fn static_handler(uri: Uri, system_name: String) -> Response {
     }
     ([(header::CONTENT_TYPE, ct)], file.data.into_owned()).into_response()
 }
+
+/// Serve the embedded Docusaurus site. `rel` is the path under `/docs`. Docusaurus
+/// emits pretty URLs as `<page>/index.html`, so a request with no file extension
+/// falls back to the directory index.
+fn docs_handler(rel: &str) -> Response {
+    let rel = if rel.is_empty() {
+        "index.html"
+    } else {
+        rel.trim_end_matches('/')
+    };
+    let mut tries = vec![rel.to_string()];
+    if std::path::Path::new(rel).extension().is_none() {
+        tries.push(format!("{rel}/index.html"));
+    }
+    for t in &tries {
+        if let Some(f) = DocsAssets::get(t) {
+            return serve_doc(t, f, StatusCode::OK);
+        }
+    }
+    // Docs are bundled but this page isn't — serve the site's own 404. If the
+    // 404 itself is missing, the docs weren't built into this binary.
+    match DocsAssets::get("404.html") {
+        Some(f) => serve_doc("404.html", f, StatusCode::NOT_FOUND),
+        None => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            DOCS_NOT_BUNDLED,
+        )
+            .into_response(),
+    }
+}
+
+fn serve_doc(name: &str, file: rust_embed::EmbeddedFile, status: StatusCode) -> Response {
+    let ct = mime_guess::from_path(name)
+        .first_or_octet_stream()
+        .as_ref()
+        .to_string();
+    (status, [(header::CONTENT_TYPE, ct)], file.data.into_owned()).into_response()
+}
+
+/// Shown when this binary was built without the docs site (a bare `cargo build`
+/// rather than the release image). The hosted copy is the fallback.
+const DOCS_NOT_BUNDLED: &str = "<!doctype html><meta charset=utf-8><title>Docs not bundled</title>\
+<body style=\"font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.5\">\
+<h1>Docs aren't bundled in this build</h1>\
+<p>This Asgard binary was built without the documentation site. Build it with \
+<code>cd docs &amp;&amp; npm ci &amp;&amp; npm run build</code> before compiling, or read the \
+docs at <a href=\"https://asgard.dev\">asgard.dev</a>.</p>\
+<p><a href=\"/\">← Back to Asgard</a></p>";
 
 /// Replace the static `<title>Asgard</title>` shell title with the configured
 /// system name. No-op when unset or still the default, so the stock build is
@@ -1642,11 +1840,24 @@ mod tests {
     }
 
     #[test]
+    fn docs_handler_missing_page_is_404() {
+        // A /docs request for a page that doesn't exist must 404 — never fall
+        // through to the UI's SPA shell. Holds whether or not the docs site was
+        // built into this binary.
+        assert_eq!(
+            docs_handler("definitely-not-a-real-page").status(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[test]
     fn env_arming_defaults_target_to_the_sole_allowed_entry() {
         let cfg = provisioning_cfg_from_parts(
-            "/modules".into(),
+            Some("/modules".into()),
+            None,
             Some("/data/tf".into()),
             Some("auth0:psiq-tenant".into()),
+            None,
         );
         // The default target matches the allowlist, so a request that doesn't name
         // a cloud/account still resolves to an allowed target (not the stub).
@@ -1658,9 +1869,55 @@ mod tests {
 
     #[test]
     fn env_arming_without_allowlist_sets_no_default_target() {
-        let cfg = provisioning_cfg_from_parts("/modules".into(), None, None);
+        let cfg = provisioning_cfg_from_parts(Some("/modules".into()), None, None, None, None);
         assert!(cfg.default_cloud.is_none());
         assert!(cfg.default_account.is_none());
         assert!(cfg.allowed.is_empty());
+    }
+
+    #[test]
+    fn services_overlay_arms_without_terraform() {
+        // A customer adds their own service definitions by pointing
+        // ASGARD_SERVICES_DIR at an overlay dir — no terraform modules required.
+        let cfg = provisioning_cfg_from_parts(None, Some("/srv/overlay".into()), None, None, None);
+        assert_eq!(cfg.services_dir, Some(PathBuf::from("/srv/overlay")));
+        assert!(
+            cfg.terraform.is_none(),
+            "no modules dir → terraform connector stays unarmed"
+        );
+    }
+
+    #[test]
+    fn aws_default_account_sets_target_and_arms_its_allowlist() {
+        // ASGARD_AWS_DEFAULT_ACCOUNT alone makes (aws, <id>) the default target and
+        // an allowed one, so a request provisions into it without naming it.
+        let cfg = provisioning_cfg_from_parts(
+            Some("/modules".into()),
+            None,
+            None,
+            None,
+            Some("123456789012".into()),
+        );
+        assert_eq!(cfg.default_cloud.as_deref(), Some("aws"));
+        assert_eq!(cfg.default_account.as_deref(), Some("123456789012"));
+        assert!(cfg
+            .allowed
+            .iter()
+            .any(|t| t.cloud == "aws" && t.account == "123456789012"));
+    }
+
+    #[test]
+    fn aws_default_account_prepends_to_an_existing_allowlist() {
+        // It augments rather than replaces an explicit allowlist, and becomes the
+        // default target (first entry).
+        let cfg = provisioning_cfg_from_parts(
+            Some("/modules".into()),
+            None,
+            None,
+            Some("auth0:tenant".into()),
+            Some("123456789012".into()),
+        );
+        assert_eq!(cfg.default_account.as_deref(), Some("123456789012"));
+        assert_eq!(cfg.allowed.len(), 2);
     }
 }

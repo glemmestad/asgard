@@ -4,14 +4,21 @@ category: database
 status: live
 classification_min: poc
 classification_max: critical-path
-description: Managed PostgreSQL database (always requires human approval).
-auto_approvable: false
+description: Managed PostgreSQL database. Self-service at low classifications when within budget; classification + cost caps gate it, not a blanket review.
+auto_approvable: true
+long_running: true
 required_fields: [name]
 provisioner:
   connector: terraform
   config:
     module: aws/rds-postgres
     cloud: aws
+    # RDS-specific network placement, from operator env so the agent never supplies
+    # it. Unset vars are dropped and the module falls back to the default VPC.
+    # (Region is AWS-wide — set AWS_DEFAULT_REGION, not a per-service var.)
+    defaults:
+      subnet_group_name: "${ASGARD_RDS_SUBNET_GROUP}"
+      vpc_security_group_ids: "${ASGARD_RDS_SECURITY_GROUP_IDS:csv}"
 secret_outputs: [master_password, connection_url]
 cost:
   model: usage

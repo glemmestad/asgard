@@ -125,6 +125,13 @@ The flow the [agent seed](./onboarding-loop.md) encodes, all as MCP tool calls:
    versioned). `guidance_list` / `recipe_list` round these out with advisory
    playbooks and runbooks; `guidance_put` / `recipe_put` let an agent contribute,
    but a submission lands as a **draft** until an admin approves it.
+   **`mcp_catalog_list` / `mcp_catalog_get`** browse the **MCP catalog** — MCP
+   servers the org has shared, each with a structured install spec and an owner
+   (contact). On a **user token**, `mcp_catalog_publish` shares one you built
+   (owned by you, listed *user-submitted* until an admin promotes it to
+   *company-approved*); `mcp_catalog_set_state` disables or archives one you own.
+   This catalog is intentionally separate from the provisioning catalog above — it
+   is opt-in sharing, not derived from what your projects provisioned.
 2. **`seed_plan`** — give it your repo's languages and a one-line description of
    the work; it returns the minimal set of guidance files to drop in (core +
    language add-ons + domain overlays + templates). **`seed_get`** fetches each
@@ -136,6 +143,13 @@ The flow the [agent seed](./onboarding-loop.md) encodes, all as MCP tool calls:
 4. **`list_services` / `request_resource`** — discover what you can provision
    (storage, secrets, an Auth0 app, an inference gateway, …) and request it;
    self-service types provision immediately, review-tier types await approval.
+   **`list_resources`** shows what the project already has (id, type, state,
+   outputs). To let one resource reach another — say an `ecs-service` that must
+   read an `s3-bucket` or `dynamodb-table` — call **`request_grant`** with the two
+   ids and a level (defaults to `write` = read+write). The grant is itself a
+   provision request: same-project only, filed and audited like any other, with
+   the binding owned by the target's manifest, so a new target kind needs no core
+   change. Your own project's grants are self-service.
 5. **`gateway_credential`** — mint the project's LLM virtual key, then call models
    **out-of-band** (see below). Handing you a credential is control plane; using
    it is not.

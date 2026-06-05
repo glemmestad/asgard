@@ -26,12 +26,13 @@ impl TfStateStore {
         Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&self.key))
     }
 
-    /// Decrypt and return the stored state for `id`, or `None` if there is none.
-    pub async fn load(&self, id: &str) -> Result<Option<Vec<u8>>, ProvisionError> {
+    /// Decrypt and return the stored state for `id` with its version, or `None` if
+    /// there is none. The version feeds the compare-and-swap in [`Self::save_cas`].
+    pub async fn load(&self, id: &str) -> Result<Option<(Vec<u8>, i64)>, ProvisionError> {
         let row = sqlx::query(
             &self
                 .db
-                .q("SELECT ciphertext, nonce FROM tf_state WHERE id = ?"),
+                .q("SELECT ciphertext, nonce, version FROM tf_state WHERE id = ?"),
         )
         .bind(id)
         .fetch_optional(self.db.pool())
@@ -43,27 +44,57 @@ impl TfStateStore {
             .cipher()
             .decrypt(Nonce::from_slice(&nonce), ct.as_ref())
             .map_err(|e| ProvisionError::Backend(format!("decrypt tf state: {e}")))?;
-        Ok(Some(plain))
+        Ok(Some((plain, row.get::<i64, _>("version"))))
     }
 
-    /// Encrypt and upsert the state for `id`.
-    pub async fn save(&self, id: &str, state: &[u8]) -> Result<(), ProvisionError> {
+    /// Encrypt and persist the state for `id` as a compare-and-swap on `version`.
+    /// `expected` is the version [`Self::load`] returned (`None` for a first write).
+    /// A mismatch — another instance advanced the state under us — is a `Conflict`
+    /// that writes nothing, so a stale snapshot can never clobber newer state.
+    pub async fn save_cas(
+        &self,
+        id: &str,
+        state: &[u8],
+        expected: Option<i64>,
+    ) -> Result<(), ProvisionError> {
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ct = self
             .cipher()
             .encrypt(&nonce, state)
             .map_err(|e| ProvisionError::Backend(format!("encrypt tf state: {e}")))?;
-        sqlx::query(&self.db.q(
-            "INSERT INTO tf_state (id, ciphertext, nonce, updated_at) VALUES (?, ?, ?, ?) \
-             ON CONFLICT(id) DO UPDATE SET ciphertext = excluded.ciphertext, \
-             nonce = excluded.nonce, updated_at = excluded.updated_at",
-        ))
-        .bind(id)
-        .bind(to_hex(&ct))
-        .bind(to_hex(nonce.as_slice()))
-        .bind(asgard_storage::now())
-        .execute(self.db.pool())
-        .await?;
+        let ct_hex = to_hex(&ct);
+        let nonce_hex = to_hex(nonce.as_slice());
+        let now = asgard_storage::now();
+        let affected = match expected {
+            Some(v) => sqlx::query(&self.db.q(
+                "UPDATE tf_state SET ciphertext = ?, nonce = ?, updated_at = ?, \
+                 version = version + 1 WHERE id = ? AND version = ?",
+            ))
+            .bind(&ct_hex)
+            .bind(&nonce_hex)
+            .bind(&now)
+            .bind(id)
+            .bind(v)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected(),
+            None => sqlx::query(&self.db.q(
+                "INSERT INTO tf_state (id, ciphertext, nonce, updated_at, version) \
+                 VALUES (?, ?, ?, ?, 1) ON CONFLICT(id) DO NOTHING",
+            ))
+            .bind(id)
+            .bind(&ct_hex)
+            .bind(&nonce_hex)
+            .bind(&now)
+            .execute(self.db.pool())
+            .await?
+            .rows_affected(),
+        };
+        if affected == 0 {
+            return Err(ProvisionError::Conflict(format!(
+                "tf state {id} changed under us (expected version {expected:?})"
+            )));
+        }
         Ok(())
     }
 
@@ -120,18 +151,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn save_load_roundtrip_and_overwrite() {
+    async fn save_cas_roundtrips_and_rejects_stale_writes() {
         let s = store().await;
         assert!(s.load("proj/ecs/web").await.unwrap().is_none());
         assert!(!s.exists("proj/ecs/web").await.unwrap());
 
-        s.save("proj/ecs/web", b"{\"v\":1}").await.unwrap();
+        // First write (no prior version), then a CAS overwrite with the loaded one.
+        s.save_cas("proj/ecs/web", b"{\"v\":1}", None)
+            .await
+            .unwrap();
         assert!(s.exists("proj/ecs/web").await.unwrap());
-        assert_eq!(s.load("proj/ecs/web").await.unwrap().unwrap(), b"{\"v\":1}");
+        let (bytes, version) = s.load("proj/ecs/web").await.unwrap().unwrap();
+        assert_eq!(bytes, b"{\"v\":1}");
+        assert_eq!(version, 1);
 
-        // Upsert replaces in place.
-        s.save("proj/ecs/web", b"{\"v\":2}").await.unwrap();
-        assert_eq!(s.load("proj/ecs/web").await.unwrap().unwrap(), b"{\"v\":2}");
+        s.save_cas("proj/ecs/web", b"{\"v\":2}", Some(1))
+            .await
+            .unwrap();
+        let (bytes, version) = s.load("proj/ecs/web").await.unwrap().unwrap();
+        assert_eq!(bytes, b"{\"v\":2}");
+        assert_eq!(version, 2);
+
+        // A stale expected version conflicts and writes nothing.
+        assert!(matches!(
+            s.save_cas("proj/ecs/web", b"{\"v\":3}", Some(1)).await,
+            Err(ProvisionError::Conflict(_))
+        ));
+        assert_eq!(
+            s.load("proj/ecs/web").await.unwrap().unwrap().0,
+            b"{\"v\":2}"
+        );
+
+        // A first-write against a row that already exists conflicts too.
+        assert!(matches!(
+            s.save_cas("proj/ecs/web", b"{\"v\":9}", None).await,
+            Err(ProvisionError::Conflict(_))
+        ));
 
         s.delete("proj/ecs/web").await.unwrap();
         assert!(s.load("proj/ecs/web").await.unwrap().is_none());
@@ -140,7 +195,9 @@ mod tests {
     #[tokio::test]
     async fn ciphertext_is_not_plaintext() {
         let s = store().await;
-        s.save("p/t/n", b"super-secret-state").await.unwrap();
+        s.save_cas("p/t/n", b"super-secret-state", None)
+            .await
+            .unwrap();
         let row = sqlx::query("SELECT ciphertext FROM tf_state WHERE id = ?")
             .bind("p/t/n")
             .fetch_one(s.db.pool())
@@ -153,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn wrong_key_fails_to_decrypt() {
         let s = store().await;
-        s.save("p/t/n", b"state").await.unwrap();
+        s.save_cas("p/t/n", b"state", None).await.unwrap();
         let other = TfStateStore::new(s.db.clone(), [0x22; 32]);
         assert!(other.load("p/t/n").await.is_err());
     }

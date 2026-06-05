@@ -1,0 +1,64 @@
+---
+import Base from '../../layouts/Base.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import { getCollection, render } from 'astro:content';
+import '../../styles/docs.css';
+
+export async function getStaticPaths() {
+  const entries = await getCollection('docs');
+  return entries.map((entry) => ({
+    params: { slug: entry.data.slug === '/' ? undefined : entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+
+const all = await getCollection('docs');
+const links = all
+  .map((e) => ({
+    title: e.data.title,
+    pos: e.data.sidebar_position ?? 99,
+    href: e.data.slug === '/' ? '/docs' : `/docs/${e.id}`,
+  }))
+  .sort((a, b) => a.pos - b.pos);
+
+const currentHref = entry.data.slug === '/' ? '/docs' : `/docs/${entry.id}`;
+const toc = headings.filter((h) => h.depth === 2);
+---
+<Base
+  title={`${entry.data.title} · Asgard docs`}
+  description={`Asgard documentation: ${entry.data.title}.`}
+>
+  <Nav />
+  <div class="docs container">
+    <aside class="docs-side">
+      <div class="side-sticky">
+        <span class="side-label">Documentation</span>
+        <nav>
+          {links.map((l) => (
+            <a href={l.href} class:list={['side-link', { on: l.href === currentHref }]}>{l.title}</a>
+          ))}
+        </nav>
+      </div>
+    </aside>
+
+    <main class="docs-main">
+      <article class="prose"><Content /></article>
+    </main>
+
+    <aside class="docs-toc">
+      {toc.length > 0 && (
+        <div class="side-sticky">
+          <span class="side-label">On this page</span>
+          <nav>
+            {toc.map((h) => <a href={`#${h.slug}`} class="toc-link">{h.text}</a>)}
+          </nav>
+        </div>
+      )}
+    </aside>
+  </div>
+  <Footer />
+</Base>

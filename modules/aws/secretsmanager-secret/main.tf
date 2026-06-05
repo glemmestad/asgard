@@ -17,7 +17,8 @@ variable "name" {
 
 variable "region" {
   type    = string
-  default = "us-west-2"
+  # null => the AWS provider reads AWS_REGION/AWS_DEFAULT_REGION (operator-set, AWS-wide).
+  default = null
 }
 
 variable "tags" {

@@ -8,8 +8,8 @@ description: >-
   A Databricks Workflows job that runs a notebook task on serverless compute,
   optionally on a schedule. Provisioned through the platform's terraform connector +
   the Databricks provider — gated, tier-classified, project-tagged, and audited.
-  Always requires human approval (a scheduled job is recurring compute spend).
-auto_approvable: false
+  Self-service when classification and cost caps allow; they gate it, not a blanket review.
+auto_approvable: true
 required_fields: [name, notebook_path]
 provisioner:
   connector: terraform

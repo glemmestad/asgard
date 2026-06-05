@@ -5,6 +5,7 @@
 //! backends behave identically (see RFC-0001 §5 and BUILD_LOG D-005).
 
 pub mod audit;
+pub mod leases;
 mod migrations;
 
 use std::sync::Once;
@@ -139,11 +140,14 @@ pub fn plus_days(iso: &str, n: i64) -> String {
     (base + chrono::Duration::days(n)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
-/// An ISO-8601 instant `n` seconds from now (RFC3339, millis, UTC). Used for
-/// short-lived job leases. Negative `n` yields a past instant (already expired).
-pub fn now_plus_seconds(n: i64) -> String {
-    (chrono::Utc::now() + chrono::Duration::seconds(n))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+/// An ISO-8601 instant `secs` seconds after `iso` (RFC3339, millis, UTC). Same
+/// format as [`now`], so lease `expires_at` values sort lexicographically against
+/// it. Falls back to `now() + secs` when `iso` doesn't parse.
+pub fn plus_seconds(iso: &str, secs: i64) -> String {
+    let base = chrono::DateTime::parse_from_rfc3339(iso)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now());
+    (base + chrono::Duration::seconds(secs)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Whole seconds between two RFC3339 instants (`end - start`). `None` if either

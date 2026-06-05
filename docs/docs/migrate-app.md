@@ -130,6 +130,23 @@ request_resource auth0-application { "name": "api", "app_type": "non_interactive
 `secret_ref`s. Leave callbacks unset for now — the ALB URL does not exist yet
 (closed in Step 8).
 
+> **Enterprise SSO + a dedicated audience.** If the app authenticates against a
+> resource-server API and logs in through an existing tenant connection, the
+> module exposes two optional inputs (no-ops when unset, so OSS deploys are
+> unchanged):
+>
+> - `enabled_connections: ["my-sso-connection"]` enables an existing tenant
+>   connection on the client (the connection must already exist in the tenant).
+> - `resource_server_template: "https://api-{project}.example.com/"` creates a
+>   project-dedicated API; `{project}` is substituted with the project id and the
+>   resulting identifier is emitted as `outputs.audience` for the app's
+>   `AUTH0_AUDIENCE`.
+>
+> An operator that wants these on *every* app sets them as `config.defaults` in
+> an `ASGARD_SERVICES_DIR` overlay (env-sourced via `${VAR}` / `${VAR:csv}`)
+> rather than per request — the tenant-specific values stay in the deployment's
+> config, never in the catalog.
+
 ## Step 6 — Determine the KMS key
 
 The secrets above are wrapped by a KMS key (the account default `aws/secretsmanager`

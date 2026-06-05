@@ -24,6 +24,7 @@ jobs:
           extra_plugins: |
             @semantic-release/changelog
             @semantic-release/git
+            @semantic-release/exec
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,7 +36,11 @@ jobs:
       contents: read
       packages: write
     steps:
+      # Build from the release commit (the version-bumped tag), not the push
+      # SHA — otherwise the binary compiles the pre-bump Cargo.toml version.
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
 
       - uses: docker/setup-buildx-action@v3
 

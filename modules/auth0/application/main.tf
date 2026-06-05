@@ -11,8 +11,19 @@ terraform {
 
 provider "auth0" {}
 
+locals {
+  # Qualify the user-supplied name with the project id so apps from different
+  # projects don't collide (every AWS module does the same inline). Auth0 names
+  # are display strings with no charset/length limit, so no lowercasing.
+  qualified_name = "${lookup(var.tags, "project", "asgard")}-${var.name}"
+
+  audience = var.resource_server_template == "" ? "" : replace(
+    var.resource_server_template, "{project}", lookup(var.tags, "project", "")
+  )
+}
+
 resource "auth0_client" "app" {
-  name     = var.name
+  name     = local.qualified_name
   app_type = var.app_type
 
   # Auth0 client_metadata values must be strings; the tags map already is.
@@ -23,4 +34,25 @@ resource "auth0_client" "app" {
 # source reads it back (needs Management API read:client_keys at runtime).
 data "auth0_client" "app" {
   client_id = auth0_client.app.client_id
+}
+
+# A project-dedicated API whose identifier becomes the application's audience.
+resource "auth0_resource_server" "api" {
+  count      = local.audience == "" ? 0 : 1
+  name       = local.qualified_name
+  identifier = local.audience
+}
+
+# Enable existing tenant connections on this client. The singular association
+# resource adds only this client to each connection — it does not own the
+# connection's full client list, so it never clobbers other apps' access.
+data "auth0_connection" "enabled" {
+  for_each = toset(var.enabled_connections)
+  name     = each.value
+}
+
+resource "auth0_connection_client" "enabled" {
+  for_each      = data.auth0_connection.enabled
+  connection_id = each.value.id
+  client_id     = auth0_client.app.client_id
 }

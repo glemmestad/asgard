@@ -1,0 +1,53 @@
+---
+import Logo from './Logo.astro';
+import { nav, site } from '../data/site';
+---
+<header class="nav">
+  <div class="container nav-inner">
+    <Logo />
+    <nav class="links" aria-label="Primary">
+      {nav.map((l) => <a href={l.href}>{l.label}</a>)}
+    </nav>
+    <div class="actions">
+      <a class="ghost-link" href={site.github}>GitHub</a>
+      <a class="btn btn-primary sm" href={site.docs}>Get started</a>
+    </div>
+  </div>
+</header>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 62px;
+    gap: 24px;
+  }
+  .links { display: flex; gap: 26px; }
+  .links a {
+    font-size: 14px;
+    color: var(--muted);
+    transition: color 0.15s;
+  }
+  .links a:hover { color: var(--fg); }
+  .actions { display: flex; align-items: center; gap: 16px; }
+  .ghost-link { font-size: 14px; color: var(--fg-dim); }
+  .ghost-link:hover { color: var(--fg); }
+  .btn.sm { padding: 0.5em 0.95em; font-size: 14px; }
+
+  @media (max-width: 880px) {
+    .links { display: none; }
+  }
+  @media (max-width: 480px) {
+    .ghost-link { display: none; }
+  }
+</style>

@@ -1,0 +1,138 @@
+---
+const groups = [
+  { name: 'platform', cc: 'CC-1001', mtd: 4120, pct: 100, tone: 'teal' },
+  { name: 'research', cc: 'CC-2002', mtd: 2880, pct: 70, tone: 'blue' },
+  { name: 'growth', cc: 'CC-3003', mtd: 1240, pct: 30, tone: 'violet' },
+  { name: 'data-eng', cc: 'CC-4004', mtd: 760, pct: 18, tone: 'amber' },
+];
+const fmt = (n: number) => '$' + n.toLocaleString('en-US');
+---
+<section class="surface section-pad" id="surface">
+  <div class="container">
+    <div class="head">
+      <span class="eyebrow" data-reveal>Cost, attributed</span>
+      <h2 data-reveal>Every dollar lands on a project, owner and group.</h2>
+      <p class="lede" data-reveal>
+        Model spend and infrastructure spend denormalize the same dimensions, so the org cost tree,
+        month-to-date deltas and end-of-month forecast are a single query, no tagging cleanup, no
+        reconciliation spreadsheet.
+      </p>
+    </div>
+
+    <div class="window panel" data-reveal>
+      <div class="win-bar">
+        <span class="dot" style="background:#f87171"></span>
+        <span class="dot" style="background:#fbbf24"></span>
+        <span class="dot" style="background:#34d399"></span>
+        <span class="url">asgard.your-co.com / cost</span>
+      </div>
+      <div class="win-body">
+        <div class="dash-head">
+          <div>
+            <span class="dash-title">Cost dashboard</span>
+            <span class="dash-sub">Month to date · attributed by group</span>
+          </div>
+          <div class="seg"><span class="on">Group</span><span>Owner</span><span>Project</span><span>Model</span></div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <span class="kpi-l">Month to date</span>
+            <span class="kpi-v num">$9,000</span>
+            <span class="kpi-d up">▲ 12.4% vs last month</span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-l">EOM forecast</span>
+            <span class="kpi-v num">$14,200</span>
+            <span class="kpi-d">linear · 18 days left</span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-l">Attributed</span>
+            <span class="kpi-v num teal">100%</span>
+            <span class="kpi-d">every row carries a project</span>
+          </div>
+          <div class="kpi">
+            <span class="kpi-l">Active projects</span>
+            <span class="kpi-v num">42</span>
+            <span class="kpi-d">3 awaiting review</span>
+          </div>
+        </div>
+
+        <div class="tree">
+          {groups.map((g) => (
+            <div class="tree-row">
+              <div class="tree-id">
+                <span class={`swatch ${g.tone}`}></span>
+                <span class="tree-name">{g.name}</span>
+                <span class="tree-cc mono">{g.cc}</span>
+              </div>
+              <div class="bar-track"><span class={`bar ${g.tone}`} style={`width:${g.pct}%`}></span></div>
+              <span class="tree-amt num">{fmt(g.mtd)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    <p class="shot-note">Rendered from Asgard’s own UI tokens. The same view ships in the embedded dashboard.</p>
+  </div>
+</section>
+
+<style>
+  .head { max-width: 660px; display: flex; flex-direction: column; gap: 16px; margin-bottom: 44px; }
+  .head h2 { font-size: clamp(28px, 4vw, 48px); }
+
+  .window {
+    overflow: hidden;
+    box-shadow: 0 30px 70px -34px rgba(21, 24, 29, 0.3);
+  }
+  .win-bar {
+    display: flex; align-items: center; gap: 8px; padding: 11px 15px;
+    border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+  .win-bar .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .win-bar .url {
+    margin-left: 14px; font-family: var(--mono); font-size: 12px; color: var(--muted);
+    background: var(--bg); border: 1px solid var(--line); padding: 4px 12px; border-radius: 7px;
+  }
+  .win-body { padding: clamp(18px, 3vw, 30px); }
+
+  .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .dash-title { display: block; font-family: var(--display); font-weight: 700; font-size: 19px; }
+  .dash-sub { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; }
+  .seg { display: inline-flex; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 3px; }
+  .seg span { font-family: var(--mono); font-size: 12px; color: var(--muted); padding: 5px 11px; border-radius: 6px; }
+  .seg .on { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(21,24,29,.08); }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .kpi { background: var(--bg-2); border: 1px solid var(--line); border-radius: 11px; padding: 16px 17px; display: flex; flex-direction: column; gap: 6px; }
+  .kpi-l { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+  .kpi-v { font-family: var(--display); font-weight: 700; font-size: 28px; letter-spacing: -0.02em; }
+  .kpi-v.teal { color: var(--teal); }
+  .kpi-d { font-size: 12px; color: var(--muted); }
+  .kpi-d.up { color: var(--amber); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .tree { display: flex; flex-direction: column; gap: 14px; }
+  .tree-row { display: grid; grid-template-columns: 200px 1fr 90px; align-items: center; gap: 18px; }
+  .tree-id { display: flex; align-items: center; gap: 9px; }
+  .swatch { width: 9px; height: 9px; border-radius: 3px; }
+  .swatch.teal { background: var(--teal); } .swatch.blue { background: var(--blue); }
+  .swatch.violet { background: var(--violet); } .swatch.amber { background: var(--amber); }
+  .tree-name { font-size: 14px; font-weight: 500; }
+  .tree-cc { font-size: 11px; color: var(--muted-2); }
+  .bar-track { height: 9px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+  .bar { display: block; height: 100%; border-radius: 999px; }
+  .bar.teal { background: linear-gradient(90deg, var(--teal-deep), var(--teal)); }
+  .bar.blue { background: linear-gradient(90deg, #2563eb, var(--blue)); }
+  .bar.violet { background: linear-gradient(90deg, #7c3aed, var(--violet)); }
+  .bar.amber { background: linear-gradient(90deg, #b45309, var(--amber)); }
+  .tree-amt { text-align: right; font-size: 14px; font-weight: 600; }
+
+  .shot-note { text-align: center; margin-top: 18px; font-size: 12.5px; color: var(--muted-2); }
+
+  @media (max-width: 760px) {
+    .kpis { grid-template-columns: 1fr 1fr; }
+    .tree-row { grid-template-columns: 130px 1fr 70px; gap: 12px; }
+    .tree-cc { display: none; }
+  }
+</style>

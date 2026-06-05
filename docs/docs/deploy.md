@@ -186,14 +186,16 @@ points to; the same schema works on SQLite and Postgres.
 > uses. The database is the single system of record: back it up and you've backed up
 > everything — projects, keys, cost, and the encrypted secret store.
 
-> **Run one replica — this is a hard invariant, not a suggestion.** The cost-rollup
-> and secret-rotation background loops assume a single writer and Asgard does **not**
-> do leader election (by design). There is no guard against running two: an
-> accidental scale-out (`desired_count: 2`, an HPA, a rolling deploy that overlaps
-> old+new) silently **double-counts cost deltas and races secret rotation** — the
-> data corrupts quietly, with no error. Pin `desired_count: 1`, disable autoscaling
-> on the service, and scale vertically. The request path is stateless; only these
-> background loops require the single-writer guarantee.
+> **Scaling — `desired_count > 1` is safe on Postgres.** The background loops (cost
+> rollup, secret rotation, catalog reconcile, review sweep) are leader-leased: each
+> tick runs on whichever replica wins a short DB lease, so exactly one replica does
+> it. Terraform applies take a per-resource lease plus an optimistic version check on
+> the stored state, so two replicas can't race one resource. Failover is bounded by
+> the lease TTL (`lease_ttl_secs`, default 600s), and lease correctness assumes
+> replica clocks are within a fraction of the TTL of each other (true under NTP). Run
+> as many replicas as you like against one **Postgres**; the request path is
+> stateless. **SQLite stays single-process** — it's a local file with one writer, so
+> keep `desired_count: 1` there.
 
 ## Step 2 — The master key
 
@@ -419,24 +421,78 @@ the `terraform` connector registers on boot:
 ```bash
 ASGARD_TF_MODULES_DIR=/modules                       # bundled in the official image
 ASGARD_TF_WORK_DIR=/data/asgard-tf                   # scratch only; can be ephemeral
-ASGARD_TF_ALLOWED=auth0:your-tenant                  # cloud:account allowlist
+# ASGARD_TF_ALLOWED=aws:1234567890                   # OPTIONAL multi-account guardrail
+
+# AWS provisioning context (region + account are AWS-wide; subnet/SG are RDS-only):
+AWS_DEFAULT_REGION=us-west-2                          # standard provider env, all AWS modules
+ASGARD_AWS_DEFAULT_ACCOUNT=123456789012              # default target + attribution account
+ASGARD_RDS_SUBNET_GROUP=my-db-subnets                # RDS placement; omit → default VPC
+ASGARD_RDS_SECURITY_GROUP_IDS=sg-123,sg-456          # RDS security groups (csv)
+
+# Auth0 (all optional; omit → bare client, no API, no enforced connection):
+AUTH0_RESOURCE_SERVER_TEMPLATE=https://api-{project}.example.com/   # {project} → project id; emitted as `audience`
+AUTH0_DEFAULT_CONNECTIONS=my-sso-connection          # existing tenant connections to enable (csv)
 ```
 
-`ASGARD_TF_ALLOWED` is a `cloud:account` allowlist (the *target*, not a service id —
-services are gated by the catalog). The **first entry also becomes the default
-target**, so a single-cloud deploy provisions without each `request_resource`
-naming `cloud`/`account`. Use the form `auth0:<tenant>` (or `aws:<account-id>`).
+`ASGARD_TF_MODULES_DIR` is the switch that arms real provisioning — set it and the
+`terraform` connector registers; omit it and every terraform-backed service silently
+falls back to the dry-run **stub** (a "fulfilled" request that built nothing). The
+provider credentials Terraform uses are inherited from Asgard's own environment (the
+IAM role / instance profile it runs under, plus `AUTH0_*`, etc.).
+
+`ASGARD_TF_ALLOWED` is an **optional** `cloud:account` allowlist — a multi-account
+*hardening* guardrail, not a per-resource list and not required to provision. On a
+single-account deploy the IAM role Asgard runs under is the real boundary; leave this
+unset and it provisions into the ambient account. Set it (`aws:<account-id>`,
+`auth0:<tenant>`) only to constrain which accounts Asgard may target when it can
+assume into several; the first entry is the default target.
 
 This is the recommended path for a container deploy — no `asgard.yaml` needed for
 the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
+
+#### Bring your own services (operator overlay)
+
+The official image embeds the built-in catalog. To add **your own** provisionable
+services without a recompile, point `ASGARD_SERVICES_DIR` at a directory of
+`service.yaml` files (one per service, same shape as the built-ins). They overlay
+the embedded catalog, adding or overriding by `id`. Each service that uses the
+`terraform` connector references a module under `ASGARD_TF_MODULES_DIR`. Setting
+`ASGARD_SERVICES_DIR` alone arms the overlay even without Terraform (services on
+other connectors still load).
+
+How the files get to that directory is your call — three patterns, lightest first:
+
+1. **Derived image** (keeps the single-versioned-artifact property): build `FROM
+   asgard:<tag>`, `COPY` your `service.yaml`s and TF modules in, and set the two
+   env vars. The catalog is versioned with the image. Best when the catalog changes
+   at deploy cadence.
+   ```dockerfile
+   FROM asgard:0.7
+   COPY my-services/ /srv/services/
+   COPY my-modules/  /srv/modules/
+   ENV ASGARD_SERVICES_DIR=/srv/services
+   ENV ASGARD_TF_MODULES_DIR=/srv/modules
+   ```
+2. **Shared volume / EFS mount** (mutate the catalog without a redeploy): mount one
+   EFS access point (or any volume) into every task and set
+   `ASGARD_SERVICES_DIR=/mnt/services`, `ASGARD_TF_MODULES_DIR=/mnt/modules`. Edit
+   files on the volume and every node sees them. Cost: you now run EFS, and config
+   lives outside the image.
+3. **Object-storage sync** (decoupled, no shared filesystem): an ECS sidecar or
+   container entrypoint syncs an S3 prefix into a local dir on start
+   (`aws s3 sync s3://my-bucket/services /srv/services`), then Asgard reads it via
+   `ASGARD_SERVICES_DIR`. Lighter than EFS; adds a startup step.
+
+All three converge on the same contract: **files at a path, two env vars pointed at
+it.** Asgard doesn't care which delivery you choose.
 
 > **Terraform state is durable in the database.** Around every apply/destroy,
 > Asgard snapshots each resource's state into its own DB (the same SQLite or
 > Postgres as everything else), encrypted with the master key. So `work_dir` is
 > just scratch and may be ephemeral — back up the database and you've backed up
 > your infrastructure state along with everything else. No S3, no remote backend,
-> no extra dependency. (The single-replica invariant keeps the single writer
-> honest; see "Run one replica".)
+> no extra dependency. (Each apply takes a per-resource lease and a version check on
+> the stored state, so multiple replicas can't corrupt it; see "Scaling".)
 
 **Config file (full control).** Or arm it from `asgard.yaml` when you want the other
 provisioning knobs (auto-approve, services overlay, AWS cost sources) in one place:
@@ -505,8 +561,14 @@ plaintext, or the audit log.
 | `ASGARD_FORCE_HTTPS` | `1`/`true` forces `Secure` on auth cookies regardless of detected scheme — "HTTPS is required." Set this when TLS is mandatory everywhere. | off (adaptive) |
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |
 | `ASGARD_TF_MODULES_DIR` | Arms the `terraform` connector **without a config file** — point it at the bundled modules (`/modules`). Presence is what registers the connector. | (off) |
+| `ASGARD_SERVICES_DIR` | Operator overlay dir of your own `service.yaml` files (added/overridden by `id` on top of the embedded catalog). Lets a deployed image add services without a recompile or an `asgard.yaml`; arms the overlay even without Terraform. See *Bring your own services*. | (off) |
 | `ASGARD_TF_WORK_DIR` | Scratch dir for Terraform working dirs. **State itself is kept (encrypted) in the DB**, so this may be ephemeral. | system temp |
-| `ASGARD_TF_ALLOWED` | Comma-separated `cloud:account` allowlist for env-armed provisioning, e.g. `auth0:your-tenant,aws:1234567890`. A request to anything not listed is refused; the **first entry is also the default target**. | — |
+| `ASGARD_TF_ALLOWED` | **Optional** `cloud:account` allowlist (e.g. `aws:1234567890,auth0:your-tenant`) — a multi-account *hardening* guardrail, not a per-resource list. The real boundary on a single-account deploy is the IAM role Asgard runs under; leave this unset and it provisions into the ambient account. Set it to constrain which cloud accounts Asgard may target when it can assume into several. First entry is the default target. | — |
+| `AWS_DEFAULT_REGION` / `AWS_REGION` | **Standard AWS env**, read by the Terraform AWS provider for *every* AWS module — the one place to set the region all AWS resources deploy into. Asgard adds no region var of its own; a request may still override per-resource via `spec.region`. | (provider default) |
+| `ASGARD_AWS_DEFAULT_ACCOUNT` | AWS-wide default account id for attribution + the request gate's default target. Set it and provisioning into that account works without `ASGARD_TF_ALLOWED` (it's added to the allowlist and made the default target). The account Terraform actually deploys into is still whatever Asgard's IAM creds resolve to. | — |
+| `ASGARD_RDS_SUBNET_GROUP` | RDS-only: the DB subnet group `rds-postgres` deploys into (operator network placement, so agents don't supply it). Unset → the module falls back to the default VPC. | — |
+| `ASGARD_RDS_SECURITY_GROUP_IDS` | RDS-only: comma-separated security group ids for `rds-postgres`. Unset → default VPC security group. | — |
+| `ASGARD_AUTO_APPROVE_CEILINGS` | Per-classification monthly self-service ceilings, `classification=usd` comma list, e.g. `poc=500,light-operational=2500,wide-operational=10000,critical-path=25000`. A request whose project-total infra stays under its tier's ceiling auto-approves; above it routes to human review. Merged per-tier onto the defaults. | poc=500, light-op=2500, wide-op=10000, critical-path=25000 |
 | `ASGARD_GIT_TOKEN` | Token for catalog source repos (GitHub/GitLab), if configured. | — |
 | `ASGARD_GUARDRAIL_MODE` | `enforce` (default) or `monitor`. | `enforce` |
 

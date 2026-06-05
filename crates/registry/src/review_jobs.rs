@@ -76,7 +76,7 @@ impl ReviewJobs {
     /// safe without `FOR UPDATE` (portable across SQLite + Postgres) — a losing
     /// racer updates zero rows and we retry. Returns `None` when the queue is empty.
     pub async fn claim_next(&self, lease_secs: i64) -> Result<Option<ReviewJob>, RegistryError> {
-        let lease_until = asgard_storage::now_plus_seconds(lease_secs);
+        let lease_until = asgard_storage::plus_seconds(&asgard_storage::now(), lease_secs);
         loop {
             let row = sqlx::query(&self.db.q(
                 "SELECT id, request_id, project_id, target, status, attempts FROM review_jobs \

@@ -79,3 +79,31 @@ pub const RECIPES: &[(&str, &str, &[&str], &str, &str)] = &[
         include_str!("../../../seed/knowledge/recipes/mcp-server-with-auth0.json"),
     ),
 ];
+
+/// (name, summary, install-spec JSON, tags, README markdown). A few well-known
+/// MCP servers, seeded as the company-approved tier (owner `asgard`) so a fresh
+/// deploy's MCP catalog isn't blank and shows both transports (stdio + remote).
+/// The structured install renders to per-client snippets (Claude Code/Codex/Cursor).
+pub const MCP_SERVERS: &[(&str, &str, &str, &[&str], &str)] = &[
+    (
+        "GitHub",
+        "Repos, issues, pull requests, and code search as agent tools.",
+        r#"{"transport":"stdio","command":"docker","args":["run","-i","--rm","-e","GITHUB_PERSONAL_ACCESS_TOKEN","ghcr.io/github/github-mcp-server"],"env":["GITHUB_PERSONAL_ACCESS_TOKEN"]}"#,
+        &["github", "vcs", "official"],
+        include_str!("../../../seed/knowledge/mcp_servers/github.md"),
+    ),
+    (
+        "Filesystem",
+        "Sandboxed read/write access to a directory you choose — local files as tools.",
+        r#"{"transport":"stdio","command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","/path/to/allowed/dir"],"env":[]}"#,
+        &["files", "local", "official"],
+        include_str!("../../../seed/knowledge/mcp_servers/filesystem.md"),
+    ),
+    (
+        "Asgard control plane",
+        "This hub's own MCP server — register projects, provision services, read cost, pull standards/guidance/recipes.",
+        r#"{"transport":"remote","url":"https://asgard.example.com/mcp"}"#,
+        &["asgard", "governance", "remote"],
+        include_str!("../../../seed/knowledge/mcp_servers/asgard.md"),
+    ),
+];

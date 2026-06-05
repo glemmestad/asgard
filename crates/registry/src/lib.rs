@@ -17,6 +17,7 @@ pub mod evidence;
 pub mod governance;
 pub mod guidance;
 mod knowledge_seed;
+pub mod mcp_servers;
 pub mod promotion;
 pub mod promotion_reviewer;
 pub mod recipes;
@@ -29,6 +30,7 @@ pub use cost::{CostDim, CostReport, CostRow};
 pub use evidence::Evidence;
 pub use governance::{GovernanceConfig, GovernanceMetrics, Metric, PromotionSample};
 pub use guidance::Guidance;
+pub use mcp_servers::{McpServer, McpServerInput};
 pub use promotion::{ClassificationRequirements, EvidenceVerdict, PromotionChecklist};
 pub use promotion_reviewer::{ReviewerOutcome, ReviewerPanel};
 pub use recipes::Recipe;
@@ -235,6 +237,25 @@ pub struct Registration {
     pub stack_exception_renewal_date: String,
     #[serde(flatten)]
     pub evidence: Evidence,
+}
+
+/// Post-registration mutable fields. The project id is never among them — it is
+/// the stable handle every service tags and costs against. Each `None` leaves
+/// the stored value untouched.
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct ProjectUpdate {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub budget_usd: Option<f64>,
+}
+
+/// What happened to a budget change: nothing requested, applied self-service, or
+/// routed to human review because it exceeds the classification ceiling.
+#[derive(Debug)]
+pub enum BudgetOutcome {
+    Unchanged,
+    Applied,
+    PendingReview(Box<WorkflowRequest>),
 }
 
 #[derive(Clone)]
@@ -585,6 +606,143 @@ impl ProjectRegistry {
         self.get(project_id)
             .await?
             .ok_or_else(|| RegistryError::NotRegistered(project_id.to_string()))
+    }
+
+    /// Mutable project fields that change without re-registering — the project id
+    /// stays the stable handle every service tags and costs against, so a
+    /// code-name POC can become a production name with no orphaning. `None`
+    /// leaves a field untouched.
+    pub async fn update_project(
+        &self,
+        workflow: &WorkflowEngine,
+        project_id: &str,
+        update: ProjectUpdate,
+        ceiling: Option<f64>,
+        actor: &str,
+    ) -> Result<(Registration, BudgetOutcome), RegistryError> {
+        let reg = self.require_active(project_id).await?;
+
+        // Identity (name/description): a plain relabel — the id is unchanged.
+        let new_name = update
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let new_desc = update.description.as_deref();
+        if new_name.is_some() || new_desc.is_some() {
+            let name = new_name.unwrap_or(&reg.name);
+            let desc = new_desc.unwrap_or(&reg.description);
+            self.gateway.set_identity(project_id, name, desc).await?;
+            self.project_entity(
+                project_id,
+                name,
+                desc,
+                &reg.owner,
+                &reg.manager,
+                &reg.group,
+                &reg.cost_center,
+                &reg.classification,
+                reg.budget_usd,
+                &reg.lifecycle,
+            )
+            .await?;
+            let _ = asgard_storage::audit::append(
+                &self.db,
+                &asgard_storage::audit::AuditRecord::new(actor, "project.updated")
+                    .entity(format!("project:{project_id}"))
+                    .outcome("updated"),
+            )
+            .await;
+        }
+
+        // Budget: self-service up to the classification's auto-approve ceiling. A
+        // raise above it routes to human review (and applies on fulfill); lowering
+        // is always allowed.
+        let budget = match update.budget_usd {
+            None => BudgetOutcome::Unchanged,
+            Some(req) if req < 0.0 => {
+                return Err(RegistryError::Validation("budget_usd must be >= 0".into()))
+            }
+            Some(req) if req <= reg.budget_usd || ceiling.is_some_and(|c| req <= c) => {
+                self.gateway.set_budget(project_id, req).await?;
+                let _ = asgard_storage::audit::append(
+                    &self.db,
+                    &asgard_storage::audit::AuditRecord::new(actor, "project.budget_set")
+                        .entity(format!("project:{project_id}"))
+                        .outcome("applied")
+                        .data(serde_json::json!({ "budget_usd": req })),
+                )
+                .await;
+                BudgetOutcome::Applied
+            }
+            Some(req) => {
+                let request = workflow
+                    .submit(NewRequest {
+                        kind: "budget".into(),
+                        requester: actor.to_string(),
+                        subject: format!("budget/{project_id}"),
+                        // The payload doubles as the Cedar context, which is
+                        // float-hostile — carry the amounts as strings.
+                        payload: serde_json::json!({
+                            "project_id": project_id,
+                            "requested_budget": req.to_string(),
+                            "current_budget": reg.budget_usd.to_string(),
+                        }),
+                        sla_seconds: Some(7 * 24 * 3600),
+                    })
+                    .await?;
+                BudgetOutcome::PendingReview(Box::new(request))
+            }
+        };
+
+        let reg = self
+            .get(project_id)
+            .await?
+            .ok_or_else(|| RegistryError::NotRegistered(project_id.to_string()))?;
+        Ok((reg, budget))
+    }
+
+    /// Apply an approved over-ceiling budget request. Mirrors `fulfill_promotion`:
+    /// requires the request to be approved, then sets the budget and advances the
+    /// workflow to `Fulfilled`.
+    pub async fn fulfill_budget(
+        &self,
+        workflow: &WorkflowEngine,
+        request_id: &str,
+        actor: &str,
+    ) -> Result<WorkflowRequest, RegistryError> {
+        let req = workflow
+            .get(request_id)
+            .await?
+            .ok_or_else(|| RegistryError::NotRegistered(request_id.to_string()))?;
+        if req.state != State::Approved {
+            return Err(RegistryError::Validation(format!(
+                "request is {}, must be approved before applying",
+                req.state.as_str()
+            )));
+        }
+        let project_id = req
+            .payload
+            .get("project_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RegistryError::Validation("request has no project_id".into()))?;
+        let amount = req
+            .payload
+            .get("requested_budget")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<f64>().ok())
+            .ok_or_else(|| RegistryError::Validation("request has no requested_budget".into()))?;
+        self.gateway.set_budget(project_id, amount).await?;
+        let fulfilled = workflow.fulfill(request_id, actor).await?;
+        let _ = asgard_storage::audit::append(
+            &self.db,
+            &asgard_storage::audit::AuditRecord::new(actor, "project.budget_set")
+                .entity(format!("project:{project_id}"))
+                .outcome("applied")
+                .data(serde_json::json!({ "budget_usd": amount, "via": "review" })),
+        )
+        .await;
+        Ok(fulfilled)
     }
 
     /// The self-serve promotion checklist: the project's current tier, the one
@@ -1431,6 +1589,92 @@ impl ProjectRegistry {
         Ok(())
     }
 
+    /// MCP catalog entries. `state` defaults to `active` (the public catalog);
+    /// `status` filters by trust tier without hiding either. See [`mcp_servers`].
+    pub async fn mcp_server_list(
+        &self,
+        q: Option<&str>,
+        status: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<Vec<McpServer>, RegistryError> {
+        mcp_servers::list(&self.db, q, status, state).await
+    }
+
+    pub async fn mcp_server_get(&self, id: &str) -> Result<Option<McpServer>, RegistryError> {
+        mcp_servers::get(&self.db, id).await
+    }
+
+    /// Publish a new catalog entry owned by `owner`. `approved` mints it as the
+    /// company tier (admins / the boot seed); otherwise `community`. Audited.
+    pub async fn mcp_server_create(
+        &self,
+        owner: &str,
+        input: &McpServerInput,
+        approved: bool,
+    ) -> Result<McpServer, RegistryError> {
+        let m = mcp_servers::create(&self.db, owner, input, approved).await?;
+        self.record_version("mcp_server", &m.id, "created", owner, &m)
+            .await?;
+        Ok(m)
+    }
+
+    pub async fn mcp_server_update(
+        &self,
+        id: &str,
+        input: &McpServerInput,
+        actor: &str,
+    ) -> Result<Option<McpServer>, RegistryError> {
+        let m = mcp_servers::update(&self.db, id, input).await?;
+        if let Some(m) = &m {
+            self.record_version("mcp_server", id, "updated", actor, m)
+                .await?;
+        }
+        Ok(m)
+    }
+
+    pub async fn mcp_server_approve(&self, id: &str, approver: &str) -> Result<(), RegistryError> {
+        mcp_servers::set_status(&self.db, id, "approved", Some(approver)).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "approved", approver, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn mcp_server_unapprove(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        mcp_servers::set_status(&self.db, id, "community", None).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "unapproved", actor, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Move an entry through its lifecycle. `action` is the audited verb
+    /// (`disabled`/`enabled`/`archived`/`unarchived`); `state` is the result.
+    pub async fn mcp_server_set_state(
+        &self,
+        id: &str,
+        state: &str,
+        action: &str,
+        actor: &str,
+    ) -> Result<(), RegistryError> {
+        mcp_servers::set_state(&self.db, id, state).await?;
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, action, actor, &m)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn mcp_server_delete(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        if let Some(m) = mcp_servers::get(&self.db, id).await? {
+            self.record_version("mcp_server", id, "deleted", actor, &m)
+                .await?;
+        }
+        mcp_servers::delete(&self.db, id).await
+    }
+
     pub async fn standard_list(
         &self,
         q: Option<&str>,
@@ -1464,7 +1708,7 @@ impl ProjectRegistry {
     }
 
     /// A knowledge doc's version history (newest first). `doc_type` is one of
-    /// `guidance` | `recipes` | `standards`.
+    /// `guidance` | `recipes` | `standards` | `mcp_server`.
     pub async fn knowledge_history(
         &self,
         doc_type: &str,
@@ -1509,6 +1753,21 @@ impl ProjectRegistry {
             for s in asgard_catalog::standards::STANDARDS {
                 self.standard_put(s.id, s.title, s.summary, s.body, "asgard")
                     .await?;
+            }
+        }
+        if mcp_servers::count(&self.db).await? == 0 {
+            for (name, summary, install_json, tags, readme) in knowledge_seed::MCP_SERVERS {
+                let install: serde_json::Value = serde_json::from_str(install_json)
+                    .map_err(|e| RegistryError::Validation(format!("seed mcp '{name}': {e}")))?;
+                let input = McpServerInput {
+                    name: (*name).to_string(),
+                    summary: (*summary).to_string(),
+                    readme: (*readme).to_string(),
+                    install,
+                    tags: tags.iter().map(|s| s.to_string()).collect(),
+                    ..Default::default()
+                };
+                self.mcp_server_create("asgard", &input, true).await?;
             }
         }
         Ok(())
@@ -1666,6 +1925,84 @@ mod tests {
             description: Some("Detect fraud".into()),
             evidence: Evidence::default(),
         }
+    }
+
+    #[tokio::test]
+    async fn update_project_renames_without_changing_id_or_evidence() {
+        let (reg, wf) = registry_and_workflow().await;
+        let mut i = light_ready_input(); // carries real evidence
+        i.classification = Some("light-operational".into());
+        let r = reg.register(i, "u").await.unwrap();
+        let pid = r.project_id.clone();
+
+        let (updated, _) = reg
+            .update_project(
+                &wf,
+                &pid,
+                ProjectUpdate {
+                    name: Some("Production Aurora".into()),
+                    ..Default::default()
+                },
+                Some(2500.0),
+                "user:lead",
+            )
+            .await
+            .unwrap();
+        assert_eq!(updated.project_id, pid, "id is the stable handle");
+        assert_eq!(updated.name, "Production Aurora");
+        // Evidence untouched by a name-only change.
+        assert_eq!(updated.evidence.business_owner, "biz@corp.example");
+    }
+
+    #[tokio::test]
+    async fn budget_within_ceiling_applies_above_routes_to_review() {
+        let (reg, wf) = registry_and_workflow().await;
+        let r = reg.register(input(), "u").await.unwrap();
+        let pid = r.project_id.clone();
+
+        // Within the ceiling → applied immediately.
+        let (updated, outcome) = reg
+            .update_project(
+                &wf,
+                &pid,
+                ProjectUpdate {
+                    budget_usd: Some(400.0),
+                    ..Default::default()
+                },
+                Some(500.0),
+                "user:lead",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(outcome, BudgetOutcome::Applied));
+        assert_eq!(updated.budget_usd, 400.0);
+
+        // Above the ceiling → parked for review, budget unchanged until fulfilled.
+        let (parked, outcome) = reg
+            .update_project(
+                &wf,
+                &pid,
+                ProjectUpdate {
+                    budget_usd: Some(900.0),
+                    ..Default::default()
+                },
+                Some(500.0),
+                "user:lead",
+            )
+            .await
+            .unwrap();
+        assert_eq!(parked.budget_usd, 400.0, "unchanged until approved");
+        let req = match outcome {
+            BudgetOutcome::PendingReview(req) => *req,
+            other => panic!("expected review, got {other:?}"),
+        };
+
+        wf.approve(&req.id, "user:admin", Some("ok")).await.unwrap();
+        reg.fulfill_budget(&wf, &req.id, "user:admin")
+            .await
+            .unwrap();
+        let after = reg.get(&pid).await.unwrap().unwrap();
+        assert_eq!(after.budget_usd, 900.0, "applied on fulfill");
     }
 
     #[tokio::test]

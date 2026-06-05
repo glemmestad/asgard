@@ -25,16 +25,22 @@ use asgard_catalog::{seed, CatalogRepo, ListFilter};
 use asgard_gateway::{Gateway, GatewayRepo};
 use asgard_identity::{IdentityService, Role, PAT_PREFIX};
 use asgard_provision::{ProvisionService, RollupDim};
-use asgard_registry::{CostDim, ProjectRegistry, RegisterInput};
+use asgard_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput};
 use asgard_workflow::WorkflowEngine;
 
+use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    CallToolResult, Content, GetPromptRequestParams, GetPromptResult, Implementation,
+    ListPromptsResult, PaginatedRequestParams, PromptMessage, PromptMessageRole, ProtocolVersion,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::service::RequestContext;
-use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, RoleServer, ServerHandler};
+use rmcp::{
+    prompt, prompt_handler, prompt_router, tool, tool_handler, tool_router, ErrorData as McpError,
+    RoleServer, ServerHandler,
+};
 
 /// Per-request authentication principal injected by the `/mcp` auth middleware.
 /// A project virtual key authenticates as exactly one project (today's path); a
@@ -58,6 +64,7 @@ pub struct AsgardMcp {
     /// where the project comes from the authenticated key instead.
     default_project: Option<String>,
     tool_router: ToolRouter<Self>,
+    prompt_router: PromptRouter<Self>,
 }
 
 // --- typed tool inputs (first-class JSON Schemas for agents) -----------------
@@ -109,11 +116,19 @@ pub struct RegisterProjectArgs {
     pub evidence: asgard_registry::Evidence,
 }
 
-/// Project id plus the full evidence record (PUT semantics — the submitted block
-/// replaces the stored one).
+/// Project id plus mutable fields. `name`/`description`/`budget_usd` patch the
+/// project in place (id unchanged). The evidence block keeps PUT semantics, but
+/// is only written when a field is supplied — a name-only update leaves evidence
+/// intact.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct UpdateProjectArgs {
     pub project_id: Option<String>,
+    /// New display name (e.g. code-name → production name). Id stays the same.
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// New monthly budget. Up to the classification's self-service ceiling applies
+    /// immediately; above it routes to human review.
+    pub budget_usd: Option<f64>,
     #[serde(flatten)]
     pub evidence: asgard_registry::Evidence,
 }
@@ -121,6 +136,44 @@ pub struct UpdateProjectArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IdArg {
     pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogGetArgs {
+    /// The catalog entry id (see mcp_catalog_list).
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogPublishArgs {
+    /// Provide to update an existing entry you own; omit to publish a new one.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    #[serde(default)]
+    pub summary: String,
+    /// Optional rich getting-started / README (markdown).
+    #[serde(default)]
+    pub readme: String,
+    /// Structured install: { transport: "stdio"|"remote", command, args, env, url }.
+    /// stdio uses command/args/env (env is a list of variable names); remote uses url.
+    #[serde(default)]
+    pub install: serde_json::Value,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpCatalogStateArgs {
+    pub id: String,
+    /// `active`, `disabled` (temporarily hide), or `archived` (retire).
+    pub state: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -159,6 +212,12 @@ pub struct RecipeGetArgs {
     pub slug: String,
 }
 
+/// schemars renders `serde_json::Value` as a boolean (`true`) schema, which some
+/// MCP clients reject as a property-level input schema. Emit a free-form object.
+fn freeform_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({ "type": "object" })
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct RecipePutArgs {
     #[serde(default)]
@@ -171,6 +230,7 @@ pub struct RecipePutArgs {
     pub body: String,
     /// Optional machine-readable at-a-glance: { description, inputs, steps, outputs }.
     #[serde(default)]
+    #[schemars(schema_with = "freeform_object")]
     pub spec: serde_json::Value,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -219,8 +279,40 @@ pub struct RequestResourceArgs {
     pub project_id: Option<String>,
     pub resource_type: String,
     pub name: String,
+    #[schemars(schema_with = "freeform_object")]
     pub spec: Option<serde_json::Value>,
     pub requester: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RequestGrantArgs {
+    /// Target project (required on a user token; omit on a project key). Both
+    /// resources must belong to it.
+    pub project_id: Option<String>,
+    /// The resource being granted access (e.g. an ecs-service); its identity gets
+    /// the access. Use an id from list_resources.
+    pub consumer_resource_id: String,
+    /// The resource access is granted to (e.g. an s3-bucket).
+    pub target_resource_id: String,
+    /// Access level the target defines; defaults to `write` (read+write).
+    #[serde(default)]
+    pub level: Option<String>,
+    pub requester: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListResourcesArgs {
+    /// Target project (required on a user token; omit on a project key).
+    pub project_id: Option<String>,
+    /// Optional state filter (e.g. "provisioned", "destroyed", "suspended").
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetResourceArgs {
+    /// The resource id from a request_resource outcome or list_resources.
+    pub resource_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -284,6 +376,7 @@ impl AsgardMcp {
             provision,
             default_project,
             tool_router: Self::tool_router(),
+            prompt_router: Self::prompt_router(),
         }
     }
 
@@ -291,6 +384,16 @@ impl AsgardMcp {
         ctx.extensions
             .get::<http::request::Parts>()
             .and_then(|p| p.extensions.get::<McpAuth>().cloned())
+    }
+
+    /// The authenticated principal as a requester/actor string (`user:{email}` or
+    /// `project:{id}`), or `None` on an unauthenticated stdio connection.
+    fn requester_from_auth(ctx: &RequestContext<RoleServer>) -> Option<String> {
+        match Self::auth(ctx) {
+            Some(McpAuth::User { email, .. }) => Some(format!("user:{email}")),
+            Some(McpAuth::Project { project_id }) => Some(format!("project:{project_id}")),
+            None => None,
+        }
     }
 
     /// The project a scoped tool acts on, authorized by the request principal:
@@ -398,6 +501,14 @@ impl AsgardMcp {
     ) -> Result<String, String> {
         let requester = a.requester.clone();
         let owner_email = owner_override.clone().unwrap_or(a.owner_email);
+        // No budget given → default to half the classification's self-service
+        // ceiling, so a project never registers with a $0 (effectively no-cap) budget.
+        let budget_usd = a.budget_usd.or_else(|| {
+            let class = a.classification.as_deref().unwrap_or("poc");
+            self.provision
+                .auto_approve_ceiling(class)
+                .map(|ceiling| ceiling / 2.0)
+        });
         let input = RegisterInput {
             name: a.name,
             owner_email,
@@ -405,7 +516,7 @@ impl AsgardMcp {
             group: a.group,
             classification: a.classification,
             data_class: a.data_class,
-            budget_usd: a.budget_usd,
+            budget_usd,
             description: a.description,
             evidence: a.evidence,
         };
@@ -430,15 +541,45 @@ impl AsgardMcp {
     async fn do_update_project(
         &self,
         pid: &str,
-        evidence: asgard_registry::Evidence,
+        a: UpdateProjectArgs,
         actor: &str,
     ) -> Result<String, String> {
-        let reg = self
+        // Evidence is PUT — but only when supplied, so a name/budget-only update
+        // doesn't clear it.
+        if a.evidence != asgard_registry::Evidence::default() {
+            self.registry
+                .update_evidence(pid, a.evidence, actor)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        let reg = self.registry.get(pid).await.map_err(|e| e.to_string())?;
+        let ceiling = reg
+            .as_ref()
+            .and_then(|r| self.provision.auto_approve_ceiling(&r.classification));
+        let (reg, budget) = self
             .registry
-            .update_evidence(pid, evidence, actor)
+            .update_project(
+                &self.workflow,
+                pid,
+                asgard_registry::ProjectUpdate {
+                    name: a.name,
+                    description: a.description,
+                    budget_usd: a.budget_usd,
+                },
+                ceiling,
+                actor,
+            )
             .await
             .map_err(|e| e.to_string())?;
-        Ok(serde_json::to_string(&reg).unwrap_or_default())
+        let pending = match budget {
+            asgard_registry::BudgetOutcome::PendingReview(req) => Some(req),
+            _ => None,
+        };
+        Ok(serde_json::to_string(&serde_json::json!({
+            "project": reg,
+            "budget_review": pending,
+        }))
+        .unwrap_or_default())
     }
 
     async fn do_project_get(&self, pid: &str) -> Result<String, String> {
@@ -615,6 +756,104 @@ impl AsgardMcp {
         serde_json::to_string(&r).map_err(|e| e.to_string())
     }
 
+    async fn do_mcp_catalog_list(&self) -> Result<String, String> {
+        // Agents browse the live catalog (active entries, both trust tiers).
+        let list = self
+            .registry
+            .mcp_server_list(None, None, Some("active"))
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&list).map_err(|e| e.to_string())
+    }
+
+    async fn do_mcp_catalog_get(&self, id: &str) -> Result<String, String> {
+        match self
+            .registry
+            .mcp_server_get(id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(m) => serde_json::to_string(&m).map_err(|e| e.to_string()),
+            None => Err(format!(
+                "unknown catalog entry '{id}'; call mcp_catalog_list for ids"
+            )),
+        }
+    }
+
+    /// Publish (or update) a catalog entry as the authenticated user. An admin's
+    /// publish lands company-approved; everyone else's is user-submitted.
+    async fn do_mcp_catalog_publish(
+        &self,
+        email: &str,
+        role: &str,
+        a: McpCatalogPublishArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let input = McpServerInput {
+            name: a.name,
+            summary: a.summary,
+            readme: a.readme,
+            install: a.install,
+            repository: a.repository,
+            homepage: a.homepage,
+            version: a.version,
+            tags: a.tags,
+        };
+        let m = match a.id.filter(|s| !s.is_empty()) {
+            Some(id) => {
+                let existing = self
+                    .registry
+                    .mcp_server_get(&id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown catalog entry '{id}'"))?;
+                if existing.owner != email && !admin {
+                    return Err("only the owner or an admin can edit this catalog entry".into());
+                }
+                self.registry
+                    .mcp_server_update(&id, &input, email)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown catalog entry '{id}'"))?
+            }
+            None => self
+                .registry
+                .mcp_server_create(email, &input, admin)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
+        serde_json::to_string(&m).map_err(|e| e.to_string())
+    }
+
+    async fn do_mcp_catalog_set_state(
+        &self,
+        email: &str,
+        role: &str,
+        a: McpCatalogStateArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let existing = self
+            .registry
+            .mcp_server_get(&a.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown catalog entry '{}'", a.id))?;
+        if existing.owner != email && !admin {
+            return Err("only the owner or an admin can change this catalog entry's state".into());
+        }
+        let action = if a.state == "active" {
+            "enabled"
+        } else {
+            &a.state
+        };
+        self.registry
+            .mcp_server_set_state(&a.id, &a.state, action, email)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&serde_json::json!({"ok": true, "id": a.id, "state": a.state}))
+            .map_err(|e| e.to_string())
+    }
+
     async fn do_cost_report(&self, a: CostReportArgs) -> Result<String, String> {
         let by = CostDim::parse(a.by.as_deref().unwrap_or("project")).ok_or_else(|| {
             "by must be one of: project, owner, manager, group, classification, model, provider"
@@ -757,6 +996,38 @@ impl AsgardMcp {
         Ok(serde_json::to_string(&outcome).unwrap_or_default())
     }
 
+    async fn do_request_grant(&self, pid: &str, a: RequestGrantArgs) -> Result<String, String> {
+        let level = a.level.as_deref().unwrap_or("write");
+        let requester = a.requester.as_deref().unwrap_or(DEFAULT_REQUESTER);
+        let outcome = self
+            .provision
+            .request_grant(
+                &self.workflow,
+                &self.registry,
+                pid,
+                &a.consumer_resource_id,
+                &a.target_resource_id,
+                level,
+                requester,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_string(&outcome).unwrap_or_default())
+    }
+
+    async fn do_list_resources(&self, pid: &str, state: Option<&str>) -> Result<String, String> {
+        let mut recs = self
+            .provision
+            .repo()
+            .list_by_project(pid)
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Some(s) = state {
+            recs.retain(|r| r.state == s);
+        }
+        Ok(serde_json::to_string(&recs).unwrap_or_default())
+    }
+
     async fn do_request_promotion(
         &self,
         pid: &str,
@@ -882,6 +1153,29 @@ impl AsgardMcp {
         .to_string())
     }
 
+    /// One-shot seed: the same plan as `seed_plan`, but each file's `body`
+    /// inlined so the agent writes the whole starting point (AGENTS.md + the
+    /// `.agent/` standards) in a single call instead of looping `seed_get`.
+    fn do_bootstrap(&self, a: SeedPlanArgs) -> Result<String, String> {
+        let tier = match a.tier.as_deref() {
+            Some(t) => seed::SeedTier::parse(t)
+                .ok_or_else(|| "tier must be minimal, standard, or strict".to_string())?,
+            None => seed::SeedTier::Standard,
+        };
+        let langs = a.languages.unwrap_or_default();
+        let task = a.task.unwrap_or_default();
+        let files: Vec<_> = seed::plan(&langs, &task, tier)
+            .iter()
+            .map(|m| json!({"path": m.path, "title": m.title, "body": m.body}))
+            .collect();
+        Ok(json!({
+            "tier": tier.as_str(),
+            "files": files,
+            "next": "Each entry's `body` is the actual file content. Write it verbatim to its `path` (create directories as needed) — actually create the files, do not summarize or just describe them. Then call register_project.",
+        })
+        .to_string())
+    }
+
     fn do_seed_get(&self, id: &str) -> Result<String, String> {
         match seed::get(id) {
             Some(m) => Ok(json!({
@@ -964,14 +1258,14 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Update a project's classification evidence record (governance metadata: owners, support/runbook/monitoring URLs, security review status, maintainers, data flows, etc.). PUT semantics — the submitted fields replace the stored evidence block; omitted fields are cleared. Requires a project you own/manage."
+        description = "Update a registered project in place — the project id never changes, so all tagging/cost attribution stays intact. Set `name` to relabel (code-name → production name), `budget_usd` to re-budget (up to the classification's self-service ceiling applies immediately; above it routes to human review), and/or the evidence fields to revise governance metadata (PUT — evidence is rewritten only when supplied, so a name/budget-only update leaves it intact). Requires a project you own/manage."
     )]
     async fn update_project(
         &self,
         ctx: RequestContext<RoleServer>,
         Parameters(a): Parameters<UpdateProjectArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let pid = match self.resolve_project(&ctx, a.project_id).await {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
             Ok(p) => p,
             Err(e) => return deny(e),
         };
@@ -980,7 +1274,7 @@ impl AsgardMcp {
             Some(McpAuth::Project { project_id }) => format!("project:{project_id}"),
             None => DEFAULT_REQUESTER.to_string(),
         };
-        wrap(self.do_update_project(&pid, a.evidence, &actor).await)
+        wrap(self.do_update_project(&pid, a, &actor).await)
     }
 
     #[tool(
@@ -1099,6 +1393,61 @@ impl AsgardMcp {
     }
 
     #[tool(
+        description = "List the MCP catalog — MCP servers other people have published and shared in this org. Each entry returns name, summary, structured install spec, tags, owner (contact), and tier (company-approved vs user-submitted). Use it to find an MCP server to install."
+    )]
+    async fn mcp_catalog_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.do_mcp_catalog_list().await)
+    }
+
+    #[tool(
+        description = "Fetch one MCP catalog entry by id (see mcp_catalog_list) — full README plus the structured install spec to wire it into your client."
+    )]
+    async fn mcp_catalog_get(
+        &self,
+        Parameters(a): Parameters<McpCatalogGetArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_mcp_catalog_get(&a.id).await)
+    }
+
+    #[tool(
+        description = "Publish an MCP server to the catalog so others can discover and install it (or update one you own by passing its id). install = { transport: stdio|remote, command, args, env, url }. Requires a user token (asg_pat_…) — the entry is owned by you as the contact point; a project key cannot publish. Your submission is listed as user-submitted until an admin promotes it to company-approved."
+    )]
+    async fn mcp_catalog_publish(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<McpCatalogPublishArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => {
+                return deny(
+                    "publishing to the MCP catalog requires a user token (asg_pat_…); a project key has no owner identity".into(),
+                )
+            }
+        };
+        wrap(self.do_mcp_catalog_publish(&email, &role, a).await)
+    }
+
+    #[tool(
+        description = "Change the lifecycle of an MCP catalog entry you own: disabled (temporarily hide), archived (retire — kept for audit, prunable), or active (restore). Requires a user token; owner or admin only."
+    )]
+    async fn mcp_catalog_set_state(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<McpCatalogStateArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => {
+                return deny(
+                    "changing a catalog entry's state requires a user token (asg_pat_…)".into(),
+                )
+            }
+        };
+        wrap(self.do_mcp_catalog_set_state(&email, &role, a).await)
+    }
+
+    #[tool(
         description = "Model/token spend rolled up by a dimension: project, owner, manager, group, classification, model, or provider."
     )]
     async fn cost_report(
@@ -1191,18 +1540,91 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Request an infrastructure resource for a registered project (e.g. s3-bucket, dynamodb-table, random-secret). Self-service types provision immediately; review-tier types await approval."
+        description = "Request an infrastructure resource for a registered project (e.g. s3-bucket, dynamodb-table, random-secret). Self-service types provision immediately; review-tier types await approval (and deploy automatically once approved). Fast resources return a `provisioned` record; slow ones (RDS/ALB/ECS) return a `provisioning` record — poll get_resource with its id until state is `provisioned` or `failed`."
     )]
     async fn request_resource(
         &self,
         ctx: RequestContext<RoleServer>,
-        Parameters(a): Parameters<RequestResourceArgs>,
+        Parameters(mut a): Parameters<RequestResourceArgs>,
     ) -> Result<CallToolResult, McpError> {
         let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
             Ok(p) => p,
             Err(e) => return deny(e),
         };
+        if a.requester.is_none() {
+            a.requester = Self::requester_from_auth(&ctx);
+        }
         wrap(self.do_request_resource(&pid, a).await)
+    }
+
+    #[tool(
+        description = "Grant a consumer resource (e.g. an ecs-service) access to a target resource in the same project (e.g. an s3-bucket or dynamodb-table). Defaults to read+write. Your own project's resources are self-service — no approval. Pass ids from list_resources."
+    )]
+    async fn request_grant(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(mut a): Parameters<RequestGrantArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        if a.requester.is_none() {
+            a.requester = Self::requester_from_auth(&ctx);
+        }
+        wrap(self.do_request_grant(&pid, a).await)
+    }
+
+    #[tool(
+        description = "List a project's provisioned resources (id, type, name, state, outputs). Optionally filter by state. Use the ids here for request_grant and deprovision_resource."
+    )]
+    async fn list_resources(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<ListResourcesArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        wrap(self.do_list_resources(&pid, a.state.as_deref()).await)
+    }
+
+    #[tool(
+        description = "Fetch one provisioned resource by id — poll this to follow an async provision or teardown to its terminal state. Returns state (provisioning → provisioned/failed, or destroying → destroyed/destroy_failed), outputs, and error. Use after request_resource returns a `provisioning` record (slow services like RDS/ALB/ECS provision in the background)."
+    )]
+    async fn get_resource(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<GetResourceArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        // Same scoping as deprovision: the resource id is not a cross-project
+        // handle — it must belong to a project the caller is authorized for.
+        let rec = match self.provision.repo().get(&a.resource_id).await {
+            Ok(Some(r)) => r,
+            Ok(None) => return deny(format!("resource {} not found", a.resource_id)),
+            Err(e) => return deny(e.to_string()),
+        };
+        match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => {
+                if let Err(e) = self.authorize_user(&email, &role, &rec.project_id).await {
+                    return deny(e);
+                }
+            }
+            Some(McpAuth::Project { project_id }) => {
+                if rec.project_id != project_id {
+                    return deny(format!("resource {} not found", a.resource_id));
+                }
+            }
+            None => {
+                if let Some(scope) = &self.default_project {
+                    if &rec.project_id != scope {
+                        return deny(format!("resource {} not found", a.resource_id));
+                    }
+                }
+            }
+        }
+        wrap(Ok(serde_json::to_string(&rec).unwrap_or_default()))
     }
 
     #[tool(
@@ -1386,14 +1808,52 @@ impl AsgardMcp {
     async fn seed_get(&self, Parameters(a): Parameters<IdArg>) -> Result<CallToolResult, McpError> {
         wrap(self.do_seed_get(&a.id))
     }
+
+    #[tool(
+        description = "Set up a repo on Asgard in one call: returns the agent-seed plan with every file's body inlined (AGENTS.md + the .agent/ coding and security standards for the repo's languages/work). Write each file to its path, then register_project. One shot — no seed_plan/seed_get loop."
+    )]
+    async fn bootstrap(
+        &self,
+        Parameters(a): Parameters<SeedPlanArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_bootstrap(a))
+    }
+}
+
+#[prompt_router]
+impl AsgardMcp {
+    /// Surfaced as a slash command by MCP clients (e.g. Claude Code's
+    /// `/mcp__asgard__bootstrap`): a one-line shortcut that tells the agent to run
+    /// the seed → register loop. No arguments, so it expands without prompting.
+    #[prompt(
+        name = "bootstrap",
+        description = "Set up the current repo on Asgard: pull the AGENTS.md starting point + coding/security standards, then register the project."
+    )]
+    async fn bootstrap_prompt(&self) -> Vec<PromptMessage> {
+        vec![PromptMessage::new_text(
+            PromptMessageRole::User,
+            "Set this repository up on Asgard now. Do it, don't describe it:\n\
+             1. Call the `bootstrap` tool.\n\
+             2. For every file it returns, write the `body` verbatim to its `path` \
+             (create directories as needed) — actually create the files on disk; do \
+             not paraphrase or just summarize what the seed contains.\n\
+             3. Call `register_project` to register this project — ask me for the \
+             owner, budget, and data classification if you don't already have them.\n\
+             Start with step 1 now.",
+        )]
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
+#[prompt_handler(router = self.prompt_router)]
 impl ServerHandler for AsgardMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::LATEST;
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_prompts()
+            .build();
         info.server_info = Implementation::new("asgard", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
             "Governance control plane. Connect with a user token to register projects \
@@ -1621,7 +2081,8 @@ mod tests {
         );
         registry.seed_knowledge().await.unwrap();
         let workflow = Arc::new(WorkflowEngine::new(db.clone(), policy));
-        let provision = ProvisionService::new(ProvisionRepo::new(db));
+        let mut provision = ProvisionService::new(ProvisionRepo::new(db));
+        provision.set_workflow(workflow.clone());
         AsgardMcp::new(catalog, gw, registry, workflow, provision, default_project)
     }
 
@@ -1651,11 +2112,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn get_info_declares_tools() {
+    async fn get_info_declares_tools_and_prompts() {
         let s = server(None).await;
         let info = s.get_info();
         assert_eq!(info.server_info.name, "asgard");
         assert!(info.capabilities.tools.is_some());
+        assert!(info.capabilities.prompts.is_some());
+    }
+
+    #[tokio::test]
+    async fn every_tool_input_schema_is_client_valid() {
+        let s = server(None).await;
+        for tool in s.tool_router.list_all() {
+            let props = tool
+                .input_schema
+                .get("properties")
+                .and_then(|p| p.as_object());
+            let Some(props) = props else { continue };
+            for (field, schema) in props {
+                assert!(
+                    schema.is_object(),
+                    "tool `{}` field `{}` renders as a non-object JSON Schema ({schema}); \
+                     strict MCP clients reject this. Annotate the field with a concrete schema.",
+                    tool.name,
+                    field,
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_inlines_agents_md_and_standards() {
+        let s = server(None).await;
+        let out = s
+            .do_bootstrap(SeedPlanArgs {
+                languages: Some(vec!["rust".into()]),
+                task: Some("build a service".into()),
+                tier: None,
+            })
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let files = v["files"].as_array().unwrap();
+        // AGENTS.md is always included, with its body inlined (no second fetch).
+        let agents = files
+            .iter()
+            .find(|f| f["path"] == "AGENTS.md")
+            .expect("AGENTS.md in plan");
+        assert!(agents["body"].as_str().unwrap().contains("AGENTS.md"));
+        // The Rust add-on is pulled in for a Rust repo.
+        assert!(files.iter().any(|f| f["path"] == ".agent/lang/RUST.md"));
     }
 
     #[tokio::test]

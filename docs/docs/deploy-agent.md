@@ -50,7 +50,7 @@ groups:
 requirements, review windows, the `maintainer_min` metric threshold — is optional
 with policy-doc defaults; see the operator guide's `asgard.yaml` reference.)
 
-## Step 3 — Boot (single replica)
+## Step 3 — Boot
 
 ```bash
 ASGARD_DATABASE_URL="$DB" \
@@ -58,7 +58,9 @@ ASGARD_SECRET_KEY="$ASGARD_SECRET_KEY" \
 ASGARD_ADMIN_PASSWORD="${ASGARD_ADMIN_PASSWORD:-}" \
 asgard serve --bind 0.0.0.0:8080 --config ./asgard.yaml
 ```
-Run exactly **one** replica (the background rollup/rotation loops assume a single writer).
+On **Postgres**, `desired_count > 1` is safe — the background loops are leader-leased
+and Terraform applies take per-resource locks (failover bounded by `lease_ttl_secs`,
+default 600s). On **SQLite**, run exactly one replica (a local file with one writer).
 
 **Verify:** `curl -fsS http://localhost:8080/healthz` returns `ok` (liveness) and
 `curl -fsS http://localhost:8080/readyz` returns `ready` (DB reachable). If
@@ -124,10 +126,19 @@ Container-first (no config file) — set on the Asgard process (the image bundle
 ```bash
 ASGARD_TF_MODULES_DIR=/modules
 ASGARD_TF_WORK_DIR=/data/asgard-tf      # scratch only; can be ephemeral
-ASGARD_TF_ALLOWED=auth0:your-tenant
+ASGARD_TF_ALLOWED=auth0:your-tenant     # OPTIONAL multi-account guardrail
+
+# AWS resources (region + account are AWS-wide; subnet/SG are RDS placement):
+AWS_DEFAULT_REGION=us-west-2            # standard provider env — all AWS modules
+ASGARD_AWS_DEFAULT_ACCOUNT=123456789012 # default target + attribution account
+ASGARD_RDS_SUBNET_GROUP=my-db-subnets   # RDS-only; omit → default VPC
+ASGARD_RDS_SECURITY_GROUP_IDS=sg-123,sg-456
 AUTH0_DOMAIN=... AUTH0_CLIENT_ID=... AUTH0_CLIENT_SECRET=...   # M2M provider creds
 ```
-Or via `asgard.yaml` when you want the other provisioning knobs in one place:
+Region and account are **AWS-wide** (every AWS module uses them); `ASGARD_RDS_*`
+are RDS-only network placement. AWS provider creds come from the IAM role/instance
+profile Asgard runs under. Or via `asgard.yaml` when you want the other
+provisioning knobs in one place:
 ```yaml
 provisioning:
   terraform: { modules_dir: /modules, work_dir: /data/asgard-tf }
@@ -202,8 +213,8 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
      "grants": { "secrets_read": ["<DB_SECRET_ARN>", "<KEY_SECRET_ARN>"], "kms_decrypt": ["<KMS_ARN>"] }
    }
    ```
-   Run exactly one replica (`desired_count: 1`) — the rollup/rotation loops assume a
-   single writer.
+   `desired_count: 1` is the safe default; on Postgres you can raise it — the loops
+   are leader-leased and provisioning takes per-resource locks.
 
    **Verify:** the request reaches `fulfilled`; `curl -fsS "$URL/readyz"` returns
    `ready` over https; the ECS target is `healthy`; the task-role policy contains

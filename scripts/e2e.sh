@@ -29,7 +29,9 @@ cleanup() {
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
   [[ -n "${SERVER2_PID:-}" ]] && kill "$SERVER2_PID" 2>/dev/null
   [[ -n "${SERVER3_PID:-}" ]] && kill "$SERVER3_PID" 2>/dev/null
+  [[ -n "${SERVER4_PID:-}" ]] && kill "$SERVER4_PID" 2>/dev/null
   [[ -n "${SERVER5_PID:-}" ]] && kill "$SERVER5_PID" 2>/dev/null
+  [[ -n "${SERVER6_PID:-}" ]] && kill "$SERVER6_PID" 2>/dev/null
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -91,6 +93,16 @@ curl -fsS "$BASE/api/auth/me" -o "$WORK/me.json" 2>/dev/null \
   && ok "dev-insecure: /api/auth/me returns synthetic admin (UI skips login)" \
   || bad "dev-insecure /api/auth/me did not return a synthetic admin"
 
+# 0c. Background loops are leader-leased: a tick runs only when its cross-instance
+# DB lease is acquired. The cost-rollup loop logging at startup proves acquisition
+# works on this backend — on Postgres this exercises the conditional-upsert lease
+# SQL end-to-end (the loop swallows errors, so a broken lease would silently skip
+# and this line would never appear).
+for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server.log" && break; sleep 0.2; done
+grep -q "cost rollup" "$WORK/server.log" \
+  && ok "leader-leased rollup loop ran (cross-instance lease acquired)" \
+  || bad "cost-rollup loop did not run — lease acquisition may have failed"
+
 # 1. Catalog ingestion: both agents present.
 curl -fsS "$BASE/api/catalog/entities?kind=Agent" -o "$WORK/agents.json"
 N=$(python3 -c "import json;print(len(json.load(open('$WORK/agents.json'))))" 2>/dev/null)
@@ -130,8 +142,8 @@ MN=$(python3 -c "import json;print(len(json.load(open('$WORK/reg.json')).get('ma
 curl -fsS -X PATCH "$BASE/api/projects/${PID}" -H 'content-type: application/json' \
   -d '{"security_review_status":"approved","runbook_url":"https://runbook.example","critical_dependencies":["postgres","redis"]}' \
   -o "$WORK/patch.json"
-SR=$(jget "$WORK/patch.json" "['security_review_status']")
-CDN=$(python3 -c "import json;print(len(json.load(open('$WORK/patch.json')).get('critical_dependencies',[])))" 2>/dev/null)
+SR=$(jget "$WORK/patch.json" "['project']['security_review_status']")
+CDN=$(python3 -c "import json;print(len(json.load(open('$WORK/patch.json'))['project'].get('critical_dependencies',[])))" 2>/dev/null)
 [[ "$SR" == "approved" && "$CDN" == "2" ]] && ok "evidence PATCH replaces the record (enum + list persisted)" || bad "evidence PATCH wrong (status=$SR deps=$CDN)"
 curl -fsS "$BASE/api/projects/${PID}" -o "$WORK/reget.json"
 RB=$(jget "$WORK/reget.json" "['runbook_url']")
@@ -268,8 +280,21 @@ curl -s -o "$WORK/tools.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY"
 grep -q '"list_services"' "$WORK/tools.out" && grep -q '"request_resource"' "$WORK/tools.out" \
   && ok "MCP tools/list exposes the catalog (list_services, request_resource)" || bad "MCP tools/list missing expected tools"
 grep -q '"seed_plan"' "$WORK/tools.out" && ok "MCP exposes the agent-seed tools (seed_plan)" || bad "seed_plan tool missing from MCP"
+grep -q '"bootstrap"' "$WORK/tools.out" && ok "MCP exposes the bootstrap tool (one-shot seed)" || bad "bootstrap tool missing from MCP"
+# The bootstrap slash-command shortcut is advertised over prompts/list.
+curl -s -o "$WORK/prompts.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d '{"jsonrpc":"2.0","id":9,"method":"prompts/list"}'
+grep -q '"bootstrap"' "$WORK/prompts.out" && ok "MCP prompts/list exposes the bootstrap prompt (slash command)" || { bad "bootstrap prompt missing from prompts/list"; cat "$WORK/prompts.out"; }
+# bootstrap returns the seed files with bodies inlined — AGENTS.md + the Rust add-on in one call.
+BOOT='{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"bootstrap","arguments":{"languages":["rust"],"task":"build a service"}}}'
+curl -s -o "$WORK/boot.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$BOOT"
+grep -q 'AGENTS.md' "$WORK/boot.out" && grep -q 'RUST.md' "$WORK/boot.out" \
+  && ok "MCP bootstrap inlines AGENTS.md + standards in one call" || { bad "bootstrap did not return inlined seed files"; cat "$WORK/boot.out"; }
 grep -q '"guidance_put"' "$WORK/tools.out" && ok "MCP exposes guidance tools (guidance_put)" || bad "guidance_put tool missing from MCP"
 grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe_get)" || bad "recipe_get tool missing from MCP"
+grep -q '"mcp_catalog_list"' "$WORK/tools.out" && grep -q '"mcp_catalog_publish"' "$WORK/tools.out" \
+  && ok "MCP exposes the catalog tools (mcp_catalog_list, mcp_catalog_publish)" || bad "mcp_catalog tools missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \
   && grep -q '"escalate_promotion"' "$WORK/tools.out" \
   && ok "MCP exposes promotion tools (request_promotion, promotion_status, escalate_promotion)" || bad "promotion tools missing from MCP"
@@ -316,6 +341,14 @@ XPROJ='{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"request_r
 curl -s -o "$WORK/xproj.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$XPROJ"
 grep -q 'cross-project access denied' "$WORK/xproj.out" && ok "MCP denies cross-project access (scoped to the key's project)" || bad "cross-project access was not denied"
+
+# 7d-i. Publishing to the MCP catalog needs a user token: a project key (no owner
+# identity) is refused. The user-token publish path is exercised on the enforcing
+# server in 20g.
+MPUB='{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"mcp_catalog_publish","arguments":{"name":"From A Project Key","install":{"transport":"remote","url":"https://x/mcp"}}}}'
+curl -s -o "$WORK/mpub.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$MPUB"
+grep -qi 'requires a user token' "$WORK/mpub.out" && ok "mcp_catalog_publish refuses a project key (needs a user token)" || bad "project-key catalog publish was not refused"
 
 # 8. Cost segregated by dimension: spend rolls up to the project's group.
 curl -fsS "$BASE/api/cost?by=group" -o "$WORK/cost.json"
@@ -374,6 +407,12 @@ RID=$(jget "$WORK/res.json" "['provisioned']['id']")
 [[ "$RS" == "fulfilled" ]] && ok "self-service resource auto-provisions (fulfilled)" || bad "expected fulfilled, got $RS"
 [[ "$RT" == "$PID" ]] && ok "provisioned resource tagged project=$PID" || bad "resource not project-tagged ($RT)"
 
+# 11a. Single-resource read: poll one resource by id (the async provision/destroy
+# status surface). The s3 bucket is fast, so it is already provisioned.
+curl -fsS "$BASE/api/projects/${PID}/resources/${RID}" -o "$WORK/res_get.json"
+GS=$(jget "$WORK/res_get.json" "['state']")
+[[ "$GS" == "provisioned" ]] && ok "get_resource returns one resource by id (state=provisioned)" || bad "expected provisioned, got $GS"
+
 # 11b. Deprovision: tear the resource down (connector destroy + record marked).
 curl -fsS -X DELETE "$BASE/api/projects/${PID}/resources/${RID}" -o "$WORK/deprov.json"
 DS=$(jget "$WORK/deprov.json" "['state']")
@@ -382,12 +421,25 @@ DS=$(jget "$WORK/deprov.json" "['state']")
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$BASE/api/projects/proj-2026-9999/resources/${RID}")
 [[ "$CODE" == "404" ]] && ok "deprovision rejects wrong-project resource (404)" || bad "expected 404, got $CODE"
 
-# 12. Provisioning: a review-tier resource is parked for human approval.
+# 12. Provisioning: a cost-bearing resource (rds-postgres, $120/mo) self-services
+# within the POC classification ceiling — no human gate. Credential-minting and
+# over-ceiling spend still route to review (12a below + the budget path).
 curl -fsS -X POST "$BASE/api/projects/${PID}/resources" -H 'content-type: application/json' \
   -d '{"resource_type":"rds-postgres","name":"maindb","spec":{"name":"maindb"}}' \
   -o "$WORK/res2.json"
 PA=$(jget "$WORK/res2.json" "['pending_approval']")
-[[ "$PA" == "True" ]] && ok "review-tier resource awaits approval" || bad "review-tier should be pending ($PA)"
+[[ "$PA" == "False" ]] && ok "cost-bearing rds-postgres self-services within the ceiling" || bad "rds-postgres should self-serve ($PA)"
+# rds-postgres is long_running: the request returns a `provisioning` record
+# immediately and the apply finishes in the background. Poll it to terminal.
+R2ID=$(jget "$WORK/res2.json" "['provisioned']['id']")
+R2ST=""
+for _ in $(seq 1 20); do
+  curl -fsS "$BASE/api/projects/${PID}/resources/${R2ID}" -o "$WORK/res2_get.json"
+  R2ST=$(jget "$WORK/res2_get.json" "['state']")
+  [[ "$R2ST" == "provisioned" ]] && break
+  sleep 1
+done
+[[ "$R2ST" == "provisioned" ]] && ok "long-running rds-postgres converges to provisioned (async)" || bad "rds-postgres did not converge ($R2ST)"
 
 # 12a. Per-project LiteLLM key: a governed credential. Parks for approval
 # (auto_approvable:false), then approve+fulfill drives the full request lifecycle.
@@ -560,6 +612,43 @@ grep -q '"status":"published"' "$WORK/rappr.json" && ok "recipe approve returns 
 curl -fsS "$BASE/api/recipes?q=worker" -o "$WORK/rq.json"
 grep -q "$RSLUG" "$WORK/rq.json" && ok "recipe ?q= matches the body" || bad "recipe search missed a body hit"
 
+# 18c-iii. MCP catalog: a user-publishable catalog of MCP servers, decoupled from
+# project provisioning. Seeded company-approved entries ship in; an entry can be
+# disabled (hidden from the active catalog) and re-enabled; the trust tier flips
+# with approve/unapprove; lifecycle changes are versioned.
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat.json"
+MCN=$(python3 -c "import json;print(len(json.load(open('$WORK/mcat.json'))))" 2>/dev/null)
+python3 -c "import sys; sys.exit(0 if int('${MCN:-0}')>=3 else 1)" 2>/dev/null && ok "MCP catalog ships seeded entries ($MCN)" || bad "expected >=3 seeded MCP servers, got $MCN"
+grep -q '"status":"approved"' "$WORK/mcat.json" && ok "seeded MCP entries are company-approved" || bad "seeded MCP entries not approved"
+curl -fsS -X POST "$BASE/api/mcp-servers" -H 'content-type: application/json' \
+  -d '{"name":"Team Notion","summary":"our notion workspace","install":{"transport":"stdio","command":"npx","args":["-y","notion-mcp"],"env":["NOTION_TOKEN"]},"tags":["notion"]}' \
+  -o "$WORK/mput.json"
+MID=$(jget "$WORK/mput.json" "['id']")
+[[ -n "$MID" ]] && ok "published an MCP catalog entry (id $MID)" || bad "mcp publish failed"
+MINST=$(jget "$WORK/mput.json" "['install']['command']")
+[[ "$MINST" == "npx" ]] && ok "structured install round-trips (command=npx)" || bad "install not round-tripped ($MINST)"
+# Admin publish lands company-approved; unapprove demotes, approve restores.
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/unapprove" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers/${MID}" -o "$WORK/mget.json"
+MST=$(jget "$WORK/mget.json" "['status']")
+[[ "$MST" == "community" ]] && ok "unapprove marks the entry user-submitted (community)" || bad "unapprove wrong ($MST)"
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/approve" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers/${MID}" -o "$WORK/mget2.json"
+MST2=$(jget "$WORK/mget2.json" "['status']")
+[[ "$MST2" == "approved" ]] && ok "approve promotes the entry to company-approved" || bad "approve wrong ($MST2)"
+# Disable hides it from the active catalog; the disabled view still shows it; enable restores.
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/disable" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat2.json"
+grep -q "$MID" "$WORK/mcat2.json" && bad "disabled entry should not show in the active catalog" || ok "disable hides the entry from the active catalog"
+curl -fsS "$BASE/api/mcp-servers?state=disabled" -o "$WORK/mdis.json"
+grep -q "$MID" "$WORK/mdis.json" && ok "disabled entry appears under the disabled view" || bad "disabled view missing the entry"
+curl -fsS -X POST "$BASE/api/mcp-servers/${MID}/enable" -o /dev/null
+curl -fsS "$BASE/api/mcp-servers" -o "$WORK/mcat3.json"
+grep -q "$MID" "$WORK/mcat3.json" && ok "enable restores the entry to the active catalog" || bad "enable did not restore the entry"
+# Lifecycle is versioned for audit/pruning (created + disabled recorded).
+curl -fsS "$BASE/api/mcp-servers/${MID}/history" -o "$WORK/mhist.json"
+grep -q 'disabled' "$WORK/mhist.json" && ok "MCP catalog history records lifecycle changes" || bad "history missing lifecycle action"
+
 # 18c-ii. Standards are DB-backed + admin-editable + versioned. Edit one, then its
 # history has >=1 version and full-text search reaches the body.
 curl -fsS -X POST "$BASE/api/standards" -H 'content-type: application/json' \
@@ -658,6 +747,24 @@ CODE=$(curl -s -H "authorization: Bearer $MTOK" -o /dev/null -w '%{http_code}' -
 curl -s -H "authorization: Bearer $TOK" -X POST "$BASE2/api/guidance/member-draft-tip/approve" -o /dev/null
 curl -s -H "authorization: Bearer $MTOK" -o "$WORK/mg2.json" "$BASE2/api/guidance"
 grep -q 'member-draft-tip' "$WORK/mg2.json" && ok "approved guidance becomes visible to readers" || bad "approved guidance still hidden"
+# 20c-i. MCP catalog differs from guidance moderation: a member's submission is
+# visible immediately (user-submitted, member as contact), NOT hidden — discovery
+# is the point. An admin can then promote it to company-approved.
+curl -s -H "authorization: Bearer $MTOK" -X POST "$BASE2/api/mcp-servers" -H 'content-type: application/json' \
+  -d '{"name":"Finn MCP","summary":"finn built this","install":{"transport":"remote","url":"https://finn/mcp"}}' -o "$WORK/fmcp.json"
+FMID=$(jget "$WORK/fmcp.json" "['id']")
+FMST=$(jget "$WORK/fmcp.json" "['status']")
+FMOWN=$(jget "$WORK/fmcp.json" "['owner']")
+[[ "$FMST" == "community" && "$FMOWN" == "finn@corp.example" ]] && ok "member publish is user-submitted with the member as owner/contact" || bad "member publish tier/owner wrong (status=$FMST owner=$FMOWN)"
+curl -s -H "authorization: Bearer $MTOK" -o "$WORK/fmcat.json" "$BASE2/api/mcp-servers"
+grep -q "$FMID" "$WORK/fmcat.json" && ok "user-submitted entry is visible immediately (not hidden like a draft)" || bad "user-submitted entry was hidden"
+# A non-owner member cannot approve; an admin promotes it to company-approved.
+CODE=$(curl -s -H "authorization: Bearer $MTOK" -o /dev/null -w '%{http_code}' -X POST "$BASE2/api/mcp-servers/${FMID}/approve")
+[[ "$CODE" == "403" ]] && ok "member cannot approve a catalog entry (403)" || bad "expected 403 for member approve, got $CODE"
+curl -s -H "authorization: Bearer $TOK" -X POST "$BASE2/api/mcp-servers/${FMID}/approve" -o /dev/null
+curl -s -H "authorization: Bearer $TOK" "$BASE2/api/mcp-servers/${FMID}" -o "$WORK/fmcp2.json"
+FMST2=$(jget "$WORK/fmcp2.json" "['status']")
+[[ "$FMST2" == "approved" ]] && ok "admin promotes a user submission to company-approved" || bad "admin approve wrong ($FMST2)"
 # Behind TLS (simulated by the proxy header), the same login marks the cookie Secure.
 curl -s -D "$WORK/login_tls.hdr" -X POST "$BASE2/api/auth/login" \
   -H 'content-type: application/json' -H 'x-forwarded-proto: https' \
@@ -732,6 +839,14 @@ PXP="{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\
 curl -s -o "$WORK/pxp.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PXP"
 grep -qi 'not authorized' "$WORK/pxp.out" && ok "PAT denied a project the user does not own/manage" || { bad "PAT cross-project was not denied"; cat "$WORK/pxp.out"; }
+
+# 20g. MCP catalog over a user token: finn publishes an MCP server as himself; the
+# entry is owned by his identity (the contact point) and listed user-submitted.
+PCAT='{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"mcp_catalog_publish","arguments":{"name":"Finn Agent MCP","summary":"published over a PAT","install":{"transport":"remote","url":"https://finn-agent/mcp"}}}}'
+curl -s -o "$WORK/pcat.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PCAT"
+grep -q 'finn@corp.example' "$WORK/pcat.out" && grep -q '\\"status\\":\\"community\\"' "$WORK/pcat.out" \
+  && ok "PAT mcp_catalog_publish stamps the user as owner and lists it user-submitted" || { bad "PAT catalog publish wrong"; cat "$WORK/pcat.out"; }
 
 # Readiness probe reports DB reachable.
 curl -fsS "$BASE2/readyz" >/dev/null 2>&1 && ok "readiness probe (/readyz) is green" || bad "/readyz not green"
@@ -845,6 +960,26 @@ OPENB=$(curl -fsS "$BASE5/api/requests?subject=$(python3 -c "import urllib.parse
   | python3 -c "import json,sys;rs=json.load(sys.stdin);print(sum(1 for r in rs if r['state'] in ('reviewing','flagged','requested')))")
 [[ "$RIDBAD2" != "$RIDBAD" && "$OPENB" == "1" ]] && ok "re-running supersedes the prior review attempt (one open)" || bad "supersede wrong (rid=$RIDBAD rid2=$RIDBAD2 open=$OPENB)"
 kill "$SERVER5_PID" 2>/dev/null
+
+# 24. Horizontal scale-out (Postgres only): a second replica boots against the
+# same database and serves, proving N>1 is safe — the leader-leased loops and the
+# migration advisory lock coexist on a shared DB. SQLite is single-process by
+# design (one file, one writer), so this is skipped there.
+if [[ "$DB_URL" == postgres* ]]; then
+  PORT6=$((PORT+5)); BASE6="http://127.0.0.1:${PORT6}"
+  ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="$DB_URL" \
+    "$BIN" serve --bind "127.0.0.1:${PORT6}" --config "$WORK/asgard.yaml" >"$WORK/server6.log" 2>&1 &
+  SERVER6_PID=$!
+  for _ in $(seq 1 50); do curl -fsS "$BASE6/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+  curl -fsS "$BASE6/readyz" >/dev/null 2>&1 \
+    && ok "second replica is ready against the same Postgres (N>1 safe)" \
+    || { bad "second replica did not become ready on shared Postgres"; cat "$WORK/server6.log"; }
+  for _ in $(seq 1 25); do grep -q "cost rollup" "$WORK/server6.log" && break; sleep 0.2; done
+  grep -q "cost rollup" "$WORK/server6.log" \
+    && ok "second replica's leased loops run against the shared DB" \
+    || bad "second replica's rollup loop did not run on shared DB"
+  kill "$SERVER6_PID" 2>/dev/null
+fi
 
 echo "RESULT: $PASS passed, $FAIL failed"
 [[ "$FAIL" == "0" ]]

@@ -8,9 +8,10 @@ description: >-
   A load-balanced Fargate service behind an Application Load Balancer: cluster +
   task definition + ALB + target group + listener, with a task role built from an
   explicit grants object and an optional HTTPS listener. The keystone primitive
-  for standing a web-facing container app behind a stable URL. Always requires
-  human approval (cost-bearing, IAM-shaping).
-auto_approvable: false
+  for standing a web-facing container app behind a stable URL. Self-service when
+  classification and cost caps allow; they gate it, not a blanket review.
+auto_approvable: true
+long_running: true
 required_fields: [name, image, vpc_id, subnet_ids]
 provisioner:
   connector: terraform
@@ -26,5 +27,8 @@ cost:
   estimated_monthly_usd: 35.0
   source:
     type: aws-cost-explorer
+# Consumer side of access grants: its task role is the identity a grant attaches to.
+principal_output: task_role_arn
+principal_kind: iam-role
 tags: [compute, aws, alb, fargate]
 documentation: services/ecs-service/README.md
