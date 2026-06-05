@@ -1,3 +1,10 @@
+## [0.11.1](https://github.com/glemmestad/asgard/compare/v0.11.0...v0.11.1) (2026-06-05)
+
+
+### Bug Fixes
+
+* **mcp:** de-footgun first-run MCP setup (inline PAT + actionable auth errors) ([#29](https://github.com/glemmestad/asgard/issues/29)) ([ea9f7a6](https://github.com/glemmestad/asgard/commit/ea9f7a6707b73dc119f870f6757d8ce273c023e3))
+
 # [0.11.0](https://github.com/glemmestad/asgard/compare/v0.10.0...v0.11.0) (2026-06-05)
 
 
