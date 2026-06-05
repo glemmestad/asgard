@@ -572,6 +572,24 @@ mod tests {
     }
 
     #[test]
+    fn bare_bootstrap_inlines_the_agents_entry_point() {
+        // The no-args `bootstrap` call (no languages, no task) must still return the
+        // AGENTS.md entry point with its real inlined body — that's the whole
+        // "set up a repo in one call". A regression guard against it handing back an
+        // empty/stub plan that "talks about the seed" without pulling files over.
+        let p = plan(&[], "", SeedTier::Standard);
+        let agents = p
+            .iter()
+            .find(|m| m.id == "agents")
+            .expect("AGENTS.md (id 'agents') must be in the bare plan");
+        assert_eq!(agents.path, "AGENTS.md");
+        assert!(
+            agents.body.len() > 500 && agents.body.contains("register_project"),
+            "AGENTS.md body must be the real inlined doc, not a stub"
+        );
+    }
+
+    #[test]
     fn terraform_repo_pulls_terraform_addon() {
         let p = plan(
             &["terraform".into()],

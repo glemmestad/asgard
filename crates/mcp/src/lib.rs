@@ -1150,7 +1150,7 @@ impl AsgardMcp {
         Ok(json!({
             "tier": tier.as_str(),
             "files": files,
-            "next": "write each file to its path (start with .gitignore, create directories as needed), then call register_project",
+            "next": "Each entry's `body` is the actual file content. Write it verbatim to its `path` (create directories as needed) — actually create the files, do not summarize or just describe them. Then call register_project.",
         })
         .to_string())
     }
@@ -1730,11 +1730,14 @@ impl AsgardMcp {
     async fn bootstrap_prompt(&self) -> Vec<PromptMessage> {
         vec![PromptMessage::new_text(
             PromptMessageRole::User,
-            "Set this repository up on Asgard. Call the `bootstrap` tool to fetch the \
-             AGENTS.md starting point and the `.agent/` coding and security standards, \
-             write each returned file to its path (create directories as needed), then \
-             call `register_project` to register this project — ask me for the owner, \
-             budget, and data classification if you don't already have them.",
+            "Set this repository up on Asgard now. Do it, don't describe it:\n\
+             1. Call the `bootstrap` tool.\n\
+             2. For every file it returns, write the `body` verbatim to its `path` \
+             (create directories as needed) — actually create the files on disk; do \
+             not paraphrase or just summarize what the seed contains.\n\
+             3. Call `register_project` to register this project — ask me for the \
+             owner, budget, and data classification if you don't already have them.\n\
+             Start with step 1 now.",
         )]
     }
 }

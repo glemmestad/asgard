@@ -620,10 +620,12 @@
       <p class="pagesub">A few steps to go from a running ${SYS_NAME} to your agent deploying a resource — governed, attributed, and audited.</p>
       <div class="card" id="gs-connect">${connectStep(null)}</div>
       <div class="card"><div class="step"><div class="n">3</div><div class="b">
-        <h3>Open a repo and learn the standards</h3>
-        <p class="muted" style="margin:0 0 6px;font-size:13px">${SYS_NAME} is a <strong>starting point for a repo</strong>. Create a new one (or open an existing one), initialize git, and drop a pointer so any agent — and any teammate — knows the repo is governed:</p>
-        ${snip('mkdir my-app && cd my-app && git init\necho "Governed by '+SYS_NAME+'. Read AGENTS.md, then build." > AGENTS.md')}
-        <p class="muted" style="margin:10px 0 0;font-size:12px">Then tell your connected agent to read the standards and register. It calls <code>seed_plan</code> / <code>seed_get</code> to pull the minimal coding + security standards into <code>.agent/</code>, then registers below. The live standards over MCP are the source of truth; the <code>.agent/</code> files are the offline mirror.</p>
+        <h3>Open a repo and bootstrap it</h3>
+        <p class="muted" style="margin:0 0 6px;font-size:13px">${SYS_NAME} is a <strong>starting point for a repo</strong>. Create a new one (or open an existing one) and initialize git:</p>
+        ${snip('mkdir my-app && cd my-app && git init')}
+        <p class="muted" style="margin:10px 0 6px;font-size:13px">Then tell your connected agent to run <code>bootstrap</code> — <strong>one MCP call</strong> that returns <code>AGENTS.md</code> plus the minimal coding + security standards (<code>.agent/</code>) matched to your repo's languages, every file's body inlined. The agent writes them, then registers below.</p>
+        ${snip('bootstrap { "languages": ["python"], "task": "summarize support tickets" }')}
+        <p class="muted" style="margin:10px 0 0;font-size:12px"><code>AGENTS.md</code> is the entry point both people and agents read: the four moves (examine → learn standards → register → build), how to discover and <code>request_resource</code> what the project needs, and how to call models through the gateway. The live standards over MCP are the source of truth; the <code>.agent/</code> files are the offline mirror.</p>
       </div></div></div>
       <div class="card"><div class="step"><div class="n">4</div><div class="b">
         <h3>Register a project</h3>
