@@ -27,12 +27,20 @@ data "aws_iam_policy_document" "assume" {
   }
 }
 
+# The region resources actually land in. `var.region` is null by default so the
+# provider resolves it from AWS_REGION/AWS_DEFAULT_REGION; this data source reads
+# back that resolved value. The awslogs log driver needs the region as a literal
+# (it has no env fallback like the provider does), so feed it from here rather
+# than from var.region, which is empty in the common env-driven case.
+data "aws_region" "current" {}
+
 locals {
   prefix     = lower("${lookup(var.tags, "project", "asgard")}-${var.name}")
   make_sg    = length(var.security_group_ids) == 0
   task_sg    = local.make_sg ? [aws_security_group.task[0].id] : var.security_group_ids
   exec_role  = var.execution_role_arn != "" ? var.execution_role_arn : aws_iam_role.exec[0].arn
   enable_tls = var.certificate_arn != ""
+  region     = coalesce(var.region, data.aws_region.current.region)
   # Secret ARNs the execution role must read to inject `secrets` at task start.
   secret_inject_arns = values(var.secrets)
 }
@@ -286,7 +294,7 @@ resource "aws_ecs_task_definition" "this" {
       logDriver = "awslogs"
       options = {
         "awslogs-group"         = aws_cloudwatch_log_group.this.name
-        "awslogs-region"        = var.region
+        "awslogs-region"        = local.region
         "awslogs-stream-prefix" = "app"
       }
     }
