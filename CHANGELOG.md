@@ -1,3 +1,10 @@
+## [0.8.4](https://github.com/glemmestad/asgard/compare/v0.8.3...v0.8.4) (2026-06-05)
+
+
+### Bug Fixes
+
+* getting-started plain-English + Service Catalog polish ([#24](https://github.com/glemmestad/asgard/issues/24)) ([306526c](https://github.com/glemmestad/asgard/commit/306526ccc052bed47431f749bfb32439caadafe5))
+
 ## [0.8.3](https://github.com/glemmestad/asgard/compare/v0.8.2...v0.8.3) (2026-06-05)
 
 
