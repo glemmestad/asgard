@@ -295,6 +295,8 @@ grep -q '"guidance_put"' "$WORK/tools.out" && ok "MCP exposes guidance tools (gu
 grep -q '"recipe_get"' "$WORK/tools.out" && ok "MCP exposes recipe tools (recipe_get)" || bad "recipe_get tool missing from MCP"
 grep -q '"mcp_catalog_list"' "$WORK/tools.out" && grep -q '"mcp_catalog_publish"' "$WORK/tools.out" \
   && ok "MCP exposes the catalog tools (mcp_catalog_list, mcp_catalog_publish)" || bad "mcp_catalog tools missing from MCP"
+grep -q '"skills_catalog_list"' "$WORK/tools.out" && grep -q '"skills_catalog_publish"' "$WORK/tools.out" && grep -q '"skills_catalog_export"' "$WORK/tools.out" \
+  && ok "MCP exposes the skills catalog tools (list, publish, export)" || bad "skills_catalog tools missing from MCP"
 grep -q '"request_promotion"' "$WORK/tools.out" && grep -q '"promotion_status"' "$WORK/tools.out" \
   && grep -q '"escalate_promotion"' "$WORK/tools.out" \
   && ok "MCP exposes promotion tools (request_promotion, promotion_status, escalate_promotion)" || bad "promotion tools missing from MCP"
@@ -649,6 +651,52 @@ grep -q "$MID" "$WORK/mcat3.json" && ok "enable restores the entry to the active
 curl -fsS "$BASE/api/mcp-servers/${MID}/history" -o "$WORK/mhist.json"
 grep -q 'disabled' "$WORK/mhist.json" && ok "MCP catalog history records lifecycle changes" || bad "history missing lifecycle action"
 
+# 18c-iv. Skills catalog: user-publishable agent skills (a SKILL.md + bundled files),
+# transportable between Claude Code and Codex. Seeds ship in; a published skill with a
+# runtime-specific frontmatter field is flagged, and exporting it to Codex reports
+# exactly what the translation degraded. The offline /review assist reports disabled.
+curl -fsS "$BASE/api/skills" -o "$WORK/skcat.json"
+SKN=$(python3 -c "import json;print(len(json.load(open('$WORK/skcat.json'))))" 2>/dev/null)
+python3 -c "import sys; sys.exit(0 if int('${SKN:-0}')>=2 else 1)" 2>/dev/null && ok "Skills catalog ships seeded entries ($SKN)" || bad "expected >=2 seeded skills, got $SKN"
+grep -q '"status":"approved"' "$WORK/skcat.json" && ok "seeded skills are company-approved" || bad "seeded skills not approved"
+# Publish a skill whose SKILL.md declares allowed-tools (a Claude-only field) and uses
+# inline command injection — both degrade on Codex.
+python3 - <<'PY' > "$WORK/skbody.json"
+import json, base64
+md = "---\nname: E2E Skill\ndescription: published in e2e\nallowed-tools: Bash(git *)\n---\nRun !`git status` then do the thing.\n"
+print(json.dumps({"name": "E2E Skill", "tags": ["e2e"], "runtime": "claude-code",
+  "bundle": [{"path": "SKILL.md", "content_b64": base64.b64encode(md.encode()).decode()},
+             {"path": "scripts/run.sh", "content_b64": base64.b64encode(b"echo hi\n").decode()}]}))
+PY
+curl -fsS -X POST "$BASE/api/skills" -H 'content-type: application/json' -d @"$WORK/skbody.json" -o "$WORK/skput.json"
+SKID=$(jget "$WORK/skput.json" "['id']")
+[[ -n "$SKID" ]] && ok "published a skill (id $SKID)" || { bad "skill publish failed"; cat "$WORK/skput.json"; }
+SKPORT=$(jget "$WORK/skput.json" "['portability']")
+[[ "$SKPORT" == "runtime-specific" ]] && ok "skill flagged runtime-specific (allowed-tools detected)" || bad "portability wrong ($SKPORT)"
+# Export to Codex: the bundle is rendered and the loss report names the dropped field.
+curl -fsS "$BASE/api/skills/${SKID}/export?runtime=codex" -o "$WORK/skexp.json"
+EXRT=$(jget "$WORK/skexp.json" "['runtime']")
+grep -q 'allowed-tools' "$WORK/skexp.json" && [[ "$EXRT" == "codex" ]] \
+  && ok "export to Codex translates and reports the loss (allowed-tools dropped)" || { bad "codex export/loss wrong (rt=$EXRT)"; cat "$WORK/skexp.json"; }
+python3 -c "import json,sys;f=json.load(open('$WORK/skexp.json'))['files'];sys.exit(0 if any(x['path']=='scripts/run.sh' for x in f) else 1)" \
+  && ok "export carries bundled scripts verbatim" || bad "export dropped a bundled script"
+# Export to its own runtime is lossless.
+curl -fsS "$BASE/api/skills/${SKID}/export?runtime=claude-code" -o "$WORK/skexp2.json"
+L2=$(python3 -c "import json;print(len(json.load(open('$WORK/skexp2.json'))['loss']))" 2>/dev/null)
+[[ "$L2" == "0" ]] && ok "export to the skill's own runtime is lossless" || bad "same-runtime export had loss ($L2)"
+# Lifecycle: disable hides from the active catalog; enable restores.
+curl -fsS -X POST "$BASE/api/skills/${SKID}/disable" -o /dev/null
+curl -fsS "$BASE/api/skills" -o "$WORK/skcat2.json"
+grep -q "$SKID" "$WORK/skcat2.json" && bad "disabled skill should not show in the active catalog" || ok "disable hides the skill from the active catalog"
+curl -fsS -X POST "$BASE/api/skills/${SKID}/enable" -o /dev/null
+# Offline (no LLM): the code-review assist reports disabled, not an error.
+curl -fsS -X POST "$BASE/api/skills/${SKID}/review" -o "$WORK/skrev_off.json"
+RVEN=$(jget "$WORK/skrev_off.json" "['enabled']")
+[[ "$RVEN" == "False" ]] && ok "skill code-review assist is off without an LLM (reports disabled)" || bad "expected review disabled offline, got enabled=$RVEN"
+# Versioned for audit.
+curl -fsS "$BASE/api/skills/${SKID}/history" -o "$WORK/skhist.json"
+grep -q 'disabled' "$WORK/skhist.json" && ok "skill history records lifecycle changes" || bad "skill history missing lifecycle action"
+
 # 18c-ii. Standards are DB-backed + admin-editable + versioned. Edit one, then its
 # history has >=1 version and full-text search reaches the body.
 curl -fsS -X POST "$BASE/api/standards" -H 'content-type: application/json' \
@@ -848,6 +896,18 @@ curl -s -o "$WORK/pcat.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT"
 grep -q 'finn@corp.example' "$WORK/pcat.out" && grep -q '\\"status\\":\\"community\\"' "$WORK/pcat.out" \
   && ok "PAT mcp_catalog_publish stamps the user as owner and lists it user-submitted" || { bad "PAT catalog publish wrong"; cat "$WORK/pcat.out"; }
 
+# 20g-i. Skills catalog over a user token: finn publishes a skill bundle as himself;
+# the entry is owned by his identity and listed user-submitted (same model as MCP).
+python3 - <<'PY' > "$WORK/pskbody.json"
+import json, base64
+md = "---\nname: Finn Skill\ndescription: published over a PAT\n---\nDo the thing.\n"
+print(json.dumps({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"skills_catalog_publish","arguments":{"name":"Finn Skill","bundle":[{"path":"SKILL.md","content_b64":base64.b64encode(md.encode()).decode()}]}}}))
+PY
+curl -s -o "$WORK/pskcat.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d @"$WORK/pskbody.json"
+grep -q 'finn@corp.example' "$WORK/pskcat.out" && grep -q '\\"status\\":\\"community\\"' "$WORK/pskcat.out" \
+  && ok "PAT skills_catalog_publish stamps the user as owner and lists it user-submitted" || { bad "PAT skill publish wrong"; cat "$WORK/pskcat.out"; }
+
 # Readiness probe reports DB reachable.
 curl -fsS "$BASE2/readyz" >/dev/null 2>&1 && ok "readiness probe (/readyz) is green" || bad "/readyz not green"
 kill "$SERVER2_PID" 2>/dev/null
@@ -959,6 +1019,34 @@ RIDBAD2=$(jget "$WORK/pbad2.json" "['id']")
 OPENB=$(curl -fsS "$BASE5/api/requests?subject=$(python3 -c "import urllib.parse;print(urllib.parse.quote('project:${PBAD}'))")" \
   | python3 -c "import json,sys;rs=json.load(sys.stdin);print(sum(1 for r in rs if r['state'] in ('reviewing','flagged','requested')))")
 [[ "$RIDBAD2" != "$RIDBAD" && "$OPENB" == "1" ]] && ok "re-running supersedes the prior review attempt (one open)" || bad "supersede wrong (rid=$RIDBAD rid2=$RIDBAD2 open=$OPENB)"
+
+# 23b. Skills code-review assist (advisory, escalate-only). With the gate ON
+# (ASGARD_REVIEW_ALLOW_MOCK), running /review judges the bundle's files: a clean
+# bundle passes; one carrying the review-fail marker is flagged — the assist judged
+# the code, not the form. It never changes the entry's tier (a human still approves).
+python3 - <<'PY' > "$WORK/skclean.json"
+import json, base64
+md = "---\nname: Clean Skill\ndescription: a clean bundle\n---\nDo the thing.\n"
+print(json.dumps({"name":"Clean Skill","bundle":[{"path":"SKILL.md","content_b64":base64.b64encode(md.encode()).decode()}]}))
+PY
+curl -fsS -X POST "$BASE5/api/skills" -H 'content-type: application/json' -d @"$WORK/skclean.json" -o "$WORK/skclean_put.json"
+SKC=$(jget "$WORK/skclean_put.json" "['id']")
+curl -fsS -X POST "$BASE5/api/skills/${SKC}/review" -o "$WORK/skc_rev.json"
+RCEN=$(jget "$WORK/skc_rev.json" "['enabled']")
+RCD=$(jget "$WORK/skc_rev.json" "['review']['disposition']")
+[[ "$RCEN" == "True" && "$RCD" == "pass" ]] && ok "skill review enabled under mock: clean bundle passes" || { bad "clean skill review wrong (enabled=$RCEN disp=$RCD)"; cat "$WORK/skc_rev.json"; }
+python3 - <<'PY' > "$WORK/skbad.json"
+import json, base64
+md = "---\nname: Marked Skill\ndescription: carries a review-fail marker\n---\nDo the thing.\n"
+print(json.dumps({"name":"Marked Skill","bundle":[
+  {"path":"SKILL.md","content_b64":base64.b64encode(md.encode()).decode()},
+  {"path":".asgard-review-fail","content_b64":base64.b64encode(b"").decode()}]}))
+PY
+curl -fsS -X POST "$BASE5/api/skills" -H 'content-type: application/json' -d @"$WORK/skbad.json" -o "$WORK/skbad_put.json"
+SKB=$(jget "$WORK/skbad_put.json" "['id']")
+curl -fsS -X POST "$BASE5/api/skills/${SKB}/review" -o "$WORK/skb_rev.json"
+RBD=$(jget "$WORK/skb_rev.json" "['review']['disposition']")
+[[ "$RBD" == "concern" ]] && ok "skill review flags a bundle carrying the review-fail marker (judged the code)" || { bad "marked skill review wrong (disp=$RBD)"; cat "$WORK/skb_rev.json"; }
 kill "$SERVER5_PID" 2>/dev/null
 
 # 24. Horizontal scale-out (Postgres only): a second replica boots against the

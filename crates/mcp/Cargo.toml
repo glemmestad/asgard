@@ -9,6 +9,7 @@ asgard-catalog.workspace = true
 asgard-gateway.workspace = true
 asgard-identity.workspace = true
 asgard-registry = { workspace = true, features = ["schemars"] }
+asgard-skills = { workspace = true, features = ["schemars"] }
 asgard-provision.workspace = true
 asgard-workflow.workspace = true
 serde.workspace = true

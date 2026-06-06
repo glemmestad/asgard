@@ -23,6 +23,7 @@ pub mod promotion_reviewer;
 pub mod recipes;
 pub mod review;
 pub mod review_jobs;
+pub mod skills;
 pub mod standards;
 pub mod versions;
 
@@ -36,6 +37,7 @@ pub use promotion_reviewer::{ReviewerOutcome, ReviewerPanel};
 pub use recipes::Recipe;
 pub use review::{ExtendOutcome, ReviewConfig, ReviewState, SweepSummary};
 pub use review_jobs::{ReviewJob, ReviewJobs};
+pub use skills::{Skill, SkillInput};
 pub use standards::Standard;
 pub use versions::Version;
 
@@ -1675,6 +1677,105 @@ impl ProjectRegistry {
         mcp_servers::delete(&self.db, id).await
     }
 
+    /// Skills catalog entries. `state` defaults to `active`; `status` filters by trust
+    /// tier without hiding either. See [`skills`]. The bundle blob is fetched only via
+    /// [`Registry::skill_get_bundle`] for download/export.
+    pub async fn skill_list(
+        &self,
+        q: Option<&str>,
+        status: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<Vec<Skill>, RegistryError> {
+        skills::list(&self.db, q, status, state).await
+    }
+
+    pub async fn skill_get(&self, id: &str) -> Result<Option<Skill>, RegistryError> {
+        skills::get(&self.db, id).await
+    }
+
+    pub async fn skill_get_bundle(&self, id: &str) -> Result<Option<String>, RegistryError> {
+        skills::get_bundle(&self.db, id).await
+    }
+
+    /// Publish a new skill owned by `owner`. `approved` mints it as the company tier
+    /// (admins / the boot seed); otherwise `community`. Audited.
+    pub async fn skill_create(
+        &self,
+        owner: &str,
+        input: &SkillInput,
+        approved: bool,
+    ) -> Result<Skill, RegistryError> {
+        let s = skills::create(&self.db, owner, input, approved).await?;
+        self.record_version("skill", &s.id, "created", owner, &s)
+            .await?;
+        Ok(s)
+    }
+
+    pub async fn skill_update(
+        &self,
+        id: &str,
+        input: &SkillInput,
+        actor: &str,
+    ) -> Result<Option<Skill>, RegistryError> {
+        let s = skills::update(&self.db, id, input).await?;
+        if let Some(s) = &s {
+            self.record_version("skill", id, "updated", actor, s)
+                .await?;
+        }
+        Ok(s)
+    }
+
+    pub async fn skill_approve(&self, id: &str, approver: &str) -> Result<(), RegistryError> {
+        skills::set_status(&self.db, id, "approved", Some(approver)).await?;
+        if let Some(s) = skills::get(&self.db, id).await? {
+            self.record_version("skill", id, "approved", approver, &s)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn skill_unapprove(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        skills::set_status(&self.db, id, "community", None).await?;
+        if let Some(s) = skills::get(&self.db, id).await? {
+            self.record_version("skill", id, "unapproved", actor, &s)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Move a skill through its lifecycle. `action` is the audited verb
+    /// (`disabled`/`enabled`/`archived`/`unarchived`); `state` is the result.
+    pub async fn skill_set_state(
+        &self,
+        id: &str,
+        state: &str,
+        action: &str,
+        actor: &str,
+    ) -> Result<(), RegistryError> {
+        skills::set_state(&self.db, id, state).await?;
+        if let Some(s) = skills::get(&self.db, id).await? {
+            self.record_version("skill", id, action, actor, &s).await?;
+        }
+        Ok(())
+    }
+
+    /// Persist the latest code-review assist verdict (advisory; escalate-only).
+    pub async fn skill_set_review(
+        &self,
+        id: &str,
+        verdict: &serde_json::Value,
+    ) -> Result<(), RegistryError> {
+        skills::set_review(&self.db, id, verdict).await
+    }
+
+    pub async fn skill_delete(&self, id: &str, actor: &str) -> Result<(), RegistryError> {
+        if let Some(s) = skills::get(&self.db, id).await? {
+            self.record_version("skill", id, "deleted", actor, &s)
+                .await?;
+        }
+        skills::delete(&self.db, id).await
+    }
+
     pub async fn standard_list(
         &self,
         q: Option<&str>,
@@ -1708,7 +1809,7 @@ impl ProjectRegistry {
     }
 
     /// A knowledge doc's version history (newest first). `doc_type` is one of
-    /// `guidance` | `recipes` | `standards` | `mcp_server`.
+    /// `guidance` | `recipes` | `standards` | `mcp_server` | `skill`.
     pub async fn knowledge_history(
         &self,
         doc_type: &str,
@@ -1768,6 +1869,25 @@ impl ProjectRegistry {
                     ..Default::default()
                 };
                 self.mcp_server_create("asgard", &input, true).await?;
+            }
+        }
+        if skills::count(&self.db).await? == 0 {
+            for (name, summary, runtime, tags, files) in knowledge_seed::SKILLS {
+                let bundle = asgard_skills::SkillBundle {
+                    files: files
+                        .iter()
+                        .map(|(p, t)| asgard_skills::SkillFile::from_text(*p, t))
+                        .collect(),
+                };
+                let input = SkillInput {
+                    name: (*name).to_string(),
+                    summary: (*summary).to_string(),
+                    runtime: (*runtime).to_string(),
+                    tags: tags.iter().map(|s| s.to_string()).collect(),
+                    bundle,
+                    ..Default::default()
+                };
+                self.skill_create("asgard", &input, true).await?;
             }
         }
         Ok(())

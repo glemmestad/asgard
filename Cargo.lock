@@ -220,6 +220,8 @@ dependencies = [
  "asgard-identity",
  "asgard-provision",
  "asgard-registry",
+ "asgard-reviewer",
+ "asgard-skills",
  "asgard-storage",
  "asgard-workflow",
  "async-graphql",
@@ -329,6 +331,7 @@ dependencies = [
  "asgard-policy",
  "asgard-provision",
  "asgard-registry",
+ "asgard-skills",
  "asgard-storage",
  "asgard-workflow",
  "axum",
@@ -385,6 +388,7 @@ dependencies = [
  "asgard-catalog",
  "asgard-gateway",
  "asgard-policy",
+ "asgard-skills",
  "asgard-storage",
  "asgard-workflow",
  "async-trait",
@@ -424,6 +428,19 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "asgard-skills"
+version = "0.11.0"
+dependencies = [
+ "base64",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

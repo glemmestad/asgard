@@ -529,6 +529,7 @@
       recipes:  { label: 'Recipes', ic: '⧉', render: renderRecipes },
       standards:{ label: 'Standards', ic: '§', render: renderStandards },
       mcp:      { label: 'MCP Catalog', ic: '⧇', render: renderMcpCatalog },
+      skills:   { label: 'Skills Catalog', ic: '◆', render: renderSkillsCatalog },
       projects: { label: 'Projects', ic: '◧', render: renderProjects },
       approvals:{ label: 'Approvals', ic: '✔', render: renderApprovals, need: 'admin' },
       costdash: { label: 'Cost dashboard', ic: '◴', render: renderCostDash, full: true },
@@ -1111,6 +1112,265 @@
         });
         if (mine) wireForm(root(), id, () => showDetail(id));
         wireHistory(root(), 'mcp_server', id, m.readme || '');
+      }
+
+      showList('');
+    }
+
+    // ---------- Skills Catalog (user-publishable agent skills; share + translate + govern) ----------
+    // Read a picked folder's files into the bundle wire shape [{path, content_b64}],
+    // stripping the chosen top-level dir so SKILL.md sits at the bundle root.
+    function skillRelPath(file) {
+      const rp = file.webkitRelativePath || file.name;
+      const i = rp.indexOf('/');
+      return i >= 0 ? rp.slice(i + 1) : rp;
+    }
+    function readFileB64(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => { const s = String(r.result); resolve(s.slice(s.indexOf(',') + 1)); };
+        r.onerror = () => reject(r.error || new Error('read failed'));
+        r.readAsDataURL(file);
+      });
+    }
+    async function readSkillBundle(input) {
+      const out = [];
+      for (const f of Array.from(input.files || [])) {
+        const path = skillRelPath(f);
+        if (!path || path.startsWith('.git/') || path.includes('/.git/') || path.includes('/__pycache__/')) continue;
+        out.push({ path, content_b64: await readFileB64(f) });
+      }
+      return out;
+    }
+    function b64text(b64) {
+      try { return new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))); }
+      catch { return ''; }
+    }
+    function skillSlug(name) {
+      return (name || 'skill').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-+|-+$)/g, '') || 'skill';
+    }
+    // A copy-pasteable installer that recreates the skill folder from the bundle —
+    // the transport that needs no server-side file serving and works for both runtimes.
+    function installScript(runtime, slug, files) {
+      const base = runtime === 'codex' ? `~/.codex/skills/${slug}` : `~/.claude/skills/${slug}`;
+      const lines = [`mkdir -p ${base}`, `cd ${base}`];
+      const dirs = new Set();
+      files.forEach(f => { const d = f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : ''; if (d && !dirs.has(d)) { dirs.add(d); lines.push(`mkdir -p ${d}`); } });
+      files.forEach(f => lines.push(`echo '${f.content_b64}' | base64 -d > ${f.path}`));
+      return lines.join('\n');
+    }
+    function downloadBundle(filename, files) {
+      const blob = new Blob([JSON.stringify({ files }, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    function reviewBox(rev) {
+      if (!rev || !rev.disposition) return '';
+      const disp = rev.disposition;
+      const color = disp === 'pass' ? 'green' : disp === 'concern' ? 'red' : 'amber';
+      const findings = (rev.findings || []).map(f => `<li>${esc(f)}</li>`).join('');
+      const read = (rev.files_read || []).length ? `<div class="muted" style="font-size:11px;margin-top:6px">inspected: ${rev.files_read.map(esc).join(', ')}</div>` : '';
+      return `<div class="card" style="margin-top:10px"><div class="row" style="justify-content:space-between"><strong>Code-review assist</strong> ${pill(disp, color)}</div>
+        ${findings ? `<ul style="margin:8px 0 0;font-size:13px">${findings}</ul>` : '<p class="muted" style="font-size:12px;margin:6px 0 0">No findings — advisory only; a human still approves.</p>'}${read}</div>`;
+    }
+
+    async function renderSkillsCatalog() {
+      const v = document.getElementById('view');
+      v.innerHTML = `<h1 class="pagehead">Skills Catalog</h1>
+        <p class="pagesub">Agent skills (a <code>SKILL.md</code> plus optional bundled scripts) people in the org have published and shared. <strong>Company-approved</strong> entries are vetted by an admin; <strong>user-submitted</strong> ones are listed as-is. Skills are <strong>transportable</strong>: install any of them into Claude Code or Codex — the catalog translates between the two and reports anything it had to change.</p>
+        <div id="s-root">${loading('Loading skills…')}</div>`;
+      const root = () => document.getElementById('s-root');
+      const VIEWS = [['all', 'All'], ['approved', 'Company-approved'], ['community', 'User-submitted'], ['disabled', 'Disabled'], ['archived', 'Archived']];
+      let view = 'all', all = [];
+      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
+      const tierBadge = (s) => s.status === 'approved' ? pill('company-approved', 'green') : pill('user-submitted', 'blue');
+      const stateBadge = (s) => (s.state && s.state !== 'active') ? pill(s.state, s.state === 'archived' ? 'red' : 'amber') : '';
+      const portBadge = (s) => s.portability ? pill(s.portability, s.portability === 'portable' ? 'green' : 'amber') : '';
+
+      async function load(q) {
+        const p = new URLSearchParams();
+        if (view === 'approved') p.set('status', 'approved');
+        else if (view === 'community') p.set('status', 'community');
+        p.set('state', (view === 'disabled' || view === 'archived') ? view : 'active');
+        if (q) p.set('q', q);
+        all = await api('/api/skills?' + p.toString());
+      }
+      try { await load(''); } catch (e) { root().innerHTML = errBanner(e); return; }
+
+      const gv = (scope, id) => (scope.querySelector('#' + id)?.value ?? '').trim();
+      function readForm(scope) {
+        return {
+          name: gv(scope, 'sk-name'),
+          summary: gv(scope, 'sk-summary'),
+          runtime: gv(scope, 'sk-runtime'),
+          repository: gv(scope, 'sk-repo'),
+          homepage: gv(scope, 'sk-home'),
+          version: gv(scope, 'sk-version'),
+          tags: gv(scope, 'sk-tags').split(',').map(s => s.trim()).filter(Boolean),
+          readme: scope.querySelector('#sk-readme')?.value ?? '',
+        };
+      }
+      function formHtml(s) {
+        s = s || {}; const rt = s.runtime || 'claude-code';
+        const saveLabel = s.id ? 'Save changes' : (isAdmin() ? 'Publish (company-approved)' : 'Publish (listed as user-submitted)');
+        return `<div class="row" style="margin-top:10px">
+            <input id="sk-name" placeholder="name (optional — defaults to SKILL.md)" value="${esc(s.name || '')}" style="flex:1;min-width:200px" />
+            <input id="sk-version" placeholder="version (optional)" value="${esc(s.version || '')}" style="width:140px" />
+            <input id="sk-tags" placeholder="tags (comma-separated)" value="${esc((s.tags || []).join(', '))}" />
+          </div>
+          <input id="sk-summary" placeholder="one-line blurb (optional — defaults to SKILL.md description)" value="${esc(s.summary || '')}" style="width:100%;margin-top:8px" />
+          <div class="row" style="margin-top:8px;align-items:center;gap:8px">
+            <span class="muted" style="font-size:12px">Authored for</span>
+            <select id="sk-runtime"><option value="claude-code"${rt === 'claude-code' ? ' selected' : ''}>Claude Code</option><option value="codex"${rt === 'codex' ? ' selected' : ''}>Codex</option></select>
+          </div>
+          <div class="row" style="margin-top:8px"><input id="sk-repo" placeholder="repository URL (optional)" value="${esc(s.repository || '')}" style="flex:1;min-width:200px" /><input id="sk-home" placeholder="homepage / docs URL (optional)" value="${esc(s.homepage || '')}" style="flex:1;min-width:200px" /></div>
+          <div style="margin-top:8px">
+            <label class="muted" style="font-size:12px">Skill folder ${s.id ? '(re-select to replace files; leave empty to keep the current bundle)' : '(must contain SKILL.md)'}</label>
+            <input id="sk-bundle" type="file" webkitdirectory multiple style="display:block;margin-top:4px;font-size:12px" />
+          </div>
+          <textarea id="sk-readme" placeholder="extra getting-started notes (markdown, optional)" style="width:100%;margin-top:8px;min-height:90px;background:var(--code);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;font-family:var(--mono);font-size:12px">${esc(s.readme || '')}</textarea>
+          <div class="row" style="margin-top:8px"><button class="act" id="sk-save">${saveLabel}</button><span id="sk-saveout" class="muted" style="font-size:12px"></span></div>`;
+      }
+      function wireForm(scope, existingId, onDone) {
+        const btn = scope.querySelector('#sk-save');
+        if (!btn) return;
+        btn.onclick = async () => {
+          const out = scope.querySelector('#sk-saveout');
+          out.textContent = 'Uploading…';
+          try {
+            const body = readForm(scope);
+            body.bundle = await readSkillBundle(scope.querySelector('#sk-bundle'));
+            if (!existingId && body.bundle.length === 0) { out.innerHTML = errBanner('Select a skill folder containing a SKILL.md.'); return; }
+            if (existingId && body.bundle.length === 0) { body.bundle = (await api(`/api/skills/${encodeURIComponent(existingId)}/export`)).files; }
+            if (existingId) await api(`/api/skills/${encodeURIComponent(existingId)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+            else await api('/api/skills', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+            await onDone();
+          } catch (e) { out.innerHTML = errBanner(e); }
+        };
+      }
+      const publishBox = () => `<details class="card" style="margin-bottom:14px"><summary style="cursor:pointer;color:var(--muted)">✎ Publish a skill ${isAdmin() ? '' : '(listed as user-submitted, with you as the contact)'}</summary>${formHtml(null)}</details>`;
+
+      function showList(q) {
+        const ql = (q || '').toLowerCase();
+        const list = !ql ? all : all.filter(s => (s.name + ' ' + s.summary + ' ' + (s.tags || []).join(' ')).toLowerCase().includes(ql));
+        const cards = list.map(s => `<div class="card lcard" data-id="${esc(s.id)}">
+            <div class="row" style="justify-content:space-between">
+              <div class="ttl">${esc(s.name)} ${tierBadge(s)} ${stateBadge(s)}</div>
+              <div>${(s.tags || []).map(t => pill(t, 'blue')).join(' ')}</div>
+            </div>
+            ${s.summary ? `<p class="muted" style="font-size:12px;margin:6px 0 6px">${esc(s.summary)}</p>` : ''}
+            <div class="muted" style="font-size:11px">${pill(s.runtime, '')} ${portBadge(s)} by ${esc(s.owner || '—')}</div>
+          </div>`).join('');
+        const emptyMsg = ql ? 'No skills match.' : (view === 'disabled' ? 'No disabled skills.' : view === 'archived' ? 'No archived skills.' : 'No skills yet. Publish one above, or have your agent do it via skills_catalog_publish.');
+        root().innerHTML = `<div class="row" style="margin-bottom:10px"><input id="s-q" placeholder="search skills… (Enter searches every entry)" value="${esc(q || '')}" style="flex:1;max-width:360px" /></div>
+          <div class="row" style="gap:6px;margin-bottom:12px;flex-wrap:wrap">${VIEWS.map(([k, l]) => facet(k, l)).join('')}</div>
+          ${publishBox()}
+          ${list.length ? cards : empty(emptyMsg)}`;
+        const qi = document.getElementById('s-q');
+        qi.oninput = () => showList(qi.value);
+        qi.onkeydown = async (e) => { if (e.key === 'Enter') { try { await load(qi.value); showList(qi.value); } catch (err) { alert(err.message); } } };
+        root().querySelectorAll('[data-view]').forEach(c => c.onclick = async () => { view = c.dataset.view; try { await load(''); showList(''); } catch (e) { alert(e.message); } });
+        root().querySelectorAll('.lcard').forEach(c => c.onclick = () => showDetail(c.dataset.id));
+        wireForm(root(), null, async () => { await load(''); showList(''); });
+      }
+
+      async function showDetail(id) {
+        let s;
+        try { s = await api('/api/skills/' + encodeURIComponent(id)); }
+        catch { return showList(''); }
+        const admin = isAdmin();
+        const mine = admin || (!!meEmail && s.owner === meEmail);
+        let rt = s.runtime || 'claude-code';
+        const slug = skillSlug(s.name);
+        const links = [
+          s.repository ? `<a href="${esc(s.repository)}" target="_blank" rel="noopener">repository ↗</a>` : '',
+          s.homepage ? `<a href="${esc(s.homepage)}" target="_blank" rel="noopener">homepage ↗</a>` : '',
+        ].filter(Boolean).join(' · ');
+        const actions = [];
+        if (admin && s.status === 'community') actions.push(`<button class="act" data-act="approve">Approve (company)</button>`);
+        if (admin && s.status === 'approved') actions.push(`<button class="pbtn" data-act="unapprove">Unapprove</button>`);
+        if (admin) actions.push(`<button class="pbtn" data-act="review">Run code review</button>`);
+        if (mine && s.state === 'active') actions.push(`<button class="pbtn" data-act="disable">Disable</button>`);
+        if (mine && s.state === 'disabled') actions.push(`<button class="act" data-act="enable">Enable</button>`);
+        if (mine && s.state !== 'archived') actions.push(`<button class="pbtn" data-act="archive">Archive</button>`);
+        if (mine && s.state === 'archived') actions.push(`<button class="act" data-act="unarchive">Unarchive</button>`);
+        if (mine) actions.push(`<button class="danger" data-act="delete">Delete</button>`);
+        const rtBtn = (k, l) => `<button data-rt="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${rt === k ? 'var(--teal)' : 'var(--line)'};background:${rt === k ? 'var(--teal)' : 'transparent'};color:${rt === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px">${l}</button>`;
+
+        root().innerHTML = `<button class="crumb">← all skills</button>
+          <div class="row" style="justify-content:space-between;align-items:flex-start">
+            <h2 style="margin:0 0 4px">${esc(s.name)} ${tierBadge(s)} ${stateBadge(s)} ${portBadge(s)}</h2>
+            <div>${(s.tags || []).map(t => pill(t, 'blue')).join(' ')}</div>
+          </div>
+          <div class="muted" style="font-size:11px;margin-bottom:6px">by ${esc(s.owner || '—')} · updated ${esc((s.updated_at || '').slice(0, 10))}${s.version ? ` · v${esc(s.version)}` : ''} · ${pill(s.runtime, '')} · <code>${esc(s.id)}</code></div>
+          ${s.summary ? `<p style="margin:0 0 8px">${esc(s.summary)}</p>` : ''}
+          ${links ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${links}</div>` : ''}
+          ${actions.length ? `<div class="row" id="sk-actions" style="gap:8px;margin:6px 0 4px;flex-wrap:wrap">${actions.join('')}</div><div id="sk-actout" style="margin-bottom:6px"></div>` : ''}
+          <div id="sk-review">${reviewBox(s.review_json)}</div>
+          <h5 style="margin:14px 0 4px">Get this skill</h5>
+          <div class="row" id="sk-rt" style="gap:6px;margin:6px 0"></div>
+          <div id="sk-export">${loading('Rendering…')}</div>
+          ${s.readme ? `<div class="md" style="margin-top:14px">${mdToHtml(s.readme)}</div>` : ''}
+          ${mine ? `<details class="card" style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted)">✎ Edit this skill</summary>${formHtml(s)}</details>` : ''}
+          ${historyBox()}`;
+        root().querySelector('.crumb').onclick = () => showList('');
+
+        async function renderExport(target) {
+          const box = document.getElementById('sk-export');
+          box.innerHTML = loading('Rendering…');
+          let ex;
+          try { ex = await api(`/api/skills/${encodeURIComponent(id)}/export?runtime=${encodeURIComponent(target)}`); }
+          catch (e) { box.innerHTML = errBanner(e); return; }
+          const script = installScript(target, slug, ex.files);
+          const where = target === 'codex' ? '<code>~/.codex/skills/</code>' : '<code>~/.claude/skills/</code>';
+          const loss = (ex.loss || []).length
+            ? `<details style="margin-top:10px" open><summary class="muted" style="cursor:pointer;font-size:12px">Translation changes (${ex.loss.length}) — ${esc(s.runtime)} → ${esc(target)}</summary>
+                <ul style="font-size:12px;margin:6px 0">${ex.loss.map(l => `<li><strong>${esc(l.field)}</strong>: ${esc(l.action)} <span class="muted">(${esc(l.reason)})</span></li>`).join('')}</ul></details>`
+            : (target !== s.runtime ? '<div class="muted" style="font-size:12px;margin-top:8px">No changes needed — fully portable.</div>' : '');
+          const skillMd = (ex.files.find(f => f.path === 'SKILL.md') || {}).content_b64;
+          box.innerHTML = `<p class="muted" style="font-size:12px">Run this to install the skill into ${where}</p>
+            ${snip(script)}
+            <div class="row" style="margin-top:8px"><button class="pbtn" id="sk-dl">Download bundle (.json)</button></div>
+            ${loss}
+            <details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:12px">Files (${ex.files.length})</summary><ul style="font-size:12px;margin:6px 0">${ex.files.map(f => `<li><code>${esc(f.path)}</code></li>`).join('')}</ul></details>
+            ${skillMd ? `<div class="md" style="margin-top:14px">${mdToHtml(b64text(skillMd))}</div>` : ''}`;
+          wireCopy(box);
+          const dl = document.getElementById('sk-dl');
+          if (dl) dl.onclick = () => downloadBundle(`${slug}.${target}.json`, ex.files);
+        }
+        function wireRt() {
+          const bar = document.getElementById('sk-rt');
+          bar.innerHTML = rtBtn('claude-code', 'Claude Code') + rtBtn('codex', 'Codex');
+          bar.querySelectorAll('[data-rt]').forEach(b => b.onclick = () => { rt = b.dataset.rt; wireRt(); renderExport(rt); });
+        }
+        wireRt();
+        renderExport(rt);
+
+        root().querySelectorAll('#sk-actions [data-act]').forEach(b => b.onclick = async () => {
+          const act = b.dataset.act;
+          const out = document.getElementById('sk-actout');
+          try {
+            if (act === 'delete') {
+              if (!await confirmAction({ title: 'Delete this skill?', message: 'Removes the skill from the catalog for everyone. This cannot be undone — to retire it reversibly, archive it instead.', confirmLabel: 'Delete' })) return;
+              await api(`/api/skills/${encodeURIComponent(id)}`, { method: 'DELETE' });
+              await load(''); return showList('');
+            }
+            if (act === 'review') {
+              out.innerHTML = loading('Running code review…');
+              const r = await api(`/api/skills/${encodeURIComponent(id)}/review`, { method: 'POST' });
+              out.innerHTML = '';
+              document.getElementById('sk-review').innerHTML = r.enabled === false
+                ? `<div class="muted" style="font-size:12px;margin-top:10px">${esc(r.reason)}</div>`
+                : reviewBox(r.review);
+              return;
+            }
+            await api(`/api/skills/${encodeURIComponent(id)}/${act}`, { method: 'POST' });
+            await showDetail(id);
+          } catch (e) { if (out) out.innerHTML = errBanner(e); }
+        });
+        if (mine) wireForm(root(), id, () => showDetail(id));
+        wireHistory(root(), 'skills', id, s.readme || '');
       }
 
       showList('');

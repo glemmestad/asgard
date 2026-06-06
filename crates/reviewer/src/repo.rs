@@ -3,6 +3,7 @@
 //! plus a local-path backend for tests and air-gapped review. No git binary, no
 //! scratch dir. Read-only: the reviewer judges the code, it never runs it.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::ReviewError;
@@ -32,6 +33,11 @@ enum Backend {
     Local {
         root: PathBuf,
     },
+    /// An in-memory file tree (a skill bundle already stored in Asgard) — reviewed
+    /// the same way as a repo, no fetch.
+    Bundle {
+        files: BTreeMap<String, Vec<u8>>,
+    },
 }
 
 pub struct RepoReader {
@@ -50,6 +56,15 @@ impl RepoReader {
         })
     }
 
+    /// A reader over an in-memory file tree (path → bytes), for reviewing a stored
+    /// skill bundle without any network fetch.
+    pub fn from_bundle(files: BTreeMap<String, Vec<u8>>) -> Self {
+        RepoReader {
+            backend: Backend::Bundle { files },
+            client: reqwest::Client::new(),
+        }
+    }
+
     /// Reviewable file paths (blobs), excluding noise (vcs/build/vendor dirs and
     /// obvious binaries), capped at [`MAX_FILES`].
     pub async fn list_files(&self) -> Result<Vec<String>, ReviewError> {
@@ -57,6 +72,7 @@ impl RepoReader {
             Backend::GitHub { .. } => self.github_tree().await?,
             Backend::GitLab { .. } => self.gitlab_tree().await?,
             Backend::Local { root } => local_tree(root, root),
+            Backend::Bundle { files } => files.keys().cloned().collect(),
         };
         files.retain(|p| reviewable(p));
         files.truncate(MAX_FILES);
@@ -73,6 +89,10 @@ impl RepoReader {
             Backend::GitLab { .. } => self.gitlab_raw(path).await?,
             Backend::Local { root } => std::fs::read_to_string(root.join(path))
                 .map_err(|e| ReviewError::Backend(format!("read {path}: {e}")))?,
+            Backend::Bundle { files } => match files.get(path) {
+                Some(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                None => return Err(ReviewError::Backend(format!("file not in bundle: {path}"))),
+            },
         };
         Ok(truncate(body))
     }
@@ -371,6 +391,25 @@ mod tests {
             .contains("fn main"));
         assert!(r.read_file("logo.png").await.is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn bundle_backend_lists_and_reads_filtering_noise() {
+        let mut files = BTreeMap::new();
+        files.insert("SKILL.md".to_string(), b"---\nname: x\n---\nbody".to_vec());
+        files.insert("scripts/run.sh".to_string(), b"echo hi".to_vec());
+        files.insert("logo.png".to_string(), b"\x89PNG".to_vec());
+        let r = RepoReader::from_bundle(files);
+        let mut listed = r.list_files().await.unwrap();
+        listed.sort();
+        assert_eq!(listed, vec!["SKILL.md", "scripts/run.sh"]); // png filtered
+        assert!(r
+            .read_file("scripts/run.sh")
+            .await
+            .unwrap()
+            .contains("echo hi"));
+        assert!(r.read_file("logo.png").await.is_err());
+        assert!(r.read_file("nope.md").await.is_err());
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub mod code_review;
 pub mod llm_judge;
 pub mod manifest;
 pub mod repo;
+pub mod skill_review;
 pub mod webhook;
 
 use std::collections::HashMap;
@@ -25,6 +26,7 @@ pub use code_review::{
 };
 pub use llm_judge::LlmJudge;
 pub use manifest::{ReviewerCatalog, ReviewerManifest};
+pub use skill_review::review_skill_bundle;
 pub use webhook::WebhookReviewer;
 
 #[derive(Debug, thiserror::Error)]

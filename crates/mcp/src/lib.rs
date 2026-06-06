@@ -25,7 +25,7 @@ use asgard_catalog::{seed, CatalogRepo, ListFilter};
 use asgard_gateway::{Gateway, GatewayRepo};
 use asgard_identity::{IdentityService, Role, PAT_PREFIX};
 use asgard_provision::{ProvisionService, RollupDim};
-use asgard_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput};
+use asgard_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput, SkillInput};
 use asgard_workflow::WorkflowEngine;
 
 use rmcp::handler::server::router::prompt::PromptRouter;
@@ -174,6 +174,57 @@ pub struct McpCatalogStateArgs {
     pub id: String,
     /// `active`, `disabled` (temporarily hide), or `archived` (retire).
     pub state: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SkillsCatalogGetArgs {
+    /// The skill id (see skills_catalog_list).
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SkillsCatalogPublishArgs {
+    /// Provide to update an existing skill you own; omit to publish a new one.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Optional — falls back to the SKILL.md frontmatter `name`.
+    #[serde(default)]
+    pub name: String,
+    /// Optional — falls back to the SKILL.md frontmatter `description`.
+    #[serde(default)]
+    pub summary: String,
+    /// Optional extra getting-started notes (markdown), beyond the SKILL.md.
+    #[serde(default)]
+    pub readme: String,
+    /// Authored runtime: `claude-code` (default) or `codex`.
+    #[serde(default)]
+    pub runtime: String,
+    #[serde(default)]
+    pub repository: String,
+    #[serde(default)]
+    pub homepage: String,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// The skill's file tree: `[{ path, content_b64 }]`. Must include a `SKILL.md`.
+    pub bundle: Vec<asgard_skills::SkillFile>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SkillsCatalogStateArgs {
+    pub id: String,
+    /// `active`, `disabled` (temporarily hide), or `archived` (retire).
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SkillsCatalogExportArgs {
+    /// The skill id (see skills_catalog_list).
+    pub id: String,
+    /// Target runtime: `claude-code` or `codex`. Defaults to the skill's own runtime.
+    #[serde(default)]
+    pub runtime: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -854,6 +905,136 @@ impl AsgardMcp {
             .map_err(|e| e.to_string())
     }
 
+    async fn do_skills_catalog_list(&self) -> Result<String, String> {
+        let list = self
+            .registry
+            .skill_list(None, None, Some("active"))
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&list).map_err(|e| e.to_string())
+    }
+
+    async fn do_skills_catalog_get(&self, id: &str) -> Result<String, String> {
+        match self
+            .registry
+            .skill_get(id)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            Some(s) => serde_json::to_string(&s).map_err(|e| e.to_string()),
+            None => Err(format!(
+                "unknown skill '{id}'; call skills_catalog_list for ids"
+            )),
+        }
+    }
+
+    /// Publish (or update) a skill as the authenticated user. An admin's publish
+    /// lands company-approved; everyone else's is user-submitted.
+    async fn do_skills_catalog_publish(
+        &self,
+        email: &str,
+        role: &str,
+        a: SkillsCatalogPublishArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let input = SkillInput {
+            name: a.name,
+            summary: a.summary,
+            readme: a.readme,
+            runtime: a.runtime,
+            repository: a.repository,
+            homepage: a.homepage,
+            version: a.version,
+            tags: a.tags,
+            bundle: asgard_skills::SkillBundle { files: a.bundle },
+        };
+        let s = match a.id.filter(|s| !s.is_empty()) {
+            Some(id) => {
+                let existing = self
+                    .registry
+                    .skill_get(&id)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown skill '{id}'"))?;
+                if existing.owner != email && !admin {
+                    return Err("only the owner or an admin can edit this skill".into());
+                }
+                self.registry
+                    .skill_update(&id, &input, email)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("unknown skill '{id}'"))?
+            }
+            None => self
+                .registry
+                .skill_create(email, &input, admin)
+                .await
+                .map_err(|e| e.to_string())?,
+        };
+        serde_json::to_string(&s).map_err(|e| e.to_string())
+    }
+
+    async fn do_skills_catalog_set_state(
+        &self,
+        email: &str,
+        role: &str,
+        a: SkillsCatalogStateArgs,
+    ) -> Result<String, String> {
+        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let existing = self
+            .registry
+            .skill_get(&a.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown skill '{}'", a.id))?;
+        if existing.owner != email && !admin {
+            return Err("only the owner or an admin can change this skill's state".into());
+        }
+        let action = if a.state == "active" {
+            "enabled"
+        } else {
+            &a.state
+        };
+        self.registry
+            .skill_set_state(&a.id, &a.state, action, email)
+            .await
+            .map_err(|e| e.to_string())?;
+        serde_json::to_string(&serde_json::json!({"ok": true, "id": a.id, "state": a.state}))
+            .map_err(|e| e.to_string())
+    }
+
+    async fn do_skills_catalog_export(&self, a: SkillsCatalogExportArgs) -> Result<String, String> {
+        let skill = self
+            .registry
+            .skill_get(&a.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown skill '{}'", a.id))?;
+        let blob = self
+            .registry
+            .skill_get_bundle(&a.id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("unknown skill '{}'", a.id))?;
+        let bundle = asgard_skills::from_json(&blob).map_err(|e| e.to_string())?;
+        let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+        let target = match a.runtime.as_deref() {
+            Some(s) => asgard_skills::Runtime::parse(s)
+                .ok_or_else(|| format!("unknown runtime '{s}' (expected claude-code or codex)"))?,
+            None => from,
+        };
+        let res = asgard_skills::translate(&bundle, from, target).map_err(|e| e.to_string())?;
+        serde_json::to_string(&serde_json::json!({
+            "id": a.id,
+            "name": skill.name,
+            "origin": from.as_str(),
+            "runtime": target.as_str(),
+            "files": res.bundle.files,
+            "loss": res.loss,
+        }))
+        .map_err(|e| e.to_string())
+    }
+
     async fn do_cost_report(&self, a: CostReportArgs) -> Result<String, String> {
         let by = CostDim::parse(a.by.as_deref().unwrap_or("project")).ok_or_else(|| {
             "by must be one of: project, owner, manager, group, classification, model, provider"
@@ -1445,6 +1626,67 @@ impl AsgardMcp {
             }
         };
         wrap(self.do_mcp_catalog_set_state(&email, &role, a).await)
+    }
+
+    #[tool(
+        description = "List the Skills catalog — agent skills (a SKILL.md plus optional bundled scripts/config) people have published and shared in this org. Each entry returns name, summary, runtime, portability, tags, owner (contact), and tier (company-approved vs user-submitted). Use it to find a skill to install."
+    )]
+    async fn skills_catalog_list(&self) -> Result<CallToolResult, McpError> {
+        wrap(self.do_skills_catalog_list().await)
+    }
+
+    #[tool(
+        description = "Fetch one Skills catalog entry by id (see skills_catalog_list) — metadata, parsed SKILL.md frontmatter, and a portability verdict. Use skills_catalog_export to download the bundle, optionally translated to another runtime."
+    )]
+    async fn skills_catalog_get(
+        &self,
+        Parameters(a): Parameters<SkillsCatalogGetArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_skills_catalog_get(&a.id).await)
+    }
+
+    #[tool(
+        description = "Publish an agent skill to the catalog so others can discover and install it (or update one you own by passing its id). bundle is the skill's file tree [{ path, content_b64 }] and must include a SKILL.md; name/summary default to the SKILL.md frontmatter. Requires a user token (asg_pat_…) — a project key has no owner identity. Your submission is listed as user-submitted until an admin promotes it to company-approved."
+    )]
+    async fn skills_catalog_publish(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<SkillsCatalogPublishArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => {
+                return deny(
+                    "publishing to the Skills catalog requires a user token (asg_pat_…); a project key has no owner identity".into(),
+                )
+            }
+        };
+        wrap(self.do_skills_catalog_publish(&email, &role, a).await)
+    }
+
+    #[tool(
+        description = "Change the lifecycle of a skill you own: disabled (temporarily hide), archived (retire — kept for audit, prunable), or active (restore). Requires a user token; owner or admin only."
+    )]
+    async fn skills_catalog_set_state(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<SkillsCatalogStateArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let (email, role) = match Self::auth(&ctx) {
+            Some(McpAuth::User { email, role }) => (email, role),
+            _ => return deny("changing a skill's state requires a user token (asg_pat_…)".into()),
+        };
+        wrap(self.do_skills_catalog_set_state(&email, &role, a).await)
+    }
+
+    #[tool(
+        description = "Download a skill's bundle, translated to a target runtime (claude-code or codex; defaults to the skill's own). Returns the rendered file tree [{ path, content_b64 }] plus a loss report of anything the translation degraded. Read-only."
+    )]
+    async fn skills_catalog_export(
+        &self,
+        Parameters(a): Parameters<SkillsCatalogExportArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        wrap(self.do_skills_catalog_export(a).await)
     }
 
     #[tool(

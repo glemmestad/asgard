@@ -255,6 +255,20 @@ pub fn router(state: AppState) -> Router {
             post(unarchive_mcp_server),
         )
         .route("/api/mcp-servers/{id}/history", get(mcp_server_history))
+        .route("/api/skills", get(list_skills).post(create_skill))
+        .route(
+            "/api/skills/{id}",
+            get(get_skill).put(update_skill).delete(delete_skill),
+        )
+        .route("/api/skills/{id}/approve", post(approve_skill))
+        .route("/api/skills/{id}/unapprove", post(unapprove_skill))
+        .route("/api/skills/{id}/disable", post(disable_skill))
+        .route("/api/skills/{id}/enable", post(enable_skill))
+        .route("/api/skills/{id}/archive", post(archive_skill))
+        .route("/api/skills/{id}/unarchive", post(unarchive_skill))
+        .route("/api/skills/{id}/history", get(skill_history))
+        .route("/api/skills/{id}/export", get(export_skill))
+        .route("/api/skills/{id}/review", post(review_skill))
         .route("/api/requests", get(list_requests).post(submit_request))
         .route("/api/requests/{id}/approve", post(approve_request))
         .route("/api/requests/{id}/reject", post(reject_request))
@@ -1571,6 +1585,334 @@ async fn mcp_server_history(
     Ok(Json(
         st.registry.knowledge_history("mcp_server", &id).await?,
     ))
+}
+
+// ---- Skills catalog: user-publishable agent skills (SKILL.md + bundled files) ----
+
+#[derive(Deserialize)]
+struct SkillBody {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    readme: String,
+    #[serde(default)]
+    runtime: String,
+    #[serde(default)]
+    repository: String,
+    #[serde(default)]
+    homepage: String,
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    /// The skill's file tree: `[{ path, content_b64 }]`. `SKILL.md` is required.
+    #[serde(default)]
+    bundle: Vec<asgard_skills::SkillFile>,
+}
+
+impl From<SkillBody> for asgard_registry::SkillInput {
+    fn from(b: SkillBody) -> Self {
+        asgard_registry::SkillInput {
+            name: b.name,
+            summary: b.summary,
+            readme: b.readme,
+            runtime: b.runtime,
+            repository: b.repository,
+            homepage: b.homepage,
+            version: b.version,
+            tags: b.tags,
+            bundle: asgard_skills::SkillBundle { files: b.bundle },
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SkillExportQ {
+    /// Target runtime: `claude-code` | `codex`. Defaults to the skill's own runtime.
+    #[serde(default)]
+    runtime: Option<String>,
+}
+
+fn skill_owns_or_admin(user: &asgard_identity::User, entry: &asgard_registry::Skill) -> bool {
+    user.can(asgard_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
+}
+
+async fn list_skills(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Query(ql): Query<McpListQ>,
+) -> Result<Json<Vec<asgard_registry::Skill>>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let state = ql.state.as_deref().unwrap_or("active");
+    let mut list = st
+        .registry
+        .skill_list(ql.q.as_deref(), ql.status.as_deref(), Some(state))
+        .await?;
+    if state != "active" && !user.can(asgard_identity::Capability::ManageUsers) {
+        let me = owner_id(&user);
+        list.retain(|s| s.owner == me);
+    }
+    Ok(Json(list))
+}
+
+async fn create_skill(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(b): Json<SkillBody>,
+) -> Result<Json<asgard_registry::Skill>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let approved = user.can(asgard_identity::Capability::ManageUsers);
+    let s = st
+        .registry
+        .skill_create(&owner_id(&user), &b.into(), approved)
+        .await?;
+    Ok(Json(s))
+}
+
+async fn get_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<asgard_registry::Skill>, ApiError> {
+    st.registry
+        .skill_get(&id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))
+}
+
+async fn update_skill(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Json(b): Json<SkillBody>,
+) -> Result<Json<asgard_registry::Skill>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let existing = st
+        .registry
+        .skill_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    if !skill_owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can edit this skill".into(),
+        ));
+    }
+    let s = st
+        .registry
+        .skill_update(&id, &b.into(), &owner_id(&user))
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    Ok(Json(s))
+}
+
+async fn delete_skill(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = current_user(&st, &headers).await?;
+    let existing = st
+        .registry
+        .skill_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    if !skill_owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can delete this skill".into(),
+        ));
+    }
+    st.registry.skill_delete(&id, &owner_id(&user)).await?;
+    Ok(Json(serde_json::json!({ "ok": true, "id": id })))
+}
+
+async fn approve_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    st.registry.skill_approve(&id, &owner_id(&user)).await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "status": "approved" }),
+    ))
+}
+
+async fn unapprove_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    st.registry.skill_unapprove(&id, &owner_id(&user)).await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "status": "community" }),
+    ))
+}
+
+async fn skill_transition(
+    st: &AppState,
+    headers: &HeaderMap,
+    id: &str,
+    state: &str,
+    action: &str,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let user = current_user(st, headers).await?;
+    let existing = st
+        .registry
+        .skill_get(id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    if !skill_owns_or_admin(&user, &existing) {
+        return Err(ApiError::Forbidden(
+            "only the owner or an admin can change this skill's state".into(),
+        ));
+    }
+    st.registry
+        .skill_set_state(id, state, action, &owner_id(&user))
+        .await?;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": id, "state": state }),
+    ))
+}
+
+async fn disable_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    skill_transition(&st, &headers, &id, "disabled", "disabled").await
+}
+
+async fn enable_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    skill_transition(&st, &headers, &id, "active", "enabled").await
+}
+
+async fn archive_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    skill_transition(&st, &headers, &id, "archived", "archived").await
+}
+
+async fn unarchive_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    skill_transition(&st, &headers, &id, "active", "unarchived").await
+}
+
+async fn skill_history(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+    Ok(Json(st.registry.knowledge_history("skill", &id).await?))
+}
+
+/// Download a skill's bundle, translated to the requested runtime (default: the
+/// skill's own). The response carries the rendered file tree plus a loss report of
+/// what the translation degraded.
+async fn export_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<SkillExportQ>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let skill = st
+        .registry
+        .skill_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    let blob = st
+        .registry
+        .skill_get_bundle(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    let bundle =
+        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+    let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+    let target = match q.runtime.as_deref() {
+        Some(s) => asgard_skills::Runtime::parse(s).ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "unknown runtime '{s}' (expected one of: {})",
+                asgard_skills::RUNTIMES.join(", ")
+            ))
+        })?,
+        None => from,
+    };
+    let res = asgard_skills::translate(&bundle, from, target)
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(serde_json::json!({
+        "id": id,
+        "name": skill.name,
+        "origin": from.as_str(),
+        "runtime": target.as_str(),
+        "files": res.bundle.files,
+        "loss": res.loss,
+    })))
+}
+
+/// Run the (advisory, escalate-only) machine code-review on a submitted skill and
+/// store the verdict for the approver. Admin-gated. Off when no real LLM is reachable
+/// (mirrors the promotion review gate); `ASGARD_REVIEW_ALLOW_MOCK=1` forces the
+/// deterministic stub for dev/e2e.
+async fn review_skill(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    let _skill = st
+        .registry
+        .skill_get(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    let blob = st
+        .registry
+        .skill_get_bundle(&id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
+    let bundle =
+        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+
+    let model = st.cost_qa_model.clone();
+    let allow_mock = std::env::var("ASGARD_REVIEW_ALLOW_MOCK")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if st.system_cost_key.is_none() || (model.contains("mock") && !allow_mock) {
+        return Ok(Json(serde_json::json!({
+            "enabled": false,
+            "reason": "code-review assist is off: no real LLM is reachable (configure a provider key, or set ASGARD_REVIEW_ALLOW_MOCK=1 for a deterministic dev stub)",
+        })));
+    }
+
+    let files = bundle
+        .decoded()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let mut standards = String::new();
+    for sid in ["coding", "security"] {
+        if let Some(s) = st.registry.standard_get(sid).await? {
+            standards.push_str(&format!("\n## {}\n{}\n", s.title, s.body));
+        }
+    }
+    let verdict = asgard_reviewer::review_skill_bundle(
+        &st.gateway,
+        st.system_cost_key.as_deref(),
+        &model,
+        files,
+        &standards,
+        8,
+    )
+    .await;
+    let vj = serde_json::to_value(&verdict).unwrap_or(serde_json::Value::Null);
+    st.registry.skill_set_review(&id, &vj).await?;
+    Ok(Json(serde_json::json!({ "enabled": true, "review": vj })))
 }
 
 async fn list_standards(

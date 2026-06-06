@@ -107,3 +107,45 @@ pub const MCP_SERVERS: &[(&str, &str, &str, &[&str], &str)] = &[
         include_str!("../../../seed/knowledge/mcp_servers/asgard.md"),
     ),
 ];
+
+/// One seeded skill: (name, summary, runtime, tags, files as (path, text)).
+type SeedSkill = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [(&'static str, &'static str)],
+);
+
+/// Generic, vendor-neutral example skills seeded as the company-approved tier so a
+/// fresh Skills catalog isn't blank and shows both shapes: an instructions-only skill
+/// that drives an external tool, and one that bundles a script. Portability + manifest
+/// are derived on seed.
+pub const SKILLS: &[SeedSkill] = &[
+    (
+        "Changelog from commits",
+        "Draft a release changelog from the git log since the last tag, grouped by change type.",
+        "claude-code",
+        &["git", "release", "docs"],
+        &[(
+            "SKILL.md",
+            include_str!("../../../seed/knowledge/skills/changelog-writer/SKILL.md"),
+        )],
+    ),
+    (
+        "CSV profiler",
+        "Summarize a CSV — column types, null counts, ranges, and obvious data-quality flags.",
+        "claude-code",
+        &["data", "csv", "analysis"],
+        &[
+            (
+                "SKILL.md",
+                include_str!("../../../seed/knowledge/skills/csv-profiler/SKILL.md"),
+            ),
+            (
+                "scripts/profile.py",
+                include_str!("../../../seed/knowledge/skills/csv-profiler/scripts/profile.py"),
+            ),
+        ],
+    ),
+];

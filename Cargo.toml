@@ -7,6 +7,7 @@ members = [
     "crates/gateway",
     "crates/registry",
     "crates/reviewer",
+    "crates/skills",
     "crates/provision",
     "crates/workflow",
     "crates/eval",
@@ -79,6 +80,7 @@ jsonschema = "0.18"
 # misc
 regex = "1"
 sha2 = "0.10"
+base64 = "0.22"
 argon2 = "0.5"
 once_cell = "1"
 rust-embed = "8"
@@ -93,6 +95,7 @@ asgard-identity = { path = "crates/identity" }
 asgard-gateway = { path = "crates/gateway" }
 asgard-registry = { path = "crates/registry" }
 asgard-reviewer = { path = "crates/reviewer" }
+asgard-skills = { path = "crates/skills" }
 asgard-provision = { path = "crates/provision" }
 asgard-workflow = { path = "crates/workflow" }
 asgard-eval = { path = "crates/eval" }

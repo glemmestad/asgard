@@ -172,7 +172,7 @@ impl CodeReview {
 /// Marker a repo can carry to deterministically fail the offline review (a file
 /// named `.asgard-review-fail`, or any path containing `REVIEW_FAIL`). Lets tests
 /// and the offline e2e drive a concern on an otherwise machine-clean repo.
-const FAIL_MARKER: &str = ".asgard-review-fail";
+pub(crate) const FAIL_MARKER: &str = ".asgard-review-fail";
 
 /// Offline/mock judgment: read the repo (proving the read path) and judge it
 /// *independently* of the machine verdict — a clean tree passes; a tree carrying
@@ -359,12 +359,26 @@ impl Reviewer for CodeReview {
     }
 }
 
-struct CodeReviewTools {
+pub(crate) struct CodeReviewTools {
     reader: RepoReader,
     /// Files the model actually opened (read provenance). A `concern` with none is
     /// unverified speculation (see the downgrade in `review`); the list is also
     /// attached to the verdict for audit.
     read_paths: std::sync::Mutex<Vec<String>>,
+}
+
+impl CodeReviewTools {
+    pub(crate) fn new(reader: RepoReader) -> Self {
+        CodeReviewTools {
+            reader,
+            read_paths: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The files the model opened during the loop (read provenance).
+    pub(crate) fn read_paths(&self) -> Vec<String> {
+        self.read_paths.lock().unwrap().clone()
+    }
 }
 
 #[async_trait]
