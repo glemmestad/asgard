@@ -1,3 +1,10 @@
+# [0.13.0](https://github.com/glemmestad/asgard/compare/v0.12.0...v0.13.0) (2026-06-06)
+
+
+### Features
+
+* **cli:** PAT-authed CLI with MCP parity + native install ([#31](https://github.com/glemmestad/asgard/issues/31)) ([c5a85f3](https://github.com/glemmestad/asgard/commit/c5a85f3427559791e4f8319224ca84e159725b32))
+
 # [0.12.0](https://github.com/glemmestad/asgard/compare/v0.11.1...v0.12.0) (2026-06-06)
 
 
