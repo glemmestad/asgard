@@ -30,6 +30,8 @@ case "$os" in
 esac
 
 file="asgard-${target}.tar.gz"
+# The checksum asset is named after the archive base, without `.tar.gz`.
+sum="asgard-${target}.sha256"
 base="https://github.com/${REPO}/releases/latest/download"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -39,11 +41,11 @@ curl -fsSL "${base}/${file}" -o "${tmp}/${file}"
 
 # Verify the checksum when available (and a sha tool exists). HTTPS already
 # protects the transfer; this is defense in depth.
-if curl -fsSL "${base}/${file}.sha256" -o "${tmp}/${file}.sha256" 2>/dev/null; then
+if curl -fsSL "${base}/${sum}" -o "${tmp}/${sum}" 2>/dev/null; then
   if command -v sha256sum >/dev/null 2>&1; then
-    (cd "$tmp" && sha256sum -c "${file}.sha256" >/dev/null) || { echo "asgard: checksum mismatch" >&2; exit 1; }
+    (cd "$tmp" && sha256sum -c "${sum}" >/dev/null) || { echo "asgard: checksum mismatch" >&2; exit 1; }
   elif command -v shasum >/dev/null 2>&1; then
-    (cd "$tmp" && shasum -a 256 -c "${file}.sha256" >/dev/null) || { echo "asgard: checksum mismatch" >&2; exit 1; }
+    (cd "$tmp" && shasum -a 256 -c "${sum}" >/dev/null) || { echo "asgard: checksum mismatch" >&2; exit 1; }
   fi
 fi
 
