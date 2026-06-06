@@ -1,3 +1,10 @@
+# [0.12.0](https://github.com/glemmestad/asgard/compare/v0.11.1...v0.12.0) (2026-06-06)
+
+
+### Features
+
+* **skills:** Skills Catalog — host, translate, and govern agent skills ([#30](https://github.com/glemmestad/asgard/issues/30)) ([cccdfec](https://github.com/glemmestad/asgard/commit/cccdfec6b7464e10736514ac97caadcd545b63a3))
+
 ## [0.11.1](https://github.com/glemmestad/asgard/compare/v0.11.0...v0.11.1) (2026-06-05)
 
 
