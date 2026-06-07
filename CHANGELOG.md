@@ -1,3 +1,10 @@
+## [0.13.1](https://github.com/glemmestad/asgard/compare/v0.13.0...v0.13.1) (2026-06-07)
+
+
+### Bug Fixes
+
+* **install:** fetch the checksum by its real asset name ([#32](https://github.com/glemmestad/asgard/issues/32)) ([0359608](https://github.com/glemmestad/asgard/commit/03596086a2d6e36553d30f8b9b2f771690ec7912))
+
 # [0.13.0](https://github.com/glemmestad/asgard/compare/v0.12.0...v0.13.0) (2026-06-06)
 
 
