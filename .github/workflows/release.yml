@@ -15,7 +15,7 @@ jobs:
       published: ${{ steps.semrel.outputs.new_release_published }}
       version: ${{ steps.semrel.outputs.new_release_version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - id: semrel
@@ -38,7 +38,7 @@ jobs:
     steps:
       # Build from the release commit (the version-bumped tag), not the push
       # SHA — otherwise the binary compiles the pre-bump Cargo.toml version.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: v${{ needs.release.outputs.version }}
 
@@ -95,7 +95,7 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: v${{ needs.release.outputs.version }}
       - uses: taiki-e/upload-rust-binary-action@v1
