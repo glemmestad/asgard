@@ -1,3 +1,10 @@
+# [0.16.0](https://github.com/glemmestad/asgard/compare/v0.15.0...v0.16.0) (2026-06-08)
+
+
+### Features
+
+* **provision:** make re-request_resource a true in-place upsert ([#36](https://github.com/glemmestad/asgard/issues/36)) ([eb6d2d7](https://github.com/glemmestad/asgard/commit/eb6d2d782b9e63859aa10b9874b85695ba3ca7a3))
+
 # [0.15.0](https://github.com/glemmestad/asgard/compare/v0.14.0...v0.15.0) (2026-06-07)
 
 
