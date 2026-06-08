@@ -312,6 +312,34 @@ impl ProvisionRepo {
         Ok(())
     }
 
+    /// Re-arm a live (`provisioned`) row for an in-place update: replace its `spec`
+    /// and cost estimate, attach the driving `request_id`, flip it back to
+    /// `provisioning`, and clear the claim + retry bookkeeping so the normal
+    /// dispatch path re-applies it. The connector keys terraform state by
+    /// project/type/name, so the re-apply updates the live resource rather than
+    /// replacing it (identity-bearing outputs like an Auth0 `client_id` survive).
+    pub async fn update_for_reapply(
+        &self,
+        id: &str,
+        spec: &serde_json::Value,
+        est_monthly_usd: f64,
+        request_id: &str,
+    ) -> Result<(), ProvisionError> {
+        sqlx::query(&self.db.q(
+            "UPDATE provisioned_resources SET spec = ?, est_monthly_usd = ?, request_id = ?, \
+             state = 'provisioning', error = '', attempts = 0, next_retry_at = NULL, \
+             worker_owner = NULL, updated_at = ? WHERE id = ?",
+        ))
+        .bind(spec.to_string())
+        .bind(est_monthly_usd)
+        .bind(request_id)
+        .bind(asgard_storage::now())
+        .bind(id)
+        .execute(self.db.pool())
+        .await?;
+        Ok(())
+    }
+
     /// Re-arm a `failed`/`destroy_failed` row for an immediate manual retry: flip it
     /// back to the matching work state (`provisioning`/`destroying`) so the normal
     /// dispatch + inline-wait path drives it, and reset the retry bookkeeping.
