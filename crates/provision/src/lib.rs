@@ -1479,10 +1479,12 @@ impl ProvisionService {
     }
 
     /// Write the `provisioning` record (the durable work item) for an approved
-    /// request, or return the existing one if this request was already enqueued
-    /// (retry) or the name is already active (a duplicate request — its workflow
-    /// is fulfilled as satisfied). Tags/est are computed here exactly as the
-    /// connector's `plan` would, so cost rollups are unchanged.
+    /// request, or reuse the existing one when this request was already enqueued
+    /// (retry) or the name is already active. An identical re-request is fulfilled
+    /// as satisfied by the existing work; a *changed* spec on a live resource
+    /// re-arms that record for an in-place re-apply (an update). Tags/est are
+    /// computed here exactly as the connector's `plan` would, so cost rollups are
+    /// unchanged.
     async fn enqueue_apply(
         &self,
         reg: &Registration,
@@ -1527,6 +1529,26 @@ impl ProvisionService {
             .get_active_by_name(&reg.project_id, &resource_type, &name)
             .await?
         {
+            // A changed spec on a live resource is an update, not a duplicate:
+            // re-arm the same record so this request re-applies it in place (the
+            // connector keys state by name, so client_id/outputs survive). An
+            // identical re-request — or one racing an in-flight apply — stays a
+            // true no-op: fulfill it as satisfied by the existing work.
+            if existing.state == "provisioned" && existing.spec != spec {
+                let est = self
+                    .catalog
+                    .get(&resource_type)
+                    .map(|m| m.resolve(&spec).estimated_monthly_usd)
+                    .unwrap_or(existing.est_monthly_usd);
+                self.repo
+                    .update_for_reapply(&existing.id, &spec, est, &req.id)
+                    .await?;
+                return self
+                    .repo
+                    .get(&existing.id)
+                    .await?
+                    .ok_or_else(|| ProvisionError::NotFound(existing.id.clone()));
+            }
             if let Some(wf) = &self.workflow {
                 let _ = wf.fulfill(&req.id, "system").await;
             }
@@ -3228,6 +3250,56 @@ mod tests {
             .unwrap();
         assert_eq!(second.provisioned.unwrap().id, id1);
         assert_eq!(svc.repo().list_by_project(&pid).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn changed_spec_reapplies_in_place() {
+        let (wf, reg, mut svc, pid) = harness().await;
+        let applies = Arc::new(AtomicUsize::new(0));
+        svc.register_backend(
+            "terraform",
+            Arc::new(BlockingProvisioner {
+                gate: Arc::new(Semaphore::new(2)),
+                applies: applies.clone(),
+            }),
+        );
+        let first = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "upd",
+                serde_json::json!({ "name": "upd", "versioning": false }),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let id1 = first.provisioned.unwrap().id;
+        assert_eq!(applies.load(Ordering::SeqCst), 1);
+
+        // Re-request the same name with a changed spec: same record, re-applied
+        // in place (no second row, no new id), and the new request fulfilled.
+        let second = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "upd",
+                serde_json::json!({ "name": "upd", "versioning": true }),
+                "user:default/a",
+            )
+            .await
+            .unwrap();
+        let rec = second.provisioned.unwrap();
+        assert_eq!(rec.id, id1);
+        assert_eq!(rec.state, "provisioned");
+        assert_eq!(rec.spec.get("versioning"), Some(&serde_json::json!(true)));
+        assert_eq!(applies.load(Ordering::SeqCst), 2);
+        assert_eq!(svc.repo().list_by_project(&pid).await.unwrap().len(), 1);
+        assert_eq!(second.request.state, State::Fulfilled);
+        assert_ne!(second.request.id, first.request.id);
     }
 
     // ---- run-log capture + auto-retry ----

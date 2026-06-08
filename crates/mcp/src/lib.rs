@@ -1891,7 +1891,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Request an infrastructure resource for a registered project (e.g. s3-bucket, dynamodb-table, random-secret). Self-service types provision immediately; review-tier types await approval (and deploy automatically once approved). Fast resources return a `provisioned` record; slow ones (RDS/ALB/ECS) return a `provisioning` record — poll get_resource with its id until state is `provisioned` or `failed`."
+        description = "Request an infrastructure resource for a registered project (e.g. s3-bucket, dynamodb-table, random-secret). Self-service types provision immediately; review-tier types await approval (and deploy automatically once approved). Fast resources return a `provisioned` record; slow ones (RDS/ALB/ECS) return a `provisioning` record — poll get_resource with its id until state is `provisioned` or `failed`. Re-requesting the same resource type+name with a changed spec is an in-place update (the resource is re-applied, keeping its id and identity-bearing outputs); an identical re-request is a no-op."
     )]
     async fn request_resource(
         &self,
