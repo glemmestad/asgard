@@ -452,6 +452,17 @@ impl AsgardMcp {
         }
     }
 
+    /// Every tool name the MCP server advertises, read from the live tool router
+    /// (the same source `tools/list` serves to agents). The CLI↔MCP lock-step CI
+    /// check asserts this set matches the CLI's typed surface — keep them in step.
+    pub fn tool_names() -> Vec<String> {
+        Self::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect()
+    }
+
     fn auth(ctx: &RequestContext<RoleServer>) -> Option<McpAuth> {
         ctx.extensions
             .get::<http::request::Parts>()
