@@ -508,6 +508,17 @@ enum ResourceCmd {
     Get { resource_id: String },
     /// Tear down a resource.
     Deprovision { resource_id: String },
+    /// Roll a container service onto a new image (env/grants/cert preserved).
+    DeployImage {
+        /// The provisioned service to roll — its id from `resource ls`.
+        resource_id: String,
+        /// New image reference, e.g. <acct>.dkr.ecr.<region>.amazonaws.com/<repo>:<sha>.
+        #[arg(long)]
+        image: String,
+        /// Target project (required on a user PAT; omit on a project key).
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1297,6 +1308,17 @@ async fn main() -> anyhow::Result<()> {
                         Shape::Auto,
                     )
                     .await
+                }
+                ResourceCmd::DeployImage {
+                    resource_id,
+                    image,
+                    project,
+                } => {
+                    let mut m = Map::new();
+                    m.insert("resource_id".into(), json!(resource_id));
+                    m.insert("image".into(), json!(image));
+                    opt(&mut m, "project_id", project);
+                    run_tool(&r, "deploy_image", m, Shape::Auto).await;
                 }
             }
         }

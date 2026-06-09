@@ -19,5 +19,6 @@
       "env": { "AUTH0_CLIENT_ID": "${steps.auth.client_id}", "AUTH0_DOMAIN": "${inputs.tenant}" }
     } }
   ],
-  "outputs": { "mcp_url": "${steps.server.url}/mcp" }
+  "outputs": { "mcp_url": "${steps.server.url}/mcp" },
+  "after": "Ship new images with deploy_image {resource_id, image}: it swaps only the image and rolls the service in place (env/cert preserved), no approval per deploy. No AWS creds on the build box? request_resource ecr-credential to broker a docker login."
 }
