@@ -472,6 +472,7 @@ mod tests {
             "s3-bucket",
             "dynamodb-table",
             "ecr-repository",
+            "ecr-credential",
             "ec2-instance",
             "ecs-task",
             "ecs-service",
@@ -496,6 +497,13 @@ mod tests {
         assert!(!lk.auto_approvable);
         assert_eq!(lk.connector(), "litellm");
         assert_eq!(lk.cost.source.source_type, "litellm");
+        // ECR push credential: terraform-brokered, auto-approvable (unattended CD
+        // loop), $0 (cost source `none`), password routed to the secret store.
+        let ec = cat.get("ecr-credential").unwrap();
+        assert!(ec.auto_approvable);
+        assert_eq!(ec.connector(), "terraform");
+        assert_eq!(ec.cost.source.source_type, "none");
+        assert!(ec.secret_outputs.contains(&"password".to_string()));
         // Databricks inference is a plug-in manifest (openai-compatible), not core
         // code — same shape as LiteLLM, just a different request path.
         let dbx = cat.get("databricks").unwrap();

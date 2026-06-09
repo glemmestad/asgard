@@ -202,6 +202,10 @@ pub fn router(state: AppState) -> Router {
             "/api/projects/{id}/resources/{rid}/retry",
             post(retry_resource),
         )
+        .route(
+            "/api/projects/{id}/resources/{rid}/deploy",
+            post(deploy_image),
+        )
         .route("/api/projects/{id}/secrets", get(list_project_secrets))
         .route(
             "/api/projects/{id}/secrets/{name}/rotate",
@@ -2341,6 +2345,37 @@ async fn retry_resource(
     }
     let rearmed = st.provision.retry_resource(&rid).await?;
     Ok(Json(serde_json::to_value(rearmed).unwrap_or_default()))
+}
+
+#[derive(Deserialize)]
+struct DeployBody {
+    image: String,
+    #[serde(default = "default_actor")]
+    requester: String,
+}
+
+/// Roll a provisioned container service onto a new image — swaps only the image in
+/// its spec and re-applies in place (env/secrets/grants/cert preserved). Project
+/// authority required (same gate as request/deprovision).
+async fn deploy_image(
+    State(st): State<AppState>,
+    Path((project_id, rid)): Path<(String, String)>,
+    headers: HeaderMap,
+    Json(b): Json<DeployBody>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    require_project_authority(&st, &headers, &project_id).await?;
+    let outcome = st
+        .provision
+        .deploy_image(
+            &st.workflow,
+            &st.registry,
+            &project_id,
+            &rid,
+            &b.image,
+            &b.requester,
+        )
+        .await?;
+    Ok(Json(serde_json::to_value(outcome).unwrap_or_default()))
 }
 
 /// The service catalog (manifest-driven). Human/programmatic mirror of the

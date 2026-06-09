@@ -1,0 +1,27 @@
+id: ecr-credential
+name: ECR Push Credential
+category: compute
+status: live
+classification_min: poc
+classification_max: critical-path
+description: >-
+  A short-lived (~12h) ECR registry login the platform brokers for you: request it,
+  read the password from the secret store, `docker login`, push. The requesting agent
+  never holds AWS credentials — the control plane's own role mints the token. The
+  token is account-scoped (re-request to refresh once it expires). Pair with
+  `ecr-repository` to push images, then `deploy_image` to roll a container service.
+auto_approvable: true
+required_fields: [name]
+secret_outputs: [password]
+provisioner:
+  connector: terraform
+  config:
+    module: aws/ecr-credential
+    cloud: aws
+cost:
+  model: free
+  estimated_monthly_usd: 0.0
+  source:
+    type: none
+tags: [compute, aws, ecr, credential]
+documentation: services/ecr-credential/README.md
