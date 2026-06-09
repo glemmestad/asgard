@@ -1,3 +1,10 @@
+## [0.18.1](https://github.com/glemmestad/asgard/compare/v0.18.0...v0.18.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* **cli:** enable rustls on rmcp streamable-http client so CLI reaches /mcp over HTTPS ([#39](https://github.com/glemmestad/asgard/issues/39)) ([4382fc2](https://github.com/glemmestad/asgard/commit/4382fc29053bc1ba742bd6ba8e76c32ede4c80a7))
+
 # [0.18.0](https://github.com/glemmestad/asgard/compare/v0.17.0...v0.18.0) (2026-06-09)
 
 
