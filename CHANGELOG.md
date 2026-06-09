@@ -1,3 +1,10 @@
+# [0.19.0](https://github.com/glemmestad/asgard/compare/v0.18.2...v0.19.0) (2026-06-09)
+
+
+### Features
+
+* **cli:** typed subcommands for the 8 remaining MCP tools (MCP/CLI parity) ([#41](https://github.com/glemmestad/asgard/issues/41)) ([ca57de4](https://github.com/glemmestad/asgard/commit/ca57de435da57e82d8c591d7a3413e90a626bcfc))
+
 ## [0.18.2](https://github.com/glemmestad/asgard/compare/v0.18.1...v0.18.2) (2026-06-09)
 
 
