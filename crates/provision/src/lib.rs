@@ -1296,9 +1296,13 @@ impl ProvisionService {
         self.inline_wait(resource_id, budget).await
     }
 
-    /// Manually retry a `failed` / `destroy_failed` resource now — re-arm its retry
-    /// bookkeeping (back to the work state, attempts reset) and drive it immediately,
-    /// bypassing the backoff window. A no-op for any other state.
+    /// Manually retry a stuck resource now, bypassing the backoff window. Two cases:
+    /// a `failed`/`destroy_failed` row is re-armed back to its work state; a row
+    /// already in `provisioning`/`destroying` but stranded behind a dead worker is
+    /// reclaimed *only if its claim is stale* (so a healthy in-flight apply is never
+    /// yanked — that path is the operator's unstick button for an OOM/crash orphan
+    /// that would otherwise wait on the slow reconcile sweep). A no-op for any other
+    /// state, or for a work-state row a live worker is still driving.
     pub async fn retry_resource(
         &self,
         resource_id: &str,
@@ -1308,10 +1312,19 @@ impl ProvisionService {
             .get(resource_id)
             .await?
             .ok_or_else(|| ProvisionError::NotFound(resource_id.to_string()))?;
-        if rec.state != "failed" && rec.state != "destroy_failed" {
-            return Ok(rec);
+        match rec.state.as_str() {
+            "failed" | "destroy_failed" => self.repo.reset_for_retry(resource_id).await?,
+            "provisioning" | "destroying" => {
+                if !self
+                    .repo
+                    .reclaim_stale(resource_id, &stale_cutoff())
+                    .await?
+                {
+                    return Ok(rec);
+                }
+            }
+            _ => return Ok(rec),
         }
-        self.repo.reset_for_retry(resource_id).await?;
         self.dispatch(resource_id).await?;
         let budget = self.budget_for(self.catalog.get(&rec.rtype));
         self.inline_wait(resource_id, budget).await
@@ -3725,5 +3738,67 @@ mod tests {
         let done = await_state(&svc, &rec.id, "provisioned").await;
         assert_eq!(done.attempts, 0);
         assert!(done.next_retry_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn retry_resource_unsticks_a_stranded_provisioning_row() {
+        // A row stuck in `provisioning` (a crashed/OOM-killed worker, no live driver)
+        // is the symptom of the worker-death bug. Manual retry must reclaim and drive
+        // it — previously a no-op that left it for the slow reconcile sweep. Routes to
+        // the stub connector (s3-bucket's `terraform` is unregistered here).
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "stranded");
+        svc.repo().record(&rec).await.unwrap();
+        let got = svc.retry_resource(&rec.id).await.unwrap();
+        assert_eq!(got.state, "provisioned");
+    }
+
+    #[tokio::test]
+    async fn retry_resource_does_not_yank_a_live_apply() {
+        // The safety guarantee: a `provisioning` row a live worker holds (fresh claim)
+        // must be left alone, so a manual retry can't trample a healthy in-flight apply.
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "live");
+        svc.repo().record(&rec).await.unwrap();
+        let past = asgard_storage::plus_seconds(&asgard_storage::now(), -600);
+        assert!(svc
+            .repo()
+            .claim(&rec.id, "provisioning", "live-worker", &past)
+            .await
+            .unwrap());
+        // No-op: still provisioning, and the claim is untouched (a non-stale reclaim
+        // still loses, proving `live-worker` kept it).
+        let got = svc.retry_resource(&rec.id).await.unwrap();
+        assert_eq!(got.state, "provisioning");
+        assert!(!svc
+            .repo()
+            .reclaim_stale(&rec.id, &stale_cutoff())
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn reclaim_stale_loses_to_a_live_claim_and_wins_when_stale() {
+        let (_wf, _reg, svc, pid) = harness().await;
+        let rec = provisioning_row(&pid, "rc");
+        svc.repo().record(&rec).await.unwrap();
+        let now = asgard_storage::now();
+        let past = asgard_storage::plus_seconds(&now, -600);
+        let future = asgard_storage::plus_seconds(&now, 600);
+        assert!(svc
+            .repo()
+            .claim(&rec.id, "provisioning", "owner-1", &past)
+            .await
+            .unwrap());
+        // Cutoff in the past → the live claim is not stale → reclaim loses.
+        assert!(!svc.repo().reclaim_stale(&rec.id, &past).await.unwrap());
+        // Cutoff in the future → the claim counts as stale → reclaim wins.
+        assert!(svc.repo().reclaim_stale(&rec.id, &future).await.unwrap());
+        // The claim was cleared: a fresh claimant now wins even with a past cutoff.
+        assert!(svc
+            .repo()
+            .claim(&rec.id, "provisioning", "owner-2", &past)
+            .await
+            .unwrap());
     }
 }

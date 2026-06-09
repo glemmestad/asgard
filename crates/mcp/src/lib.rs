@@ -2177,7 +2177,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Manually retry a failed resource now (state failed or destroy_failed): re-arms it and drives it immediately, bypassing the auto-retry backoff window. A no-op for any other state. Use the resource id from request_resource or list_resources."
+        description = "Manually retry a stuck resource now, bypassing the auto-retry backoff. Re-arms a failed/destroy_failed resource, or unsticks one stranded in provisioning/destroying behind a crashed worker (only if its claim is stale — a live in-flight apply is never disturbed). A no-op for any other state. Use the resource id from request_resource or list_resources."
     )]
     async fn retry_resource(
         &self,

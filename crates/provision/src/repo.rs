@@ -340,6 +340,28 @@ impl ProvisionRepo {
         Ok(())
     }
 
+    /// Reclaim a *stale-claimed* work-state row for an immediate manual retry (CAS):
+    /// drop the dead worker's claim and reset the retry bookkeeping, but only if the
+    /// row is `provisioning`/`destroying` and either unclaimed or its heartbeat is
+    /// older than `stale`. Returns `true` if it won — `false` when a live worker
+    /// still holds a fresh claim, so a healthy in-flight apply is never yanked. The
+    /// state stays the same work state; the cleared `worker_owner` lets the normal
+    /// dispatch path re-claim and drive it.
+    pub async fn reclaim_stale(&self, id: &str, stale: &str) -> Result<bool, ProvisionError> {
+        let res = sqlx::query(&self.db.q(
+            "UPDATE provisioned_resources SET worker_owner = NULL, attempts = 0, \
+             next_retry_at = NULL, error = '', updated_at = ? \
+             WHERE id = ? AND state IN ('provisioning', 'destroying') \
+             AND (worker_owner IS NULL OR updated_at < ?)",
+        ))
+        .bind(asgard_storage::now())
+        .bind(id)
+        .bind(stale)
+        .execute(self.db.pool())
+        .await?;
+        Ok(res.rows_affected() == 1)
+    }
+
     /// Re-arm a `failed`/`destroy_failed` row for an immediate manual retry: flip it
     /// back to the matching work state (`provisioning`/`destroying`) so the normal
     /// dispatch + inline-wait path drives it, and reset the retry bookkeeping.

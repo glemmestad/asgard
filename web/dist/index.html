@@ -2025,13 +2025,24 @@
       }
 
       const FAILED_STATES = new Set(['failed', 'destroy_failed']);
+      const WORK_STATES = new Set(['provisioning', 'destroying']);
+      // Matches STALE_SECS in the provisioner: a work-state row idle this long has
+      // lost its worker (crash/OOM), so offer a manual unstick. The server only
+      // reclaims if the claim is genuinely stale, so an early click is a safe no-op.
+      const STRANDED_MS = 900_000;
       const resourceTable = (resources) => {
         if (!resources.length) return empty('No resources provisioned.');
         const audit = canViewAudit();
         const rows = resources.map(r => {
-          const failed = FAILED_STATES.has(String(r.state || '').toLowerCase());
+          const state = String(r.state || '').toLowerCase();
+          const failed = FAILED_STATES.has(state);
+          const stranded = WORK_STATES.has(state) && r.updated_at
+            && (Date.now() - Date.parse(r.updated_at) > STRANDED_MS);
           const acts = [];
-          if (failed) acts.push(`<button class="act" data-retry="${esc(r.id)}">Retry</button>`);
+          if (failed || stranded) {
+            const t = stranded ? ` title="Stuck in ${esc(state)} since ${esc(r.updated_at)} — reclaim and re-drive"` : '';
+            acts.push(`<button class="act" data-retry="${esc(r.id)}"${t}>Retry</button>`);
+          }
           if (audit) acts.push(`<button class="act" data-logs="${esc(r.id)}" style="background:var(--chip);color:var(--fg);border:1px solid var(--line2)">Logs</button>`);
           const errRow = (failed && r.error)
             ? `<tr><td></td><td colspan="4"><div class="muted" style="font-size:12px;color:var(--red);white-space:pre-wrap">${esc(r.error)}</div></td></tr>`

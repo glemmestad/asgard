@@ -27,6 +27,19 @@ use crate::{
     Plan, ProvisionError, ProvisionRequest, Provisioned, Provisioner, RunLogStore, TfStateStore,
 };
 
+/// Wall-clock backstop for a single terraform invocation. A run that exceeds it
+/// is killed and surfaced as an error, so a hung apply becomes a recorded
+/// `failed` row instead of a worker that heartbeats forever and pins a claim.
+/// Generous on purpose — this catches true hangs, not slow-but-progressing
+/// infra; legitimate applies finish well inside an hour.
+const RUN_TIMEOUT_SECS: u64 = 3600;
+
+/// Per-stream cap on captured stdout/stderr. The stream is fully drained (so the
+/// child never blocks on a full pipe) but only this many bytes are retained,
+/// bounding the control-plane heap against a pathological apply that floods
+/// output. The audit log keeps the head and a truncation marker.
+const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
+
 /// Renews a held lease in the background while a long terraform run executes, and
 /// stops on drop. We never block on an async release in `Drop`: a graceful path
 /// releases the lease explicitly, and a crash leaves it to expire by TTL.
@@ -361,11 +374,7 @@ impl TerraformConnector {
         let chdir = format!("-chdir={}", dir.display());
         let mut full = vec![chdir.as_str()];
         full.extend_from_slice(args);
-        let out = Command::new(&self.bin)
-            .args(&full)
-            .output()
-            .await
-            .map_err(|e| ProvisionError::Backend(format!("spawn terraform: {e}")))?;
+        let out = self.run_bounded(&full).await?;
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             return Err(ProvisionError::Backend(format!(
@@ -378,8 +387,9 @@ impl TerraformConnector {
     }
 
     /// Like [`run`](Self::run) but always returns the combined stdout+stderr (the
-    /// audit log) alongside the result, so a failed run's full output is captured
-    /// rather than reduced to a one-line error.
+    /// audit log) alongside the result, so a failed *or timed-out* run's output is
+    /// captured rather than reduced to a one-line error (or, on a worker death,
+    /// lost entirely).
     async fn run_capture(
         &self,
         dir: &Path,
@@ -388,7 +398,7 @@ impl TerraformConnector {
         let chdir = format!("-chdir={}", dir.display());
         let mut full = vec![chdir.as_str()];
         full.extend_from_slice(args);
-        match Command::new(&self.bin).args(&full).output().await {
+        match self.run_bounded(&full).await {
             Ok(out) => {
                 let log = combine_output(&out);
                 if out.status.success() {
@@ -403,10 +413,52 @@ impl TerraformConnector {
                     (log, Err(ProvisionError::Backend(msg)))
                 }
             }
-            Err(e) => {
-                let msg = format!("spawn terraform: {e}");
-                (msg.clone(), Err(ProvisionError::Backend(msg)))
-            }
+            // Spawn failure or timeout: capture the error itself as the run log so
+            // the operator sees why nothing ran.
+            Err(e) => (e.to_string(), Err(e)),
+        }
+    }
+
+    /// Spawn `terraform <args>` with a wall-clock timeout and a capped output
+    /// buffer. The child is killed on drop, so a timeout (the future is dropped)
+    /// terminates the process rather than leaking it; both pipes are drained
+    /// concurrently to avoid a full-pipe deadlock while retaining only the first
+    /// [`MAX_CAPTURE_BYTES`] of each. Bounds the blast radius of a runaway apply to
+    /// an `Err` (→ `mark_failed`) instead of an OOM that takes the control plane down.
+    async fn run_bounded(&self, args: &[&str]) -> Result<std::process::Output, ProvisionError> {
+        let mut child = Command::new(&self.bin)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| ProvisionError::Backend(format!("spawn terraform: {e}")))?;
+        let mut stdout = child.stdout.take().expect("piped stdout");
+        let mut stderr = child.stderr.take().expect("piped stderr");
+        let collect = async {
+            let (o, e, status) = tokio::join!(
+                read_capped(&mut stdout, MAX_CAPTURE_BYTES),
+                read_capped(&mut stderr, MAX_CAPTURE_BYTES),
+                child.wait(),
+            );
+            Ok::<_, std::io::Error>(std::process::Output {
+                status: status?,
+                stdout: o?,
+                stderr: e?,
+            })
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(RUN_TIMEOUT_SECS), collect).await
+        {
+            Ok(Ok(out)) => Ok(out),
+            Ok(Err(e)) => Err(ProvisionError::Backend(format!("terraform io error: {e}"))),
+            Err(_) => Err(ProvisionError::Backend(format!(
+                "terraform {} timed out after {RUN_TIMEOUT_SECS}s; killed",
+                args.iter()
+                    .find(|a| !a.starts_with("-chdir"))
+                    .copied()
+                    .unwrap_or("")
+            ))),
         }
     }
 
@@ -438,6 +490,35 @@ impl TerraformConnector {
             }
         }
     }
+}
+
+/// Read an async stream to EOF, retaining at most `cap` bytes (plus a truncation
+/// marker if it overflowed) but always draining the rest so the child's pipe
+/// never blocks. This is what keeps a flood-of-output apply from ballooning the
+/// control-plane heap.
+async fn read_capped<R: tokio::io::AsyncRead + Unpin>(
+    r: &mut R,
+    cap: usize,
+) -> std::io::Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 8192];
+    let mut truncated = false;
+    loop {
+        let n = r.read(&mut chunk).await?;
+        if n == 0 {
+            break;
+        }
+        let take = cap.saturating_sub(buf.len()).min(n);
+        buf.extend_from_slice(&chunk[..take]);
+        if take < n {
+            truncated = true;
+        }
+    }
+    if truncated {
+        buf.extend_from_slice(format!("\n…[output truncated at {cap} bytes]\n").as_bytes());
+    }
+    Ok(buf)
 }
 
 /// Combined stdout+stderr of a finished command (the human-readable run log).
@@ -764,5 +845,24 @@ mod tests {
             conn.apply(&r, &plan()).await,
             Err(ProvisionError::Conflict(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn read_capped_bounds_a_flood_and_marks_truncation() {
+        let data = vec![b'x'; 100];
+        let mut src: &[u8] = &data;
+        let out = read_capped(&mut src, 10).await.unwrap();
+        assert!(out.starts_with(&[b'x'; 10]), "keeps the head");
+        let s = String::from_utf8_lossy(&out);
+        assert!(s.contains("output truncated at 10 bytes"), "marks the cut");
+        // Bounded: the 100-byte flood never lands in the buffer in full.
+        assert!(out.len() < 50);
+    }
+
+    #[tokio::test]
+    async fn read_capped_keeps_short_output_verbatim() {
+        let mut src: &[u8] = b"hello";
+        let out = read_capped(&mut src, 1024).await.unwrap();
+        assert_eq!(out, b"hello");
     }
 }
