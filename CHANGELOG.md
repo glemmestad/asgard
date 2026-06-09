@@ -1,3 +1,10 @@
+# [0.18.0](https://github.com/glemmestad/asgard/compare/v0.17.0...v0.18.0) (2026-06-09)
+
+
+### Features
+
+* **cli,docs:** deploy-image CLI command (MCP/CLI lockstep) + recipe deploy guidance ([#38](https://github.com/glemmestad/asgard/issues/38)) ([58b1109](https://github.com/glemmestad/asgard/commit/58b110969fa3cfc73027bcd8822a824a2482b244))
+
 # [0.17.0](https://github.com/glemmestad/asgard/compare/v0.16.0...v0.17.0) (2026-06-09)
 
 
