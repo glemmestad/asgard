@@ -4,7 +4,10 @@ category: compute
 status: live
 classification_min: poc
 classification_max: critical-path
-description: Container image repository (scan-on-push).
+description: >-
+  Container image repository (scan-on-push). Set `immutable: true` in the spec for
+  deterministic `:sha` deploys (blocks tag overwrite); untagged images expire and
+  tagged images are capped by a lifecycle policy.
 auto_approvable: true
 required_fields: [name]
 provisioner:

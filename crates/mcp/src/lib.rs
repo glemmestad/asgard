@@ -346,6 +346,17 @@ pub struct RequestResourceArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct DeployImageArgs {
+    /// Target project (required on a user token; omit on a project key).
+    pub project_id: Option<String>,
+    /// The provisioned container service to roll. Use an id from list_resources.
+    pub resource_id: String,
+    /// The new image reference, e.g. `<acct>.dkr.ecr.<region>.amazonaws.com/<repo>:<sha>`.
+    pub image: String,
+    pub requester: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct RequestGrantArgs {
     /// Target project (required on a user token; omit on a project key). Both
     /// resources must belong to it.
@@ -1266,6 +1277,23 @@ impl AsgardMcp {
         Ok(serde_json::to_string(&outcome).unwrap_or_default())
     }
 
+    async fn do_deploy_image(&self, pid: &str, a: DeployImageArgs) -> Result<String, String> {
+        let requester = a.requester.as_deref().unwrap_or(DEFAULT_REQUESTER);
+        let outcome = self
+            .provision
+            .deploy_image(
+                &self.workflow,
+                &self.registry,
+                pid,
+                &a.resource_id,
+                &a.image,
+                requester,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(serde_json::to_string(&outcome).unwrap_or_default())
+    }
+
     async fn do_request_grant(&self, pid: &str, a: RequestGrantArgs) -> Result<String, String> {
         let level = a.level.as_deref().unwrap_or("write");
         let requester = a.requester.as_deref().unwrap_or(DEFAULT_REQUESTER);
@@ -1906,6 +1934,24 @@ impl AsgardMcp {
             a.requester = Self::requester_from_auth(&ctx);
         }
         wrap(self.do_request_resource(&pid, a).await)
+    }
+
+    #[tool(
+        description = "Roll a provisioned container service (e.g. an ecs-service) onto a new image. Swaps only the image in the resource's spec — env, secrets, grants, and the listener cert are preserved — and re-applies in place, so ECS registers a new task-definition revision and rolls with circuit-breaker rollback. Use after pushing the new tag to ECR (see ecr-credential). Returns the `provisioning` record; poll get_resource until `provisioned` or `failed`. Re-deploying the same image is a no-op."
+    )]
+    async fn deploy_image(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(mut a): Parameters<DeployImageArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        if a.requester.is_none() {
+            a.requester = Self::requester_from_auth(&ctx);
+        }
+        wrap(self.do_deploy_image(&pid, a).await)
     }
 
     #[tool(

@@ -89,7 +89,7 @@ and `outputs.bucket` as `S3_BUCKET`.
 ## Step 2 — Image repository
 
 ```json
-request_resource ecr-repository { "name": "app" }
+request_resource ecr-repository { "name": "app", "spec": { "name": "app", "immutable": true } }
 ```
 **Verify:** record `outputs.uri` as `ECR_URI`. Then build and push the app
 **by content**, never `:latest`:
@@ -99,7 +99,17 @@ aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR
 docker push "$ECR_URI:sha-$(git rev-parse --short HEAD)"
 ```
 Record the exact pushed ref as `IMAGE`. (Content tags sidestep the predecessor's
-immutable-`:latest` dead end entirely.)
+immutable-`:latest` dead end entirely; `immutable: true` enforces it at the repo.)
+
+> **No AWS credentials on the runner?** Broker a short-lived login instead of
+> `aws ecr get-login-password` — the control plane mints it with its own role:
+> ```bash
+> request_resource ecr-credential { "name": "push", "spec": { "name": "push" } }
+> # registry from the record's outputs.registry; password from the secret store:
+> echo "$(get_secret push-password)" | docker login -u AWS --password-stdin "$REGISTRY"
+> ```
+> See the [ecr-credential service](../../services/ecr-credential/README.md) for the
+> operator IAM prerequisite.
 
 ## Step 3 — Metadata database
 
@@ -238,6 +248,20 @@ Run with a human, in a maintenance window, after Steps 1–8 are green:
 4. Flip DNS / the Auth0 production callbacks to `URL`; smoke a real collab session
    (two clients, live cursor + document convergence).
 5. Decommission the old stack only after a soak period.
+
+## Step 10 — Ship a new image (CD)
+
+On every merge, build + push a new `:sha` (Step 2 — broker the login if the runner
+has no AWS creds), then roll the running service to it in one call:
+```json
+deploy_image { "resource_id": "<ecs-service id>", "image": "<ECR_URI>:sha-<new>" }
+```
+`deploy_image` swaps **only** the image in the service's spec — `env`, `secrets`,
+`grants`, and `certificate_arn` are preserved — and re-applies in place: ECS
+registers a new task-definition revision and rolls with circuit-breaker rollback.
+It stays self-service (no per-deploy approval) and returns the `provisioning`
+record; poll `get_resource` until `provisioned`. This is the whole CD loop —
+runner builds + pushes, Asgard cycles ECS, no AWS credentials on the runner.
 
 ## Done criteria
 

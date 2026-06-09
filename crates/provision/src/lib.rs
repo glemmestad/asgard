@@ -965,6 +965,49 @@ impl ProvisionService {
         .await
     }
 
+    /// Roll a live resource onto a new container image. Reads the resource's stored
+    /// spec, swaps only `image`, and re-requests it through the normal governed path
+    /// (validation + allowlist + auto-approval) — an in-place re-apply that preserves
+    /// every other spec field (env/secrets/grants/cert). The connector keys state by
+    /// name, so ECS registers a new task-def revision and rolls without recreating the
+    /// service. Rejects a resource that isn't live or has no `image` field; a re-deploy
+    /// of the same image is a no-op (the spec is unchanged).
+    pub async fn deploy_image(
+        &self,
+        workflow: &WorkflowEngine,
+        registry: &ProjectRegistry,
+        project_id: &str,
+        resource_id: &str,
+        image: &str,
+        requester: &str,
+    ) -> Result<RequestOutcome, ProvisionError> {
+        let rec = self
+            .repo
+            .get(resource_id)
+            .await?
+            .ok_or_else(|| ProvisionError::NotFound(resource_id.to_string()))?;
+        if rec.project_id != project_id {
+            return Err(ProvisionError::NotFound(resource_id.to_string()));
+        }
+        if rec.state != "provisioned" {
+            return Err(ProvisionError::Conflict(format!(
+                "resource {resource_id} is {} (must be provisioned to deploy an image)",
+                rec.state
+            )));
+        }
+        if rec.spec.get("image").is_none() {
+            return Err(ProvisionError::InvalidSpec(format!(
+                "resource {resource_id} has no `image` field to update"
+            )));
+        }
+        let mut spec = rec.spec.clone();
+        spec["image"] = serde_json::json!(image);
+        self.request(
+            workflow, registry, project_id, &rec.rtype, &rec.name, spec, requester,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn request_inner(
         &self,
@@ -1036,7 +1079,18 @@ impl ProvisionService {
         // requests can't both clear the ceiling before either row flips to
         // `provisioned`.
         let infra_so_far = self.repo.infra_committed_for_project(project_id).await?;
-        let committed = reg.spent_usd + infra_so_far + est;
+        // An update (re-request of a live resource of the same name) keeps that
+        // resource's estimate inside `infra_so_far`; adding `est` on top would
+        // double-count it and could push a no-cost-change update (e.g. an image
+        // bump) over the ceiling on its own already-counted spend. Subtract the
+        // existing estimate so only the *delta* counts.
+        let existing_est = self
+            .repo
+            .get_active_by_name(project_id, resource_type, name)
+            .await?
+            .map(|r| r.est_monthly_usd)
+            .unwrap_or(0.0);
+        let committed = reg.spent_usd + infra_so_far + est - existing_est;
         let within_ceiling = self
             .auto
             .ceiling(&reg.classification)
@@ -3300,6 +3354,143 @@ mod tests {
         assert_eq!(svc.repo().list_by_project(&pid).await.unwrap().len(), 1);
         assert_eq!(second.request.state, State::Fulfilled);
         assert_ne!(second.request.id, first.request.id);
+    }
+
+    #[tokio::test]
+    async fn deploy_image_merges_only_image_and_preserves_spec() {
+        let (wf, reg, svc, pid) = harness().await;
+        // ecs-task is a non-long-running, image-bearing stand-in for any container
+        // service; the stub connector applies inline.
+        let rid = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "ecs-task",
+                "web",
+                serde_json::json!({
+                    "name": "web", "image": "repo:v1",
+                    "env": { "FOO": "bar" }, "certificate_arn": "arn:acm:cert"
+                }),
+                "user:default/a",
+            )
+            .await
+            .unwrap()
+            .provisioned
+            .unwrap()
+            .id;
+
+        let out = svc
+            .deploy_image(&wf, &reg, &pid, &rid, "repo:v2", "user:default/a")
+            .await
+            .unwrap();
+
+        let rec = out.provisioned.unwrap();
+        assert_eq!(rec.id, rid); // same record, in place
+        assert!(!out.pending_approval);
+        assert_eq!(rec.spec["image"], serde_json::json!("repo:v2")); // swapped
+        assert_eq!(rec.spec["env"], serde_json::json!({ "FOO": "bar" })); // preserved
+        assert_eq!(
+            rec.spec["certificate_arn"],
+            serde_json::json!("arn:acm:cert")
+        );
+        assert_eq!(svc.repo().list_by_project(&pid).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn deploy_image_rejects_imageless_and_non_provisioned() {
+        let (wf, reg, svc, pid) = harness().await;
+        // No `image` field in the spec → rejected.
+        let no_img = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "s3-bucket",
+                "assets",
+                serde_json::json!({ "name": "assets" }),
+                "user:default/a",
+            )
+            .await
+            .unwrap()
+            .provisioned
+            .unwrap()
+            .id;
+        let err = svc
+            .deploy_image(&wf, &reg, &pid, &no_img, "x:v1", "user:default/a")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("image"), "got: {err}");
+
+        // A live image-bearing resource that isn't `provisioned` → rejected.
+        let now = asgard_storage::now();
+        let failed = ProvisionedRecord {
+            id: asgard_storage::new_uid(),
+            project_id: pid.clone(),
+            rtype: "ecs-task".into(),
+            name: "broken".into(),
+            spec: serde_json::json!({ "name": "broken", "image": "repo:v1" }),
+            outputs: serde_json::json!({}),
+            tags: Default::default(),
+            est_monthly_usd: 5.0,
+            state: "failed".into(),
+            backend: "stub".into(),
+            dry_run: true,
+            request_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+            error: "boom".into(),
+            attempts: 1,
+            next_retry_at: None,
+        };
+        let rid = failed.id.clone();
+        svc.repo().record(&failed).await.unwrap();
+        let err = svc
+            .deploy_image(&wf, &reg, &pid, &rid, "repo:v2", "user:default/a")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("provisioned"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn deploy_image_does_not_double_count_ceiling() {
+        let (wf, reg, mut svc, pid) = harness().await;
+        // Ceiling between one estimate (5) and two (10): an image bump must count
+        // only the delta, not re-add the resource's own already-committed estimate,
+        // or it would falsely trip review and block CD.
+        svc.set_auto_approve(AutoApprovePolicy {
+            ceilings: BTreeMap::from([("poc".into(), 8.0)]),
+        });
+        let rid = svc
+            .request(
+                &wf,
+                &reg,
+                &pid,
+                "ecs-task",
+                "web",
+                serde_json::json!({ "name": "web", "image": "repo:v1" }),
+                "user:default/a",
+            )
+            .await
+            .unwrap()
+            .provisioned
+            .unwrap()
+            .id;
+
+        let out = svc
+            .deploy_image(&wf, &reg, &pid, &rid, "repo:v2", "user:default/a")
+            .await
+            .unwrap();
+        assert!(
+            !out.pending_approval,
+            "image bump must stay self-service (no double-count)"
+        );
+        assert_eq!(
+            out.provisioned.unwrap().spec["image"],
+            serde_json::json!("repo:v2")
+        );
     }
 
     // ---- run-log capture + auto-retry ----

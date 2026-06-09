@@ -279,6 +279,7 @@ curl -s -o "$WORK/tools.out" -X POST "$BASE/mcp" -H "authorization: Bearer $KEY"
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 grep -q '"list_services"' "$WORK/tools.out" && grep -q '"request_resource"' "$WORK/tools.out" \
   && ok "MCP tools/list exposes the catalog (list_services, request_resource)" || bad "MCP tools/list missing expected tools"
+grep -q '"deploy_image"' "$WORK/tools.out" && ok "MCP exposes the deploy_image tool (image cycle)" || bad "deploy_image tool missing from MCP"
 grep -q '"seed_plan"' "$WORK/tools.out" && ok "MCP exposes the agent-seed tools (seed_plan)" || bad "seed_plan tool missing from MCP"
 grep -q '"bootstrap"' "$WORK/tools.out" && ok "MCP exposes the bootstrap tool (one-shot seed)" || bad "bootstrap tool missing from MCP"
 # The bootstrap slash-command shortcut is advertised over prompts/list.
@@ -425,6 +426,27 @@ RUNOK=$(jget "$WORK/runs.json" "[0]['ok']")
   && ok "run-log captured the apply run (action=apply, ok=true)" \
   || bad "expected an ok apply run, got action=$RUNACT ok=$RUNOK"
 
+# 11a-ter. Image deploy: an image-bearing service rolls onto a new tag in place via
+# the deploy_image verb — only the image changes, env is preserved, and it stays
+# self-service (no double-count of the resource's own estimate). ecs-task applies
+# inline (stub) so the deploy returns the updated record.
+curl -fsS -X POST "$BASE/api/projects/${PID}/resources" -H 'content-type: application/json' \
+  -d '{"resource_type":"ecs-task","name":"app","spec":{"name":"app","image":"repo:v1","env":{"FOO":"bar"}}}' \
+  -o "$WORK/task.json"
+TID=$(jget "$WORK/task.json" "['provisioned']['id']")
+curl -fsS -X POST "$BASE/api/projects/${PID}/resources/${TID}/deploy" -H 'content-type: application/json' \
+  -d '{"image":"repo:v2"}' -o "$WORK/deploy.json"
+DPA=$(jget "$WORK/deploy.json" "['pending_approval']")
+DIMG=$(jget "$WORK/deploy.json" "['provisioned']['spec']['image']")
+DENV=$(jget "$WORK/deploy.json" "['provisioned']['spec']['env']['FOO']")
+[[ "$DPA" == "False" && "$DIMG" == "repo:v2" && "$DENV" == "bar" ]] \
+  && ok "deploy_image rolls to a new image in place (env preserved, self-service)" \
+  || bad "deploy_image failed (pending=$DPA image=$DIMG env=$DENV)"
+# Same record id — an in-place update, not a new row.
+curl -fsS "$BASE/api/projects/${PID}/resources/${TID}" -o "$WORK/task_get.json"
+TGIMG=$(jget "$WORK/task_get.json" "['spec']['image']")
+[[ "$TGIMG" == "repo:v2" ]] && ok "deploy_image updated the same resource record" || bad "expected repo:v2 on record, got $TGIMG"
+
 # 11b. Deprovision: tear the resource down (connector destroy + record marked).
 curl -fsS -X DELETE "$BASE/api/projects/${PID}/resources/${RID}" -o "$WORK/deprov.json"
 DS=$(jget "$WORK/deprov.json" "['state']")
@@ -562,6 +584,9 @@ grep -q '"connector":"terraform"' "$WORK/services.json" && ok "terraform-connect
 # The load-balanced ecs-service primitive (the keystone for deploying an app) is
 # in the catalog and gated to human review (cost-bearing, IAM-shaping).
 grep -q '"id":"ecs-service"' "$WORK/services.json" && ok "ecs-service primitive present as a manifest" || bad "ecs-service manifest missing"
+# The ECR push-credential broker: lets a runner docker-push without AWS creds (the
+# control plane's role mints a short-lived token via terraform, password to the store).
+grep -q '"id":"ecr-credential"' "$WORK/services.json" && ok "ecr-credential broker present (push without AWS creds)" || bad "ecr-credential manifest missing"
 # Databricks is orchestrated through Asgard like any other catalog: an inference
 # module (openai-compatible plug-in) + provisionable resources behind the gate.
 grep -q '"id":"databricks"' "$WORK/services.json" && ok "databricks inference module present (plug-in, openai-compatible)" || bad "databricks inference module missing"
