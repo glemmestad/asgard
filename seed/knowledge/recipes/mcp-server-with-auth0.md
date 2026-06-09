@@ -46,12 +46,14 @@ outputs; later steps consume them.
 
 **0. Register your project** (`register_project`) and mint a key.
 
-**1. Image repository.** `request_resource ecr-repository { "name": "<name>" }` →
-record `uri`. Build your MCP server image and push an immutable tag:
+**1. Image repository.** `request_resource ecr-repository { "name": "<name>", "spec": { "name": "<name>", "immutable": true } }`
+→ record `uri`. Build your MCP server image and push an immutable tag:
 ```
 docker build -t <uri>:sha-$(git rev-parse --short HEAD) .
 docker push <uri>:sha-$(git rev-parse --short HEAD)
 ```
+No AWS credentials on the build box? `request_resource ecr-credential { "name": "push", "spec": { "name": "push" } }`,
+then `echo "$(get_secret push-password)" | docker login -u AWS --password-stdin <outputs.registry>`.
 
 **2. Auth app.** `request_resource auth0-application { "name": "<name>", "app_type": "non_interactive" }`
 → record `client_id`. This M2M app is what agents use to obtain Bearer tokens;
@@ -70,6 +72,11 @@ request_resource ecs-service {
 }
 ```
 Record `url`. MCP is reachable at `<url>/mcp`. Approval-gated.
+
+**Ship updates.** Push a new `:sha` (step 1), then
+`deploy_image { "resource_id": "<ecs-service id>", "image": "<uri>:sha-…" }` — it
+swaps only the image and rolls the service in place (env/cert preserved), no
+approval per deploy.
 
 ## Verify it's working
 

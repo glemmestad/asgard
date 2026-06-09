@@ -971,8 +971,19 @@ grep -q 'finn@corp.example' "$WORK/pskcat.out" && grep -q '\\"status\\":\\"commu
 # config keeps the key cache inside $WORK (hermetic).
 export ASGARD_CONFIG="$WORK/cli-config.toml"
 "$BIN" --url "$BASE2" --pat "$PAT" -o json tools >"$WORK/cli_tools.json" 2>/dev/null
-grep -q '"list_projects"' "$WORK/cli_tools.json" && grep -q '"register_project"' "$WORK/cli_tools.json" \
-  && ok "CLI lists the live tool surface (incl. the new list_projects)" || { bad "CLI tools missing expected tools"; head -c 400 "$WORK/cli_tools.json"; }
+grep -q '"list_projects"' "$WORK/cli_tools.json" && grep -q '"register_project"' "$WORK/cli_tools.json" && grep -q '"deploy_image"' "$WORK/cli_tools.json" \
+  && ok "CLI lists the live tool surface (incl. list_projects, deploy_image)" || { bad "CLI tools missing expected tools"; head -c 400 "$WORK/cli_tools.json"; }
+
+# 20h-bis. MCP/CLI lockstep: roll a container image through the CLI's resource
+# subcommand, hitting the same deploy_image tool — only the image changes.
+"$BIN" --url "$BASE2" --pat "$PAT" -o json resource request --resource-type ecs-task --name cliapp --project "$PAGENT_PID" --spec '{"name":"cliapp","image":"repo:v1","env":{"K":"v"}}' >"$WORK/cli_task.json" 2>/dev/null
+CTID=$(jget "$WORK/cli_task.json" "['provisioned']['id']")
+"$BIN" --url "$BASE2" --pat "$PAT" -o json resource deploy-image "$CTID" --image repo:v2 --project "$PAGENT_PID" >"$WORK/cli_deploy.json" 2>/dev/null
+CDIMG=$(jget "$WORK/cli_deploy.json" "['provisioned']['spec']['image']")
+CDENV=$(jget "$WORK/cli_deploy.json" "['provisioned']['spec']['env']['K']")
+[[ "$CDIMG" == "repo:v2" && "$CDENV" == "v" ]] \
+  && ok "CLI resource deploy-image rolls the image in place (MCP/CLI lockstep)" \
+  || { bad "CLI resource deploy-image failed (image=$CDIMG env=$CDENV)"; head -c 300 "$WORK/cli_deploy.json"; }
 
 "$BIN" --url "$BASE2" --pat "$PAT" -o json project ls >"$WORK/cli_ls.json" 2>/dev/null
 grep -q "$PAGENT_PID" "$WORK/cli_ls.json" \

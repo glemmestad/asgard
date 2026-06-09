@@ -62,12 +62,18 @@ the rest self-serve. Record each step's outputs — later steps consume them.
 **0. Register your project** (the gate — nothing provisions without it).
 `register_project` → note your `proj-…` id and mint a key.
 
-**1. Image repository.** `request_resource ecr-repository { "name": "collab" }` →
-record `uri`. Build your server image and push an **immutable** tag — never
-`:latest` (the repo rejects re-pushing a moving tag):
+**1. Image repository.** `request_resource ecr-repository { "name": "collab", "spec": { "name": "collab", "immutable": true } }`
+→ record `uri`. Build your server image and push an **immutable** tag — never
+`:latest`:
 ```
 docker build -t <uri>:sha-$(git rev-parse --short HEAD) .
 docker push <uri>:sha-$(git rev-parse --short HEAD)
+```
+No AWS credentials on your build box? Broker the registry login instead of
+`aws ecr get-login-password` — the control plane mints it with its own role:
+```
+request_resource ecr-credential { "name": "push", "spec": { "name": "push" } }
+echo "$(get_secret push-password)" | docker login -u AWS --password-stdin <registry from outputs.registry>
 ```
 Use that exact tag as `image` in step 6.
 
@@ -114,6 +120,15 @@ Record `url`. Approval-gated.
 **7. Close the Auth0 loop.** Now that you have `url`, re-apply the SPA app with its
 callbacks so login works:
 `request_resource auth0-application { "name": "collab-spa", "app_type": "spa", "callbacks": ["<url>"], "web_origins": ["<url>"], "allowed_logout_urls": ["<url>"] }`
+
+**Ship updates (CD).** On every change, build + push a new `:sha` (step 1), then
+roll the running service to it in one call — no need to re-send the whole spec:
+```json
+deploy_image { "resource_id": "<ecs-service id>", "image": "<uri>:sha-…" }
+```
+It swaps only the image (env, grants, and the cert are preserved), re-applies in
+place, and ECS rolls the new task-definition revision with automatic rollback.
+Self-service — no approval per deploy.
 
 ## Verify it's working
 
