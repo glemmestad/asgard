@@ -1,3 +1,10 @@
+# [0.17.0](https://github.com/glemmestad/asgard/compare/v0.16.0...v0.17.0) (2026-06-09)
+
+
+### Features
+
+* **provision:** broker ECR push creds + deploy_image cycle (no AWS creds on runner) ([#37](https://github.com/glemmestad/asgard/issues/37)) ([6c6918d](https://github.com/glemmestad/asgard/commit/6c6918d0c196b4261bddf7913112d6681502be98))
+
 # [0.16.0](https://github.com/glemmestad/asgard/compare/v0.15.0...v0.16.0) (2026-06-08)
 
 
