@@ -58,10 +58,11 @@ coerces values as JSON when they parse (`budget_usd=100` → number,
 | `project` | `ls`, `register`, `update`, `get`, `state`, `credential`, `promotion`, `promote`, `escalate` — the registration gate + lifecycle |
 | `catalog` | `search`, `get`, `services`, `service`, `groups` — entities + the service catalog |
 | `cost` | `report`, `project`, `series`, `by`, `forecast`, `anomalies`, `tree`, `movers` |
-| `resource` | `request`, `grant`, `ls`, `get`, `deprovision` — infrastructure |
+| `resource` | `request`, `grant`, `ls`, `get`, `runs`, `retry`, `deprovision` — infrastructure |
 | `secret` | `get`, `rotate`, `ls` |
 | `standards` / `guidance` / `recipe` | the knowledge base (`ls`/`get`, plus `put` for guidance & recipes) |
 | `mcp-catalog` | `ls`, `get`, `publish`, `set-state` |
+| `skills` | `ls`, `get`, `publish`, `set-state`, `export`, `install` — the published skills catalog |
 | `seed` | `ls`, `plan`, `get`, `apply` — agent-seed modules |
 | `governance` | org-wide portfolio metrics |
 
@@ -100,6 +101,17 @@ asgard -o json project ls | jq -r '.[].project_id'
   ```bash
   asgard seed apply --languages rust --task "build a service" --write
   # dry-run by default; --write creates AGENTS.md + .agent/** ; --force overwrites
+  ```
+
+- **Publish & install skills from disk.** The `skills_catalog_install`/`export`
+  tools return a file tree for the agent to write; the CLI writes it for you, and
+  `publish --dir` bundles a local skill folder (each file base64-encoded):
+
+  ```bash
+  asgard skills publish --dir ./my-skill            # or --bundle <json|->
+  asgard skills install <id> --dest claude-code     # writes into ~/.claude/skills/<name>
+  asgard skills export <id> --runtime codex --out ./out
+  # install writes by default; --dry-run previews, --force overwrites
   ```
 
 - **Shell completions.**

@@ -168,6 +168,11 @@ enum Cmd {
         #[command(subcommand)]
         cmd: McpCatalogCmd,
     },
+    /// The published skills catalog (publish/install/export agent skills).
+    Skills {
+        #[command(subcommand)]
+        cmd: SkillsCmd,
+    },
     /// Cost + spend reporting.
     Cost {
         #[command(subcommand)]
@@ -413,6 +418,78 @@ enum McpCatalogCmd {
 }
 
 #[derive(Subcommand)]
+enum SkillsCmd {
+    /// List published skills.
+    Ls,
+    /// Fetch one skill catalog entry by id.
+    Get { id: String },
+    /// Publish or update a skill. Bundle source: --dir or --bundle (exactly one).
+    Publish {
+        /// Provide to update a skill you own; omit to publish a new one.
+        #[arg(long)]
+        id: Option<String>,
+        /// Skill folder on disk; every file is base64-encoded into the bundle.
+        #[arg(long, conflicts_with = "bundle")]
+        dir: Option<PathBuf>,
+        /// Raw bundle JSON array [{path,content_b64}] ("-" reads stdin).
+        #[arg(long)]
+        bundle: Option<String>,
+        /// Falls back to the SKILL.md frontmatter `name`.
+        #[arg(long, default_value = "")]
+        name: String,
+        /// Falls back to the SKILL.md frontmatter `description`.
+        #[arg(long, default_value = "")]
+        summary: String,
+        #[arg(long, default_value = "")]
+        readme: String,
+        /// Authored runtime: claude-code (default) or codex.
+        #[arg(long, default_value = "")]
+        runtime: String,
+        #[arg(long, default_value = "")]
+        repository: String,
+        #[arg(long, default_value = "")]
+        homepage: String,
+        #[arg(long, default_value = "")]
+        version: String,
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+    /// Change a skill's lifecycle: active, disabled, or archived.
+    SetState {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        state: String,
+    },
+    /// Export a skill bundle (optionally translated) and write it to disk.
+    Export {
+        id: String,
+        /// Target runtime: claude-code or codex. Defaults to the skill's own.
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Output directory (default: current directory).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Install a skill into a runtime's skills directory on disk.
+    Install {
+        id: String,
+        /// Destination: claude-code, codex, or cursor. Defaults to the skill's own runtime.
+        #[arg(long)]
+        dest: Option<String>,
+        /// Override the install directory (default: the runtime's standard dir).
+        #[arg(long)]
+        dest_dir: Option<PathBuf>,
+        /// Plan only; don't write.
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite files that already exist.
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum CostCmd {
     /// Model/token spend by dimension.
     Report {
@@ -506,6 +583,10 @@ enum ResourceCmd {
     },
     /// Fetch one resource (poll provisioning/teardown).
     Get { resource_id: String },
+    /// Read the captured connector run-log for a resource (audit; admin/finance).
+    Runs { resource_id: String },
+    /// Retry a failed provision/teardown now (bypass the auto-retry backoff window).
+    Retry { resource_id: String },
     /// Tear down a resource.
     Deprovision { resource_id: String },
     /// Roll a container service onto a new image (env/grants/cert preserved).
@@ -1183,6 +1264,65 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Cmd::Skills { cmd } => {
+            let r = conn(&url, &pat, &profile, &output)?;
+            match cmd {
+                SkillsCmd::Ls => run_tool(&r, "skills_catalog_list", Map::new(), Shape::Auto).await,
+                SkillsCmd::Get { id } => {
+                    run_tool(&r, "skills_catalog_get", one("id", id), Shape::Auto).await
+                }
+                SkillsCmd::Publish {
+                    id,
+                    dir,
+                    bundle,
+                    name,
+                    summary,
+                    readme,
+                    runtime,
+                    repository,
+                    homepage,
+                    version,
+                    tags,
+                } => {
+                    let mut m = Map::new();
+                    m.insert("bundle".into(), bundle_arg(dir, bundle)?);
+                    opt(&mut m, "id", id);
+                    for (k, v) in [
+                        ("name", name),
+                        ("summary", summary),
+                        ("readme", readme),
+                        ("runtime", runtime),
+                        ("repository", repository),
+                        ("homepage", homepage),
+                        ("version", version),
+                    ] {
+                        if !v.is_empty() {
+                            m.insert(k.into(), json!(v));
+                        }
+                    }
+                    if !tags.is_empty() {
+                        m.insert("tags".into(), json!(tags));
+                    }
+                    run_tool(&r, "skills_catalog_publish", m, Shape::Auto).await;
+                }
+                SkillsCmd::SetState { id, state } => {
+                    let mut m = Map::new();
+                    m.insert("id".into(), json!(id));
+                    m.insert("state".into(), json!(state));
+                    run_tool(&r, "skills_catalog_set_state", m, Shape::Auto).await;
+                }
+                SkillsCmd::Export { id, runtime, out } => {
+                    cmd_skills_export(&r, id, runtime, out).await
+                }
+                SkillsCmd::Install {
+                    id,
+                    dest,
+                    dest_dir,
+                    dry_run,
+                    force,
+                } => cmd_skills_install(&r, id, dest, dest_dir, dry_run, force).await,
+            }
+        }
         Cmd::Cost { cmd } => {
             let r = conn(&url, &pat, &profile, &output)?;
             match cmd {
@@ -1295,6 +1435,24 @@ async fn main() -> anyhow::Result<()> {
                     run_tool(
                         &r,
                         "get_resource",
+                        one("resource_id", resource_id),
+                        Shape::Auto,
+                    )
+                    .await
+                }
+                ResourceCmd::Runs { resource_id } => {
+                    run_tool(
+                        &r,
+                        "resource_runs",
+                        one("resource_id", resource_id),
+                        Shape::Auto,
+                    )
+                    .await
+                }
+                ResourceCmd::Retry { resource_id } => {
+                    run_tool(
+                        &r,
+                        "retry_resource",
                         one("resource_id", resource_id),
                         Shape::Auto,
                     )
@@ -1573,23 +1731,11 @@ async fn cmd_chat(
     }
 }
 
-async fn cmd_apply_seed(
-    r: &Resolved,
-    languages: Vec<String>,
-    task: Option<String>,
-    tier: Option<String>,
-    write: bool,
-    force: bool,
-    dir: Option<PathBuf>,
-) {
+/// Call a tool and return its JSON value, exiting on transport/tool error (the
+/// shape for commands that post-process the result locally — e.g. write files).
+async fn call_value(r: &Resolved, tool: &str, args: Map<String, Value>) -> Value {
     let pat = require_pat(r);
-    let mut m = Map::new();
-    if !languages.is_empty() {
-        m.insert("languages".into(), json!(languages));
-    }
-    opt(&mut m, "task", task);
-    opt(&mut m, "tier", tier);
-    let out = match McpClient::new(&r.url, pat).call("bootstrap", m).await {
+    let out = match McpClient::new(&r.url, pat).call(tool, args).await {
         Ok(o) => o,
         Err(e) => {
             eprintln!("error: {e}");
@@ -1600,14 +1746,22 @@ async fn cmd_apply_seed(
         eprintln!("{}", out.raw_text);
         std::process::exit(2);
     }
-    let dest = dir.unwrap_or_else(|| PathBuf::from("."));
-    match asgard_cli::seed::apply(&out.value, &dest, write, force) {
+    out.value
+}
+
+/// Print a materialization result (one line per file); `note` is an optional
+/// trailing message (e.g. the dry-run hint).
+fn emit_writes(
+    res: Result<Vec<(PathBuf, asgard_cli::seed::Action)>, asgard_cli::CliError>,
+    note: Option<&str>,
+) {
+    match res {
         Ok(results) => {
             for (p, a) in &results {
                 println!("{}\t{}", a.label(), p.display());
             }
-            if !write {
-                eprintln!("\ndry run — pass --write to create these files");
+            if let Some(n) = note {
+                eprintln!("\n{n}");
             }
         }
         Err(e) => {
@@ -1615,6 +1769,100 @@ async fn cmd_apply_seed(
             std::process::exit(e.exit_code());
         }
     }
+}
+
+/// Resolve the publish bundle from exactly one of --dir (walk + base64) or
+/// --bundle (raw JSON array; "-" reads stdin). clap's `conflicts_with` already
+/// rejects passing both.
+fn bundle_arg(dir: Option<PathBuf>, bundle: Option<String>) -> anyhow::Result<Value> {
+    match (dir, bundle) {
+        (Some(d), _) => Ok(asgard_cli::seed::dir_to_bundle(&d)?),
+        (None, Some(b)) => {
+            let raw = if b == "-" {
+                use std::io::Read;
+                let mut s = String::new();
+                std::io::stdin().read_to_string(&mut s)?;
+                s
+            } else {
+                b
+            };
+            parse_json(&raw)
+        }
+        (None, None) => {
+            anyhow::bail!("provide the skill files with --dir <path> or --bundle <json|->")
+        }
+    }
+}
+
+/// Expand a leading `~/` to `$HOME` — the install tool returns a display path.
+fn expand_tilde(p: &str) -> PathBuf {
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(p)
+}
+
+async fn cmd_apply_seed(
+    r: &Resolved,
+    languages: Vec<String>,
+    task: Option<String>,
+    tier: Option<String>,
+    write: bool,
+    force: bool,
+    dir: Option<PathBuf>,
+) {
+    let mut m = Map::new();
+    if !languages.is_empty() {
+        m.insert("languages".into(), json!(languages));
+    }
+    opt(&mut m, "task", task);
+    opt(&mut m, "tier", tier);
+    let value = call_value(r, "bootstrap", m).await;
+    let dest = dir.unwrap_or_else(|| PathBuf::from("."));
+    let note = (!write).then_some("dry run — pass --write to create these files");
+    emit_writes(asgard_cli::seed::apply(&value, &dest, write, force), note);
+}
+
+async fn cmd_skills_export(
+    r: &Resolved,
+    id: String,
+    runtime: Option<String>,
+    out: Option<PathBuf>,
+) {
+    let mut m = Map::new();
+    m.insert("id".into(), json!(id));
+    opt(&mut m, "runtime", runtime);
+    let value = call_value(r, "skills_catalog_export", m).await;
+    let dest = out.unwrap_or_else(|| PathBuf::from("."));
+    emit_writes(
+        asgard_cli::seed::apply_b64(&value, &dest, true, false),
+        None,
+    );
+}
+
+async fn cmd_skills_install(
+    r: &Resolved,
+    id: String,
+    dest: Option<String>,
+    dest_dir: Option<PathBuf>,
+    dry_run: bool,
+    force: bool,
+) {
+    let mut m = Map::new();
+    m.insert("id".into(), json!(id));
+    opt(&mut m, "dest", dest);
+    let value = call_value(r, "skills_catalog_install", m).await;
+    let target = match dest_dir {
+        Some(d) => d,
+        None => expand_tilde(value.get("dir").and_then(Value::as_str).unwrap_or(".")),
+    };
+    let note = dry_run.then_some("dry run — re-run without --dry-run to write");
+    emit_writes(
+        asgard_cli::seed::apply_install(&value, &target, !dry_run, force),
+        note,
+    );
 }
 
 struct Core {

@@ -974,6 +974,15 @@ export ASGARD_CONFIG="$WORK/cli-config.toml"
 grep -q '"list_projects"' "$WORK/cli_tools.json" && grep -q '"register_project"' "$WORK/cli_tools.json" && grep -q '"deploy_image"' "$WORK/cli_tools.json" \
   && ok "CLI lists the live tool surface (incl. list_projects, deploy_image)" || { bad "CLI tools missing expected tools"; head -c 400 "$WORK/cli_tools.json"; }
 
+# Parity guard: each tool the CLI now wraps with a typed subcommand must be live.
+SKMISS=""
+for t in resource_runs retry_resource skills_catalog_list skills_catalog_get \
+         skills_catalog_set_state skills_catalog_export skills_catalog_install skills_catalog_publish; do
+  grep -q "\"$t\"" "$WORK/cli_tools.json" || SKMISS="$SKMISS $t"
+done
+[[ -z "$SKMISS" ]] \
+  && ok "CLI surface includes the 8 newly-wrapped tools (MCP/CLI parity)" || bad "CLI tools missing:$SKMISS"
+
 # 20h-bis. MCP/CLI lockstep: roll a container image through the CLI's resource
 # subcommand, hitting the same deploy_image tool — only the image changes.
 "$BIN" --url "$BASE2" --pat "$PAT" -o json resource request --resource-type ecs-task --name cliapp --project "$PAGENT_PID" --spec '{"name":"cliapp","image":"repo:v1","env":{"K":"v"}}' >"$WORK/cli_task.json" 2>/dev/null
@@ -996,6 +1005,38 @@ grep -q '"key"' "$WORK/cli_cred.json" \
 "$BIN" --url "$BASE2" --pat "$PAT" call governance_metrics >"$WORK/cli_gov.out" 2>/dev/null
 grep -q 'operational' "$WORK/cli_gov.out" \
   && ok "CLI generic call reaches any tool (governance_metrics)" || { bad "CLI call governance_metrics failed"; head -c 200 "$WORK/cli_gov.out"; }
+
+# 20h-ter. MCP/CLI lockstep for the skills catalog: publish a skill folder via the
+# CLI (--dir walks it + base64-encodes each file), then list/get/install/set-state
+# over the same tools. install writes the bundle to disk — the CLI's value-add.
+mkdir -p "$WORK/skill"
+cat > "$WORK/skill/SKILL.md" <<'MD'
+---
+name: CLI Skill
+description: published from a directory via the CLI
+---
+Do the CLI thing.
+MD
+"$BIN" --url "$BASE2" --pat "$PAT" -o json skills publish --dir "$WORK/skill" >"$WORK/cli_skpub.json" 2>/dev/null
+SKID=$(jget "$WORK/cli_skpub.json" "['id']")
+[[ -n "$SKID" ]] \
+  && ok "CLI skills publish --dir bundles a folder and registers it ($SKID)" || { bad "CLI skills publish failed"; cat "$WORK/cli_skpub.json"; }
+
+"$BIN" --url "$BASE2" --pat "$PAT" -o json skills ls >"$WORK/cli_skls.json" 2>/dev/null
+grep -q "$SKID" "$WORK/cli_skls.json" \
+  && ok "CLI skills ls returns the published skill" || { bad "CLI skills ls missing $SKID"; head -c 300 "$WORK/cli_skls.json"; }
+
+"$BIN" --url "$BASE2" --pat "$PAT" -o json skills get "$SKID" >"$WORK/cli_skget.json" 2>/dev/null
+grep -q 'CLI Skill' "$WORK/cli_skget.json" \
+  && ok "CLI skills get returns the skill by id" || { bad "CLI skills get failed"; cat "$WORK/cli_skget.json"; }
+
+"$BIN" --url "$BASE2" --pat "$PAT" skills install "$SKID" --dest claude-code --dest-dir "$WORK/skinstall" >/dev/null 2>&1
+[[ -f "$WORK/skinstall/SKILL.md" ]] \
+  && ok "CLI skills install writes the bundle to disk (beyond the MCP surface)" || bad "CLI skills install did not write SKILL.md"
+
+"$BIN" --url "$BASE2" --pat "$PAT" -o json skills set-state --id "$SKID" --state disabled >"$WORK/cli_skstate.json" 2>/dev/null
+grep -q 'disabled' "$WORK/cli_skstate.json" \
+  && ok "CLI skills set-state disables the skill" || { bad "CLI skills set-state failed"; cat "$WORK/cli_skstate.json"; }
 
 # Go further #1: write the agent-seed to disk in one command (the MCP only returns bodies).
 mkdir -p "$WORK/cli_repo"
