@@ -16,6 +16,7 @@ tracing.workspace = true
 rmcp = { version = "1", features = [
     "client",
     "transport-streamable-http-client-reqwest",
+    "reqwest",
 ] }
 comfy-table = "7"
 toml = "0.8"
