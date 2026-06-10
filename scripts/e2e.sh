@@ -954,6 +954,19 @@ curl -s -o "$WORK/pxp.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" 
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PXP"
 grep -qi 'not authorized' "$WORK/pxp.out" && ok "PAT denied a project the user does not own/manage" || { bad "PAT cross-project was not denied"; cat "$WORK/pxp.out"; }
 
+# 20f-i-b. First-credential bootstrap: `asgard admin bootstrap` mints a PAT
+# DB-direct (no running server needed), is idempotent, and the printed PAT
+# opens /mcp — the zero-to-agent path on a fresh deploy.
+"$BIN" --database-url "sqlite://${WORK}/auth.db" admin bootstrap >"$WORK/abootstrap.out" 2>/dev/null
+grep -q "already exists" "$WORK/abootstrap.out" && ok "admin bootstrap is idempotent against an existing admin" || { bad "admin bootstrap did not detect existing admin"; cat "$WORK/abootstrap.out"; }
+APAT=$(grep 'PAT (shown once):' "$WORK/abootstrap.out" | awk '{print $NF}')
+[[ "$APAT" == asg_pat_* ]] && ok "admin bootstrap prints a PAT (asg_pat_…)" || bad "admin bootstrap printed no PAT (got '${APAT:0:12}')"
+AINIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"e2e-bootstrap","version":"0"}}}'
+curl -s -D "$WORK/amcp.hdr" -o "$WORK/amcp.out" -X POST "$BASE2/mcp" \
+  -H "authorization: Bearer $APAT" -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$AINIT"
+grep -qi '200 OK' "$WORK/amcp.hdr" && grep -q '"serverInfo"' "$WORK/amcp.out" \
+  && ok "bootstrap-minted PAT opens /mcp (initialize negotiates)" || { bad "bootstrap PAT rejected on /mcp"; cat "$WORK/amcp.hdr" "$WORK/amcp.out"; }
+
 # 20f-ii. On-behalf registration: finn stands up a project for teammate gail. gail
 # becomes the owner; finn is recorded as the manager so he keeps authority over what
 # he just stood up — the provisioning-on-behalf-of a platform team needs.

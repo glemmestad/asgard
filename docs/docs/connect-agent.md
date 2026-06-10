@@ -113,7 +113,9 @@ Wire it as a stdio MCP server in your client (command `asgard`, args `mcp`).
 - **User token** — sign in to the dashboard and create one (Getting started →
   "Create a PAT"). It's shown once; store it like a password. Revoke it any time.
   This is the agent credential: it can register projects and acts as you across
-  the projects you own or manage.
+  the projects you own or manage. On a fresh deploy with no users yet, the
+  operator mints the first one with `asgard admin bootstrap` (see
+  [Deploy → The first credential](deploy.md#the-first-credential)).
 - **Project key** — minted per **registered project** (dashboard, or your agent
   calling `gateway_credential`). Use it for an app/CI scoped to one project, or as
   the project's **LLM key** for the gateway (see below).

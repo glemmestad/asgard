@@ -65,7 +65,7 @@ struct DocsAssets;
     about = "Control plane for AI/agent development — server (serve/mcp) plus a PAT-authed CLI"
 )]
 struct Cli {
-    /// Database URL for the in-process server commands (`serve`, `mcp`).
+    /// Database URL for the in-process server commands (`serve`, `mcp`, `admin`).
     #[arg(
         long,
         env = "ASGARD_DATABASE_URL",
@@ -142,6 +142,11 @@ enum Cmd {
     Catalog {
         #[command(subcommand)]
         cmd: CatalogCmd,
+    },
+    /// Operator bootstrap (DB-direct, no running server needed).
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCmd,
     },
     /// Project registration, lifecycle, credentials, and promotion (the gate).
     Project {
@@ -326,6 +331,23 @@ enum ProjectCmd {
     Escalate {
         #[arg(long)]
         request_id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCmd {
+    /// Ensure the admin user exists and mint a PAT — the first credential on a
+    /// fresh deploy. Idempotent: an existing admin just gets another PAT.
+    Bootstrap {
+        /// Admin username (default: $ASGARD_ADMIN_USER or "admin").
+        #[arg(long)]
+        username: Option<String>,
+        /// Name for the minted PAT.
+        #[arg(long, default_value = "bootstrap")]
+        name: String,
+        /// PAT lifetime in seconds (omit for non-expiring).
+        #[arg(long)]
+        ttl_seconds: Option<i64>,
     },
 }
 
@@ -1021,6 +1043,50 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Login { no_default } => {
             cmd_login(url.clone(), pat.clone(), profile.clone(), no_default).await?
+        }
+        Cmd::Admin {
+            cmd:
+                AdminCmd::Bootstrap {
+                    username,
+                    name,
+                    ttl_seconds,
+                },
+        } => {
+            let core = build_core(&database_url).await?;
+            let (env_user, pw) = admin_bootstrap_env();
+            let user = username.unwrap_or(env_user);
+            let boot = core.identity.ensure_admin(&user, pw).await?;
+            let pat = core
+                .identity
+                .create_pat(&boot.user.id, &name, ttl_seconds)
+                .await?;
+            asgard_storage::audit::append(
+                &core.db,
+                &asgard_storage::audit::AuditRecord::new(
+                    &boot.user.username,
+                    "admin.bootstrap_pat",
+                )
+                .outcome("allow")
+                .reason(if boot.created {
+                    "admin created + PAT minted via `asgard admin bootstrap`"
+                } else {
+                    "PAT minted via `asgard admin bootstrap`"
+                }),
+            )
+            .await?;
+            if boot.created {
+                println!("created admin user '{}'", boot.user.username);
+            } else {
+                println!("admin user '{}' already exists", boot.user.username);
+            }
+            if let Some(pw) = boot.generated_password {
+                println!("generated password (shown once, change it after login): {pw}");
+            }
+            println!(
+                "PAT (shown once): {}",
+                pat.token.as_deref().unwrap_or_default()
+            );
+            println!("connect an agent:  Authorization: Bearer <PAT>  at <server>/mcp");
         }
 
         // --- PAT-authed MCP client commands ----------------------------------
@@ -2888,38 +2954,22 @@ fn guardrail_mode() -> Mode {
     }
 }
 
+fn admin_bootstrap_env() -> (String, Option<String>) {
+    let user = std::env::var("ASGARD_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
+    let pw = std::env::var("ASGARD_ADMIN_PASSWORD")
+        .ok()
+        .filter(|p| !p.is_empty());
+    (user, pw)
+}
+
 /// First-boot admin (rung 1). If no admin exists: use `ASGARD_ADMIN_PASSWORD`
 /// when set, otherwise auto-generate one and log it once (the MinIO/Grafana
 /// pattern) so a POC "just works" without ever shipping wide-open.
 async fn maybe_seed_admin(identity: &IdentityService) {
-    let user = std::env::var("ASGARD_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-    if identity
-        .get_user_by_username(&user)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return;
-    }
-    let (pw, generated) = match std::env::var("ASGARD_ADMIN_PASSWORD") {
-        Ok(p) if !p.is_empty() => (p, false),
-        _ => (
-            format!("{}{}", asgard_storage::new_uid(), asgard_storage::new_uid()),
-            true,
-        ),
-    };
-    match identity
-        .create_local_user(
-            &user,
-            &pw,
-            None,
-            Some("Administrator"),
-            asgard_identity::Role::Admin,
-        )
-        .await
-    {
-        Ok(_) if generated => {
+    let (user, pw) = admin_bootstrap_env();
+    match identity.ensure_admin(&user, pw).await {
+        Ok(boot) if boot.generated_password.is_some() => {
+            let pw = boot.generated_password.unwrap();
             tracing::warn!("──────────────────────────────────────────────────────────");
             tracing::warn!("no admin user existed and ASGARD_ADMIN_PASSWORD was unset.");
             tracing::warn!("generated an initial admin — shown once, change it after login:");
@@ -2928,7 +2978,8 @@ async fn maybe_seed_admin(identity: &IdentityService) {
             tracing::warn!("set ASGARD_ADMIN_PASSWORD to control this in future boots.");
             tracing::warn!("──────────────────────────────────────────────────────────");
         }
-        Ok(_) => tracing::info!("seeded admin user '{user}'"),
+        Ok(boot) if boot.created => tracing::info!("seeded admin user '{user}'"),
+        Ok(_) => {}
         Err(e) => tracing::debug!("admin user not seeded: {e}"),
     }
 }

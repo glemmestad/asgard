@@ -42,6 +42,16 @@ pub struct User {
     pub created_at: String,
 }
 
+/// Outcome of [`IdentityService::ensure_admin`]. `generated_password` is set
+/// only when the admin was just created without a password override — surface
+/// it once and never persist it.
+#[derive(Debug)]
+pub struct AdminBootstrap {
+    pub user: User,
+    pub created: bool,
+    pub generated_password: Option<String>,
+}
+
 /// A user's *org-wide* authority. Authority over a specific project (seeing its
 /// cost, approving its requests) is not a role — it follows automatically from
 /// being that project's owner or manager (recorded at registration). So the role
@@ -276,6 +286,39 @@ impl IdentityService {
             role: role.as_str().to_string(),
             active: true,
             created_at,
+        })
+    }
+
+    /// First-boot admin, shared by `serve` and `asgard admin bootstrap`. Ensures
+    /// `username` exists as a local Admin: returns the existing user untouched,
+    /// or creates one — with `password_override` when given, otherwise a
+    /// generated password returned once in `generated_password`.
+    pub async fn ensure_admin(
+        &self,
+        username: &str,
+        password_override: Option<String>,
+    ) -> Result<AdminBootstrap, IdentityError> {
+        if let Some(user) = self.get_user_by_username(username).await? {
+            return Ok(AdminBootstrap {
+                user,
+                created: false,
+                generated_password: None,
+            });
+        }
+        let (pw, generated) = match password_override {
+            Some(p) if !p.is_empty() => (p, false),
+            _ => (
+                format!("{}{}", asgard_storage::new_uid(), asgard_storage::new_uid()),
+                true,
+            ),
+        };
+        let user = self
+            .create_local_user(username, &pw, None, Some("Administrator"), Role::Admin)
+            .await?;
+        Ok(AdminBootstrap {
+            user,
+            created: true,
+            generated_password: generated.then_some(pw),
         })
     }
 

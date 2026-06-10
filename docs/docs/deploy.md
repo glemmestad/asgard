@@ -45,6 +45,29 @@ Two things are gated independently of the human rung and are **always on**:
 So a human signs in (rung 1 or 2) to use the dashboard; an agent presents a
 project virtual key to use `/mcp`. Different credentials, same enforcement.
 
+### The first credential
+
+On a fresh deploy nobody has a PAT yet. Two ways to mint the first one:
+
+```sh
+# DB-direct — no running server needed. Ensures the admin user exists
+# (ASGARD_ADMIN_PASSWORD, or a generated password printed once) and prints a PAT.
+asgard --database-url "$ASGARD_DATABASE_URL" admin bootstrap
+```
+
+Or against a running server, with the admin password from the first-boot log:
+
+```sh
+TOKEN=$(curl -s -X POST "$BASE/api/auth/login" -H 'content-type: application/json' \
+  -d '{"username":"admin","password":"<password>"}' | jq -r .token)
+curl -s -X POST "$BASE/api/auth/tokens" -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"name":"bootstrap"}' | jq -r .token
+```
+
+Either way the result is a user PAT (`asg_pat_…`) — point an MCP client at
+`/mcp` with it ([Connect an agent](connect-agent.md)) and the governed loop is
+open. Both paths are idempotent and audited.
+
 ---
 
 ## The container image
