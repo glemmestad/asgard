@@ -4,7 +4,7 @@
 //! record, a log, or an audit entry — only a [`SecretRef`] does. Provisioning
 //! that yields credentials writes the *value* to a [`SecretStore`] and records
 //! only `{store, path, version}`. Stores are pluggable (mirrors connectors and
-//! cost sources): `builtin` (envelope-encrypted in Asgard's DB) is the
+//! cost sources): `builtin` (envelope-encrypted in Frontkeep's DB) is the
 //! zero-config default; managed stores (AWS/GCP/Azure) are operator-selected
 //! seams.
 

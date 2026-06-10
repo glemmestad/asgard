@@ -1,6 +1,6 @@
 # Engineering Standards
 
-These are the enterprise standards that code, infrastructure, and documentation in this repository should follow. The **live source of truth** is the Asgard `get_standards` / `list_standards` MCP tools; this file is the offline copy. When the two differ, the live standards win.
+These are the enterprise standards that code, infrastructure, and documentation in this repository should follow. The **live source of truth** is the Frontkeep `get_standards` / `list_standards` MCP tools; this file is the offline copy. When the two differ, the live standards win.
 
 They are directionally correct defaults. A team may tighten them locally; a local tightening wins over a global default, never a loosening of a security rule.
 
@@ -42,7 +42,7 @@ They are directionally correct defaults. A team may tighten them locally; a loca
 
 - See [`SECURITY.md`](SECURITY.md) for the full set; the essentials:
 - **No secrets in the repo, ever** — not in code, not in `.env`, not in a manifest or commit message. Fetch secret values at runtime through the approved secret path.
-- **All model calls go through the Asgard gateway** — the project key (minted with `gateway_credential`) against the gateway endpoint (`POST /api/gateway/chat`). Never call a provider SDK directly.
+- **All model calls go through the Frontkeep gateway** — the project key (minted with `gateway_credential`) against the gateway endpoint (`POST /api/gateway/chat`). Never call a provider SDK directly.
 - Least-privilege access; no wildcard grants without explicit, written justification.
 - No public, unauthenticated endpoints above a proof-of-concept tier.
 

@@ -1,4 +1,4 @@
-//! The Asgard binary: one statically-linked entrypoint that wires every layer,
+//! The Frontkeep binary: one statically-linked entrypoint that wires every layer,
 //! serves REST + GraphQL + the embedded web UI, reconciles catalog sources, and
 //! exposes the MCP server and CLI client commands.
 
@@ -60,7 +60,7 @@ struct DocsAssets;
 
 #[derive(Parser)]
 #[command(
-    name = "asgard",
+    name = "frontkeep",
     version,
     about = "Control plane for AI/agent development — server (serve/mcp) plus a PAT-authed CLI"
 )]
@@ -68,24 +68,24 @@ struct Cli {
     /// Database URL for the in-process server commands (`serve`, `mcp`, `admin`).
     #[arg(
         long,
-        env = "ASGARD_DATABASE_URL",
+        env = "FRONTKEEP_DATABASE_URL",
         default_value = "sqlite://asgard.db",
         global = true
     )]
     database_url: String,
-    /// Asgard server origin for CLI commands (talks to `/mcp`). Falls back to the
+    /// Frontkeep server origin for CLI commands (talks to `/mcp`). Falls back to the
     /// selected profile, then `http://localhost:8080`.
-    #[arg(long, env = "ASGARD_URL", global = true)]
+    #[arg(long, env = "FRONTKEEP_URL", global = true)]
     url: Option<String>,
     /// User PAT (`asg_pat_…`) authenticating CLI commands. Falls back to the
     /// selected profile. Mint one in the UI under "Get Started".
-    #[arg(long, env = "ASGARD_PAT", global = true)]
+    #[arg(long, env = "FRONTKEEP_PAT", global = true)]
     pat: Option<String>,
     /// Config profile to use (see `asgard login`); defaults to the file's default.
-    #[arg(long, env = "ASGARD_PROFILE", global = true)]
+    #[arg(long, env = "FRONTKEEP_PROFILE", global = true)]
     profile: Option<String>,
     /// Output format for CLI commands: json, table (default), or yaml.
-    #[arg(long, short = 'o', env = "ASGARD_OUTPUT", global = true)]
+    #[arg(long, short = 'o', env = "FRONTKEEP_OUTPUT", global = true)]
     output: Option<String>,
     #[command(subcommand)]
     command: Cmd,
@@ -95,7 +95,7 @@ struct Cli {
 enum Cmd {
     /// Run the server: REST + GraphQL + embedded web UI.
     Serve {
-        #[arg(long, env = "ASGARD_BIND", default_value = "0.0.0.0:8080")]
+        #[arg(long, env = "FRONTKEEP_BIND", default_value = "0.0.0.0:8080")]
         bind: String,
         #[arg(long)]
         config: Option<PathBuf>,
@@ -343,7 +343,7 @@ enum AdminCmd {
     /// Ensure the admin user exists and mint a PAT — the first credential on a
     /// fresh deploy. Idempotent: an existing admin just gets another PAT.
     Bootstrap {
-        /// Admin username (default: $ASGARD_ADMIN_USER or "admin").
+        /// Admin username (default: $FRONTKEEP_ADMIN_USER or "admin").
         #[arg(long)]
         username: Option<String>,
         /// Name for the minted PAT.
@@ -794,10 +794,10 @@ struct Config {
 }
 
 impl Config {
-    /// Reviewer overlay dir: config value, else the `ASGARD_REVIEWERS_DIR` env var.
+    /// Reviewer overlay dir: config value, else the `FRONTKEEP_REVIEWERS_DIR` env var.
     fn reviewers_dir(&self) -> Option<PathBuf> {
         self.reviewers_dir.clone().or_else(|| {
-            std::env::var("ASGARD_REVIEWERS_DIR")
+            std::env::var("FRONTKEEP_REVIEWERS_DIR")
                 .ok()
                 .map(PathBuf::from)
         })
@@ -948,7 +948,7 @@ fn default_tf_bin() -> String {
 #[derive(Debug, Clone, Default, Deserialize)]
 struct SecretsCfg {
     /// 32-byte master key as 64 hex chars for the builtin store. Overridden by
-    /// the `ASGARD_SECRET_KEY` env var. Absent = the dev key (single-binary
+    /// the `FRONTKEEP_SECRET_KEY` env var. Absent = the dev key (single-binary
     /// out-of-the-box only; set a real key in production).
     #[serde(default)]
     master_key_hex: Option<String>,
@@ -1001,6 +1001,23 @@ struct SourceCfg {
     path: Option<String>,
 }
 
+fn promote_legacy_env() {
+    // Reads the legacy `ASGARD_*` prefix — must NOT be the new `FRONTKEEP_*` one,
+    // or this collapses to a no-op. When sweeping stale brand strings, leave the
+    // `strip_prefix` literal below alone.
+    let legacy_prefix = "ASG";
+    let legacy_prefix = format!("{legacy_prefix}ARD_");
+    let legacy: Vec<(String, String)> = std::env::vars()
+        .filter_map(|(k, v)| k.strip_prefix(&legacy_prefix).map(|s| (s.to_string(), v)))
+        .collect();
+    for (suffix, value) in legacy {
+        let new_name = format!("FRONTKEEP_{suffix}");
+        if std::env::var_os(&new_name).is_none() {
+            std::env::set_var(&new_name, value);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Restore default SIGPIPE so `asgard … | head` terminates quietly like any
@@ -1014,6 +1031,14 @@ async fn main() -> anyhow::Result<()> {
     // provider keys and service master credentials (OpenAI, AWS, Auth0, …) can
     // live in one gitignored file. Real env vars always win over .env entries.
     let _ = dotenvy::dotenv();
+
+    // Existing deployments may still have the previous `FRONTKEEP_*` env-var names
+    // in their config (docker-compose, systemd unit, Helm chart). Promote any
+    // unset `FRONTKEEP_*` to its `FRONTKEEP_*` sibling so an in-place upgrade keeps
+    // working without operator changes. The new name always wins when both are
+    // set; we never delete the legacy name, so any subprocess that reads either
+    // continues to see what it expects.
+    promote_legacy_env();
 
     let Cli {
         database_url,
@@ -1061,7 +1086,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Completions { shell } => {
             let mut cmd = <Cli as clap::CommandFactory>::command();
-            clap_complete::generate(shell, &mut cmd, "asgard", &mut std::io::stdout());
+            clap_complete::generate(shell, &mut cmd, "frontkeep", &mut std::io::stdout());
         }
         Cmd::Login { no_default } => {
             cmd_login(url.clone(), pat.clone(), profile.clone(), no_default).await?
@@ -1772,7 +1797,7 @@ fn require_pat(r: &Resolved) -> String {
         Some(p) => p.clone(),
         None => {
             eprintln!(
-                "error: no PAT configured — pass --pat, set ASGARD_PAT, or run `asgard login`"
+                "error: no PAT configured — pass --pat, set FRONTKEEP_PAT, or run `asgard login`"
             );
             std::process::exit(3);
         }
@@ -1832,7 +1857,7 @@ async fn cmd_tools(r: &Resolved) {
 
 fn read_pat() -> anyhow::Result<String> {
     use std::io::Write;
-    eprint!("Asgard PAT (asg_pat_…): ");
+    eprint!("Frontkeep PAT (asg_pat_…): ");
     std::io::stderr().flush().ok();
     let mut s = String::new();
     std::io::stdin().read_line(&mut s)?;
@@ -2059,7 +2084,7 @@ async fn build_core(database_url: &str) -> anyhow::Result<Core> {
 async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> anyhow::Result<()> {
     let config = load_config(config_path);
     let core = build_core(database_url).await?;
-    let git_token = std::env::var("ASGARD_GIT_TOKEN").ok();
+    let git_token = std::env::var("FRONTKEEP_GIT_TOKEN").ok();
 
     // Initial reconcile so entities appear promptly.
     reconcile_all(
@@ -2087,7 +2112,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     // The review gate needs a real model to judge anything. It's enabled only when a
     // real inference backend is active (an OpenAI/Anthropic key, or an enabled
     // openai-compatible gateway module like LiteLLM) — the offline mock does not
-    // count. `ASGARD_REVIEW_ALLOW_MOCK=1` forces it on for dev/tests (mock judge).
+    // count. `FRONTKEEP_REVIEW_ALLOW_MOCK=1` forces it on for dev/tests (mock judge).
     let has_real_llm = !inf_models.is_empty();
     let mut model_registry = ModelRegistry::from_catalog(&core.catalog).await?;
     model_registry.insert(default_mock_model());
@@ -2156,7 +2181,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
             Arc::new(LlmJudge::new(gateway.clone(), system_cost_key.clone())),
         );
         reviewer_registry.register("webhook", Arc::new(WebhookReviewer::new()));
-        // The deep async reviewer: reads the repo over Asgard's git token and judges
+        // The deep async reviewer: reads the repo over Frontkeep's git token and judges
         // it against the org standards, depth per target tier. Runs in the worker.
         reviewer_registry.register(
             "code-review",
@@ -2196,7 +2221,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         provision,
         core.identity.clone(),
     )
-    .with_system_name(std::env::var("ASGARD_SYSTEM_NAME").unwrap_or_default())
+    .with_system_name(std::env::var("FRONTKEEP_SYSTEM_NAME").unwrap_or_default())
     .with_system_cost_key(system_cost_key)
     .with_cost_qa_model(cost_qa_model)
     .with_oidc(oidc.clone())
@@ -2204,7 +2229,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     .with_disable_local_login(resolve_disable_local_login(oidc.is_some()))
     .with_dev_insecure(resolve_dev_insecure(bind))
     .with_force_https(matches!(
-        std::env::var("ASGARD_FORCE_HTTPS").as_deref(),
+        std::env::var("FRONTKEEP_FORCE_HTTPS").as_deref(),
         Ok("1") | Ok("true")
     ));
 
@@ -2462,7 +2487,7 @@ async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Re
     .with_governance_config(build_governance_config(&config));
     let mut provision = build_provision(core.db.clone(), &config, None);
     provision.set_workflow(workflow.clone());
-    let project = std::env::var("ASGARD_PROJECT").ok();
+    let project = std::env::var("FRONTKEEP_PROJECT").ok();
     let server = asgard_mcp::AsgardMcp::new(
         core.catalog,
         gateway,
@@ -2513,7 +2538,7 @@ fn build_review_depth(config: &Config) -> ReviewDepthMap {
 /// LLM is wired. Off by default — production review needs real LLM access.
 fn review_allow_mock() -> bool {
     matches!(
-        std::env::var("ASGARD_REVIEW_ALLOW_MOCK").as_deref(),
+        std::env::var("FRONTKEEP_REVIEW_ALLOW_MOCK").as_deref(),
         Ok("1") | Ok("true")
     )
 }
@@ -2590,7 +2615,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
     // The builtin secret-store master key is honored unconditionally — env var
     // (preferred) or the `provisioning.secrets` config block — *before* the
     // provisioning early-return below. A container-first deploy that sets only
-    // ASGARD_SECRET_KEY and authors no config file must still get its key;
+    // FRONTKEEP_SECRET_KEY and authors no config file must still get its key;
     // otherwise the store silently keeps the insecure dev key while everything
     // looks fine.
     let master_key = secret_master_key(config.provisioning.as_ref());
@@ -2616,7 +2641,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
     svc.set_run_log(run_log.clone());
 
     // Provisioning arms from an `asgard.yaml` block or, for a container-first
-    // deploy with no config file, from env alone (ASGARD_TF_MODULES_DIR + friends).
+    // deploy with no config file, from env alone (FRONTKEEP_TF_MODULES_DIR + friends).
     let env_provisioning = provisioning_from_env();
     let Some(p) = config.provisioning.as_ref().or(env_provisioning.as_ref()) else {
         return svc;
@@ -2688,7 +2713,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
         p.anomaly_z.unwrap_or(0.0),
     );
     // Self-service ceilings: defaults, overridden by an asgard.yaml block, then by
-    // ASGARD_AUTO_APPROVE_CEILINGS (per-tier merge) so an image-only deploy can
+    // FRONTKEEP_AUTO_APPROVE_CEILINGS (per-tier merge) so an image-only deploy can
     // tune them without a config file or a recompile.
     let mut auto = AutoApprovePolicy::default();
     if let Some(aa) = p.auto_approve.as_ref().filter(|aa| !aa.ceilings.is_empty()) {
@@ -2724,15 +2749,15 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
 
 /// Synthesize a provisioning config from env so a container-first deploy can arm
 /// provisioning without an `asgard.yaml`. Returns `None` unless
-/// `ASGARD_TF_MODULES_DIR` is set (the minimum to register the terraform
-/// connector). `ASGARD_TF_WORK_DIR` sets the scratch dir (state lives in the DB);
-/// `ASGARD_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
+/// `FRONTKEEP_TF_MODULES_DIR` is set (the minimum to register the terraform
+/// connector). `FRONTKEEP_TF_WORK_DIR` sets the scratch dir (state lives in the DB);
+/// `FRONTKEEP_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
 /// to anything not listed is refused). A config-file `provisioning:` block, when
 /// present, takes precedence over this entirely.
-/// `ASGARD_AUTO_APPROVE_CEILINGS` is a comma-separated `classification=usd` list,
+/// `FRONTKEEP_AUTO_APPROVE_CEILINGS` is a comma-separated `classification=usd` list,
 /// e.g. `poc=500,light-operational=2500`. Merged onto the defaults per tier.
 fn auto_approve_ceilings_from_env() -> Option<std::collections::BTreeMap<String, f64>> {
-    let raw = std::env::var("ASGARD_AUTO_APPROVE_CEILINGS").ok()?;
+    let raw = std::env::var("FRONTKEEP_AUTO_APPROVE_CEILINGS").ok()?;
     let map: std::collections::BTreeMap<String, f64> = raw
         .split(',')
         .filter_map(|kv| kv.split_once('='))
@@ -2747,8 +2772,8 @@ fn auto_approve_ceilings_from_env() -> Option<std::collections::BTreeMap<String,
 }
 
 fn provisioning_from_env() -> Option<ProvisioningCfg> {
-    let modules_dir = std::env::var("ASGARD_TF_MODULES_DIR").ok();
-    let services_dir = std::env::var("ASGARD_SERVICES_DIR").ok();
+    let modules_dir = std::env::var("FRONTKEEP_TF_MODULES_DIR").ok();
+    let services_dir = std::env::var("FRONTKEEP_SERVICES_DIR").ok();
     // Arm if either the terraform modules or a service-definition overlay is set,
     // so a customer can add their own `service.yaml`s (over the embedded catalog)
     // by pointing one env var at a dir — whether that dir is baked into a derived
@@ -2759,9 +2784,9 @@ fn provisioning_from_env() -> Option<ProvisioningCfg> {
     Some(provisioning_cfg_from_parts(
         modules_dir,
         services_dir,
-        std::env::var("ASGARD_TF_WORK_DIR").ok(),
-        std::env::var("ASGARD_TF_ALLOWED").ok(),
-        std::env::var("ASGARD_AWS_DEFAULT_ACCOUNT").ok(),
+        std::env::var("FRONTKEEP_TF_WORK_DIR").ok(),
+        std::env::var("FRONTKEEP_TF_ALLOWED").ok(),
+        std::env::var("FRONTKEEP_AWS_DEFAULT_ACCOUNT").ok(),
     ))
 }
 
@@ -2783,7 +2808,7 @@ fn provisioning_cfg_from_parts(
                 .collect()
         })
         .unwrap_or_default();
-    // `ASGARD_AWS_DEFAULT_ACCOUNT` sets the AWS-wide default target. Since a deploy
+    // `FRONTKEEP_AWS_DEFAULT_ACCOUNT` sets the AWS-wide default target. Since a deploy
     // provisions into that account, make sure it's an allowed target (prepend it,
     // so it's also the default below) — otherwise the request gate would refuse it.
     if let Some(acct) = aws_default_account
@@ -2827,10 +2852,10 @@ fn provisioning_cfg_from_parts(
     }
 }
 
-/// The builtin store master key: `ASGARD_SECRET_KEY` env (64 hex chars) overrides
+/// The builtin store master key: `FRONTKEEP_SECRET_KEY` env (64 hex chars) overrides
 /// config; `None` leaves the dev default in place.
 fn secret_master_key(p: Option<&ProvisioningCfg>) -> Option<[u8; 32]> {
-    let hex = std::env::var("ASGARD_SECRET_KEY").ok().or_else(|| {
+    let hex = std::env::var("FRONTKEEP_SECRET_KEY").ok().or_else(|| {
         p.and_then(|p| p.secrets.as_ref())
             .and_then(|s| s.master_key_hex.clone())
     })?;
@@ -2998,21 +3023,21 @@ fn default_mock_model() -> ModelInfo {
 }
 
 fn guardrail_mode() -> Mode {
-    match std::env::var("ASGARD_GUARDRAIL_MODE").as_deref() {
+    match std::env::var("FRONTKEEP_GUARDRAIL_MODE").as_deref() {
         Ok("monitor") => Mode::Monitor,
         _ => Mode::Enforce,
     }
 }
 
 fn admin_bootstrap_env() -> (String, Option<String>) {
-    let user = std::env::var("ASGARD_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
-    let pw = std::env::var("ASGARD_ADMIN_PASSWORD")
+    let user = std::env::var("FRONTKEEP_ADMIN_USER").unwrap_or_else(|_| "admin".to_string());
+    let pw = std::env::var("FRONTKEEP_ADMIN_PASSWORD")
         .ok()
         .filter(|p| !p.is_empty());
     (user, pw)
 }
 
-/// First-boot admin (rung 1). If no admin exists: use `ASGARD_ADMIN_PASSWORD`
+/// First-boot admin (rung 1). If no admin exists: use `FRONTKEEP_ADMIN_PASSWORD`
 /// when set, otherwise auto-generate one and log it once (the MinIO/Grafana
 /// pattern) so a POC "just works" without ever shipping wide-open.
 async fn maybe_seed_admin(identity: &IdentityService) {
@@ -3021,11 +3046,11 @@ async fn maybe_seed_admin(identity: &IdentityService) {
         Ok(boot) if boot.generated_password.is_some() => {
             let pw = boot.generated_password.unwrap();
             tracing::warn!("──────────────────────────────────────────────────────────");
-            tracing::warn!("no admin user existed and ASGARD_ADMIN_PASSWORD was unset.");
+            tracing::warn!("no admin user existed and FRONTKEEP_ADMIN_PASSWORD was unset.");
             tracing::warn!("generated an initial admin — shown once, change it after login:");
             tracing::warn!("    username: {user}");
             tracing::warn!("    password: {pw}");
-            tracing::warn!("set ASGARD_ADMIN_PASSWORD to control this in future boots.");
+            tracing::warn!("set FRONTKEEP_ADMIN_PASSWORD to control this in future boots.");
             tracing::warn!("──────────────────────────────────────────────────────────");
         }
         Ok(boot) if boot.created => tracing::info!("seeded admin user '{user}'"),
@@ -3034,11 +3059,11 @@ async fn maybe_seed_admin(identity: &IdentityService) {
     }
 }
 
-/// Build the OIDC config (rung 2) from env. `ASGARD_OIDC_DOMAIN` derives the
+/// Build the OIDC config (rung 2) from env. `FRONTKEEP_OIDC_DOMAIN` derives the
 /// Auth0-style endpoints; client id/secret/redirect are required. Returns `None`
 /// (local-only) when the domain is unset.
 fn build_oidc() -> Option<OidcConfig> {
-    let domain = std::env::var("ASGARD_OIDC_DOMAIN")
+    let domain = std::env::var("FRONTKEEP_OIDC_DOMAIN")
         .ok()
         .filter(|s| !s.is_empty())?;
     let domain = domain.trim_end_matches('/');
@@ -3046,30 +3071,30 @@ fn build_oidc() -> Option<OidcConfig> {
     // if the rest is incomplete, instead of the SSO button mysteriously missing.
     let var = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
     let (client_id, client_secret, redirect_uri) = match (
-        var("ASGARD_OIDC_CLIENT_ID"),
-        var("ASGARD_OIDC_CLIENT_SECRET"),
-        var("ASGARD_OIDC_REDIRECT_URI"),
+        var("FRONTKEEP_OIDC_CLIENT_ID"),
+        var("FRONTKEEP_OIDC_CLIENT_SECRET"),
+        var("FRONTKEEP_OIDC_REDIRECT_URI"),
     ) {
         (Some(id), Some(secret), Some(uri)) => (id, secret, uri),
         (id, secret, uri) => {
             let mut missing = Vec::new();
             if id.is_none() {
-                missing.push("ASGARD_OIDC_CLIENT_ID");
+                missing.push("FRONTKEEP_OIDC_CLIENT_ID");
             }
             if secret.is_none() {
-                missing.push("ASGARD_OIDC_CLIENT_SECRET");
+                missing.push("FRONTKEEP_OIDC_CLIENT_SECRET");
             }
             if uri.is_none() {
-                missing.push("ASGARD_OIDC_REDIRECT_URI");
+                missing.push("FRONTKEEP_OIDC_REDIRECT_URI");
             }
             tracing::warn!(
-                "ASGARD_OIDC_DOMAIN is set but SSO is DISABLED — missing {}. Set all OIDC vars, or unset the domain to silence this.",
+                "FRONTKEEP_OIDC_DOMAIN is set but SSO is DISABLED — missing {}. Set all OIDC vars, or unset the domain to silence this.",
                 missing.join(", ")
             );
             return None;
         }
     };
-    let scopes = std::env::var("ASGARD_OIDC_SCOPES")
+    let scopes = std::env::var("FRONTKEEP_OIDC_SCOPES")
         .unwrap_or_else(|_| "openid email profile".to_string())
         .split_whitespace()
         .map(str::to_string)
@@ -3088,8 +3113,8 @@ fn build_oidc() -> Option<OidcConfig> {
 
 /// Build OIDC role mapping from env. `None` when nothing is set — OIDC users
 /// default to `member` and roles are managed manually (today's behavior).
-/// `ASGARD_ADMIN_EMAILS` alone is a promote-only admin grant; setting
-/// `ASGARD_OIDC_ADMIN_GROUPS` or `ASGARD_OIDC_FINANCE_GROUPS` turns on
+/// `FRONTKEEP_ADMIN_EMAILS` alone is a promote-only admin grant; setting
+/// `FRONTKEEP_OIDC_ADMIN_GROUPS` or `FRONTKEEP_OIDC_FINANCE_GROUPS` turns on
 /// authoritative group-claim sync (IdP owns the role, UI can't override).
 fn build_oidc_roles() -> Option<OidcRoleConfig> {
     let list = |k: &str| -> Vec<String> {
@@ -3101,13 +3126,13 @@ fn build_oidc_roles() -> Option<OidcRoleConfig> {
             .map(str::to_string)
             .collect()
     };
-    let admin_emails = list("ASGARD_ADMIN_EMAILS");
-    let admin_groups = list("ASGARD_OIDC_ADMIN_GROUPS");
-    let finance_groups = list("ASGARD_OIDC_FINANCE_GROUPS");
+    let admin_emails = list("FRONTKEEP_ADMIN_EMAILS");
+    let admin_groups = list("FRONTKEEP_OIDC_ADMIN_GROUPS");
+    let finance_groups = list("FRONTKEEP_OIDC_FINANCE_GROUPS");
     if admin_emails.is_empty() && admin_groups.is_empty() && finance_groups.is_empty() {
         return None;
     }
-    let groups_claim = std::env::var("ASGARD_OIDC_GROUPS_CLAIM")
+    let groups_claim = std::env::var("FRONTKEEP_OIDC_GROUPS_CLAIM")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "groups".to_string());
@@ -3128,12 +3153,12 @@ fn build_oidc_roles() -> Option<OidcRoleConfig> {
     Some(cfg)
 }
 
-/// Resolve `ASGARD_DISABLE_LOCAL_LOGIN`. Refused (local login kept ON) unless
+/// Resolve `FRONTKEEP_DISABLE_LOCAL_LOGIN`. Refused (local login kept ON) unless
 /// OIDC is configured, so the flag can never lock everyone out — the same
 /// degrade-don't-trust posture as [`resolve_dev_insecure`].
 fn resolve_disable_local_login(oidc_present: bool) -> bool {
     let on = matches!(
-        std::env::var("ASGARD_DISABLE_LOCAL_LOGIN").as_deref(),
+        std::env::var("FRONTKEEP_DISABLE_LOCAL_LOGIN").as_deref(),
         Ok("1") | Ok("true")
     );
     if !on {
@@ -3141,12 +3166,12 @@ fn resolve_disable_local_login(oidc_present: bool) -> bool {
     }
     if oidc_present {
         tracing::warn!(
-            "ASGARD_DISABLE_LOCAL_LOGIN=1: local username/password sign-in DISABLED; SSO only."
+            "FRONTKEEP_DISABLE_LOCAL_LOGIN=1: local username/password sign-in DISABLED; SSO only."
         );
         true
     } else {
         tracing::error!(
-            "ASGARD_DISABLE_LOCAL_LOGIN=1 ignored: OIDC is not configured, so disabling local login would lock everyone out. Local login stays ON."
+            "FRONTKEEP_DISABLE_LOCAL_LOGIN=1 ignored: OIDC is not configured, so disabling local login would lock everyone out. Local login stays ON."
         );
         false
     }
@@ -3157,7 +3182,7 @@ fn resolve_disable_local_login(oidc_present: bool) -> bool {
 /// warning — it must never silently open a reachable deployment.
 fn resolve_dev_insecure(bind: &str) -> bool {
     let on = matches!(
-        std::env::var("ASGARD_DEV_INSECURE").as_deref(),
+        std::env::var("FRONTKEEP_DEV_INSECURE").as_deref(),
         Ok("1") | Ok("true")
     );
     if !on {
@@ -3167,12 +3192,12 @@ fn resolve_dev_insecure(bind: &str) -> bool {
     let loopback = matches!(host, "127.0.0.1" | "localhost" | "::1" | "[::1]");
     if loopback {
         tracing::warn!(
-            "ASGARD_DEV_INSECURE=1: human/admin auth enforcement DISABLED (loopback bind {bind}). For throwaway local use only."
+            "FRONTKEEP_DEV_INSECURE=1: human/admin auth enforcement DISABLED (loopback bind {bind}). For throwaway local use only."
         );
         true
     } else {
         tracing::warn!(
-            "ASGARD_DEV_INSECURE=1 ignored: bind {bind} is not loopback. Auth enforcement stays ON."
+            "FRONTKEEP_DEV_INSECURE=1 ignored: bind {bind} is not loopback. Auth enforcement stays ON."
         );
         false
     }
@@ -3268,25 +3293,28 @@ fn serve_doc(name: &str, file: rust_embed::EmbeddedFile, status: StatusCode) -> 
 const DOCS_NOT_BUNDLED: &str = "<!doctype html><meta charset=utf-8><title>Docs not bundled</title>\
 <body style=\"font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem;line-height:1.5\">\
 <h1>Docs aren't bundled in this build</h1>\
-<p>This Asgard binary was built without the documentation site. Build it with \
+<p>This Frontkeep binary was built without the documentation site. Build it with \
 <code>cd docs &amp;&amp; npm ci &amp;&amp; npm run build</code> before compiling, or read the \
-docs at <a href=\"https://asgard.dev\">asgard.dev</a>.</p>\
-<p><a href=\"/\">← Back to Asgard</a></p>";
+docs at <a href=\"https://frontkeep.dev\">frontkeep.dev</a>.</p>\
+<p><a href=\"/\">← Back to Frontkeep</a></p>";
 
-/// Replace the static `<title>Asgard</title>` shell title with the configured
+/// Replace the static `<title>Frontkeep</title>` shell title with the configured
 /// system name. No-op when unset or still the default, so the stock build is
 /// untouched. Keeps the UI a single embedded file (no build step) while making
 /// the rebrand complete server-side.
 fn brand_index_html(html: &str, system_name: &str) -> String {
     let name = system_name.trim();
-    if name.is_empty() || name == "Asgard" {
+    if name.is_empty() || name == "Frontkeep" {
         return html.to_string();
     }
     let safe = name
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
-    html.replace("<title>Asgard</title>", &format!("<title>{safe}</title>"))
+    html.replace(
+        "<title>Frontkeep</title>",
+        &format!("<title>{safe}</title>"),
+    )
 }
 
 #[cfg(test)]
@@ -3295,9 +3323,9 @@ mod tests {
 
     #[test]
     fn brand_index_html_rewrites_title_only_when_configured() {
-        let shell = "<html><head><title>Asgard</title></head></html>";
+        let shell = "<html><head><title>Frontkeep</title></head></html>";
         // Default / unset → untouched.
-        assert_eq!(brand_index_html(shell, "Asgard"), shell);
+        assert_eq!(brand_index_html(shell, "Frontkeep"), shell);
         assert_eq!(brand_index_html(shell, ""), shell);
         // Configured name → title rebranded.
         assert!(brand_index_html(shell, "Acme Corp").contains("<title>Acme Corp</title>"));
@@ -3344,7 +3372,7 @@ mod tests {
     #[test]
     fn services_overlay_arms_without_terraform() {
         // A customer adds their own service definitions by pointing
-        // ASGARD_SERVICES_DIR at an overlay dir — no terraform modules required.
+        // FRONTKEEP_SERVICES_DIR at an overlay dir — no terraform modules required.
         let cfg = provisioning_cfg_from_parts(None, Some("/srv/overlay".into()), None, None, None);
         assert_eq!(cfg.services_dir, Some(PathBuf::from("/srv/overlay")));
         assert!(
@@ -3355,7 +3383,7 @@ mod tests {
 
     #[test]
     fn aws_default_account_sets_target_and_arms_its_allowlist() {
-        // ASGARD_AWS_DEFAULT_ACCOUNT alone makes (aws, <id>) the default target and
+        // FRONTKEEP_AWS_DEFAULT_ACCOUNT alone makes (aws, <id>) the default target and
         // an allowed one, so a request provisions into it without naming it.
         let cfg = provisioning_cfg_from_parts(
             Some("/modules".into()),

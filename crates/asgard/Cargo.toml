@@ -6,7 +6,7 @@ license.workspace = true
 description = "Open-source control plane for AI/agent development"
 
 [[bin]]
-name = "asgard"
+name = "frontkeep"
 path = "src/main.rs"
 
 [dependencies]

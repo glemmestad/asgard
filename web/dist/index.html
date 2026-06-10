@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Asgard</title>
+  <title>Frontkeep</title>
   <style>
     :root {
       --bg:#08090b; --bg2:#0b0d10; --panel:#0e1014; --panel2:#121519;
       --line:#1a1e25; --line2:#252b34; --fg:#e8ebf1; --muted:#727885; --muted2:#525861;
-      --teal:#2dd4bf; --teal2:#5eead4; --purple:#a78bfa; --blue:#60a5fa;
+      --teal:#818cf8; --teal2:#a5b4fc; --purple:#a78bfa; --blue:#60a5fa;
       --green:#34d399; --amber:#fbbf24; --red:#f87171;
       /* semantic surfaces (overridden in light mode) */
       --chip:#161a21; --hover:#12161d; --code:#0b0e13; --codefg:#cdd6e3; --input:#0a0c10; --track:#171b22;
@@ -17,7 +17,7 @@
     [data-theme=light] {
       --bg:#f7f8fa; --bg2:#eef1f5; --panel:#ffffff; --panel2:#f3f5f8;
       --line:#e4e8ee; --line2:#d3d9e2; --fg:#1a1f27; --muted:#5b6370; --muted2:#888f9b;
-      --teal:#0d9488; --teal2:#0f766e; --purple:#7c3aed; --blue:#2563eb;
+      --teal:#4f46e5; --teal2:#4338ca; --purple:#7c3aed; --blue:#2563eb;
       --green:#059669; --amber:#b45309; --red:#dc2626;
       --chip:#eef1f5; --hover:#f0f3f7; --code:#f3f5f9; --codefg:#1a1f27; --input:#ffffff; --track:#e4e8ee;
     }
@@ -25,7 +25,7 @@
     [data-theme=light] button.danger { background:#fdecec; border-color:#f3c7c7; }
     [data-theme=light] .pill.green { border-color:#a7f3d0; background:#ecfdf5; }
     [data-theme=light] .pill.red { border-color:#fecaca; background:#fef2f2; }
-    [data-theme=light] .pill.teal { border-color:#99f6e4; background:#f0fdfa; }
+    [data-theme=light] .pill.teal { border-color:#c7d2fe; background:#eef2ff; }
     [data-theme=light] .pill.purple { border-color:#ddd6fe; background:#f5f3ff; }
     [data-theme=light] .pill.blue { border-color:#bfdbfe; background:#eff6ff; }
     [data-theme=light] .pill.amber { border-color:#fde68a; background:#fffbeb; }
@@ -51,8 +51,8 @@
 
     /* shell: slim left sidebar + content */
     .shell { display:flex; min-height:100vh; }
-    .logo { width:28px; height:28px; border-radius:8px; display:grid; place-items:center;
-      background:linear-gradient(150deg,var(--teal),#0f9b8e); color:#04201d; font-weight:800; font-size:16px; }
+    .logo { width:28px; height:28px; border-radius:6px; display:grid; place-items:center;
+      background:var(--teal); color:#fff; font-weight:800; font-size:16px; }
     .brand { font-weight:700; letter-spacing:.2px; font-size:15px; }
 
     aside { width:212px; flex:none; border-right:1px solid var(--line); background:var(--bg2);
@@ -66,7 +66,7 @@
     nav button .ic { width:16px; text-align:center; opacity:.85; }
     .sidefoot { margin-top:auto; padding:12px 16px; border-top:1px solid var(--line);
       display:flex; align-items:center; gap:9px; color:var(--muted); font-size:12px; }
-    .dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 8px var(--green); }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--green); }
     .avatar { width:26px; height:26px; border-radius:50%; background:var(--chip); display:grid; place-items:center;
       color:var(--muted); font-size:12px; border:1px solid var(--line2); margin-left:auto; }
 
@@ -113,7 +113,7 @@
       color:var(--muted); white-space:nowrap; }
     .pill.green { color:var(--green); border-color:#1f4435; background:#0d1f18; }
     .pill.red { color:var(--red); border-color:#50272b; background:#1d1011; }
-    .pill.teal { color:var(--teal2); border-color:#1c4a44; background:#0a1f1c; }
+    .pill.teal { color:var(--teal2); border-color:#2e2c5e; background:#13132f; }
     .pill.purple { color:var(--purple); border-color:#3a2f5c; background:#15102a; }
     .pill.blue { color:var(--blue); border-color:#26456e; background:#0d1a2c; }
     .pill.amber { color:var(--amber); border-color:#5c4a1c; background:#221a08; }
@@ -216,7 +216,7 @@
 <body>
   <div class="shell">
     <aside id="aside">
-      <div class="sidehead"><span class="logo">A</span><span class="brand">Asgard</span></div>
+      <div class="sidehead"><span class="logo">F</span><span class="brand">Frontkeep</span></div>
       <nav id="nav"></nav>
       <div class="sidefoot"><span class="dot"></span><span>live</span>
         <button class="themebtn" id="themebtn" title="Toggle light/dark">☾</button>
@@ -237,7 +237,7 @@
     const el = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; };
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     // Theme (light default, user-switchable, persisted per browser in localStorage).
-    const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('asgard-theme', t); } catch {} };
+    const applyTheme = (t) => { document.documentElement.setAttribute('data-theme', t); try { localStorage.setItem('frontkeep-theme', t); } catch {} };
     const theme = () => document.documentElement.getAttribute('data-theme') || 'light';
     function toggleTheme() { applyTheme(theme() === 'light' ? 'dark' : 'light'); const b = document.getElementById('themebtn'); if (b) b.textContent = theme() === 'light' ? '☀' : '☾'; }
     // A confirmation gate for destructive actions. Resolves true only if confirmed.
@@ -541,7 +541,7 @@
       about:    { label: 'About', ic: 'ⓘ', render: renderAbout },
     };
     let active = 'start';
-    let SYS_NAME = 'Asgard';
+    let SYS_NAME = 'Frontkeep';
     // Deep-link target: when set, the projects tab opens straight to this detail
     // (used by the governance scorecard's offender drill-in).
     let focusProject = null;
@@ -596,16 +596,16 @@
       const base = location.origin + '/mcp';
       const minted = !!token;
       const pat = token || 'asg_pat_your_user_token';
-      const exportLine = `export ASGARD_PAT=${pat}`;
-      // Claude Code bakes the header at add-time — the shell expands $ASGARD_PAT
+      const exportLine = `export FRONTKEEP_PAT=${pat}`;
+      // Claude Code bakes the header at add-time — the shell expands $FRONTKEEP_PAT
       // right then, so an unset var silently stores an empty bearer and every call
       // 401s. The expanded value lands in ~/.claude.json regardless, so the env-var
       // indirection bought no secrecy here, only that footgun. Inline the token.
-      const claude = `claude mcp add --transport http asgard ${base} \\\n  --header "Authorization: Bearer ${pat}"`;
+      const claude = `claude mcp add --transport http frontkeep ${base} \\\n  --header "Authorization: Bearer ${pat}"`;
       // Codex resolves bearer_token_env_var at call time, so the token stays out of
       // config.toml — keep the env-var form, but it must be set in Codex's environment.
-      const codex = `[mcp_servers.asgard]\nurl = "${base}"\nbearer_token_env_var = "ASGARD_PAT"`;
-      const cursor = JSON.stringify({ mcpServers: { asgard: { url: base, headers: { Authorization: 'Bearer ${ASGARD_PAT}' } } } }, null, 2);
+      const codex = `[mcp_servers.frontkeep]\nurl = "${base}"\nbearer_token_env_var = "FRONTKEEP_PAT"`;
+      const cursor = JSON.stringify({ mcpServers: { frontkeep: { url: base, headers: { Authorization: 'Bearer ${FRONTKEEP_PAT}' } } } }, null, 2);
       const tokenBlock = minted
         ? `<div class="card" style="border-color:var(--teal);margin:10px 0 0">
             <p style="margin:0 0 6px;font-weight:700;color:var(--teal2)">✓ PAT created — shown once, copy it now</p>
@@ -624,9 +624,9 @@
         <h3>Connect your agent over MCP</h3>
         <p class="muted" style="margin:0 0 6px;font-size:13px">Add ${SYS_NAME}'s MCP server to your agent.</p>
         <div class="muted" style="font-size:12px;margin-top:8px">Claude Code</div>${snip(claude)}
-        <p class="muted" style="margin:4px 0 0;font-size:11px">Prefer to keep the token out of <code>~/.claude.json</code>? Export it (above) and use <code>$ASGARD_PAT</code> in the header instead — but make sure it's set in the shell you run this command in.</p>
+        <p class="muted" style="margin:4px 0 0;font-size:11px">Prefer to keep the token out of <code>~/.claude.json</code>? Export it (above) and use <code>$FRONTKEEP_PAT</code> in the header instead — but make sure it's set in the shell you run this command in.</p>
         <div class="muted" style="font-size:12px;margin-top:10px">Codex (<code>~/.codex/config.toml</code>)</div>${snip(codex)}
-        <p class="muted" style="margin:4px 0 0;font-size:11px">Codex reads <code>ASGARD_PAT</code> from its environment at call time — it must be set wherever Codex runs, not just the shell where you edited the config.</p>
+        <p class="muted" style="margin:4px 0 0;font-size:11px">Codex reads <code>FRONTKEEP_PAT</code> from its environment at call time — it must be set wherever Codex runs, not just the shell where you edited the config.</p>
         <div class="muted" style="font-size:12px;margin-top:10px">Cursor / generic Streamable-HTTP client (mcp.json)</div>${snip(cursor)}
         <p class="muted" style="margin:10px 0 0;font-size:12px">Once connected, <code>tools/list</code> shows <code>register_project</code>, <code>request_resource</code>, <code>seed_plan</code>, and the rest. Tell your agent: <em>"read the ${SYS_NAME} standards, register this project, then build."</em></p>
         <p class="muted" style="font-size:11px;margin-top:8px">Deploying an app or CI that lives in a single project? Register one below and mint a <strong>per-project key</strong> there instead — it's scoped to that one project.</p>
@@ -676,7 +676,7 @@
         <p class="muted" style="margin:0 0 6px;font-size:13px">${SYS_NAME} is a <strong>starting point for a repo</strong>. Create a new one (or open an existing one) and initialize git:</p>
         ${snip('mkdir my-app && cd my-app && git init')}
         <p class="muted" style="margin:10px 0 6px;font-size:13px">Then just tell your connected agent to set the repo up — in plain English, e.g.:</p>
-        ${say("Bootstrap this repo on Asgard and register the project — it's a Python service that summarizes support tickets.")}
+        ${say("Bootstrap this repo on Frontkeep and register the project — it's a Python service that summarizes support tickets.")}
         <p class="muted" style="margin:6px 0 0;font-size:13px">Behind the scenes it's <strong>one call</strong> that returns <code>AGENTS.md</code> plus the minimal coding + security standards (<code>.agent/</code>) matched to your repo's languages, every file inlined. The agent writes them, then registers below.</p>
         <p class="muted" style="margin:10px 0 0;font-size:12px"><code>AGENTS.md</code> is the entry point both people and agents read: the four moves (examine → learn standards → register → build), how to discover and <code>request_resource</code> what the project needs, and how to call models through the gateway. The live standards over MCP are the source of truth; the <code>.agent/</code> files are the offline mirror.</p>
       </div></div></div>
@@ -699,7 +699,7 @@
         <p class="muted" style="margin:0 0 6px;font-size:13px">You provision by asking your agent — again, in plain English. Auto-approvable services (like object storage) provision immediately; cost-bearing ones (databases, load-balanced services) route to a manager for approval. A first, safe one — a private, versioned bucket for permanent file storage:</p>
         ${say("Provision a private, versioned storage bucket called project-files for this project.")}
         <p class="muted" style="margin:12px 0 4px;font-size:13px">Need your <strong>application</strong> to call a model (summarize a doc, score a transaction)? Ask for the project's LLM key:</p>
-        ${say("Mint this project's gateway key so the app can call models through Asgard.")}
+        ${say("Mint this project's gateway key so the app can call models through Frontkeep.")}
         <p class="muted" style="margin:8px 0 4px;font-size:12px">You get a project-scoped key back (shown once). Your deployed app sends it as a bearer token to <code>POST /api/gateway/chat</code> — spend, policy, and audit all land on this project.</p>
         <div class="card" style="border-color:var(--amber);margin:6px 0 0;padding:12px">
           <p style="margin:0 0 4px;font-weight:700;color:var(--amber)">⚠ The LLM key is for app inference — not your dev tools</p>
@@ -1317,13 +1317,13 @@
           let ex;
           try { ex = await api(`/api/skills/${encodeURIComponent(id)}/export?runtime=${encodeURIComponent(d.runtime)}`); }
           catch (e) { box.innerHTML = errBanner(e); return; }
-          const one = `curl -fsSL -H "Authorization: Bearer $ASGARD_PAT" "${location.origin}/api/skills/${id}/install.sh?dest=${target}" | sh`;
+          const one = `curl -fsSL -H "Authorization: Bearer $FRONTKEEP_PAT" "${location.origin}/api/skills/${id}/install.sh?dest=${target}" | sh`;
           const loss = (ex.loss || []).length
             ? `<details style="margin-top:10px" open><summary class="muted" style="cursor:pointer;font-size:12px">Translation changes (${ex.loss.length}) — ${esc(s.runtime)} → ${esc(d.runtime)}</summary>
                 <ul style="font-size:12px;margin:6px 0">${ex.loss.map(l => `<li><strong>${esc(l.field)}</strong>: ${esc(l.action)} <span class="muted">(${esc(l.reason)})</span></li>`).join('')}</ul></details>`
             : (d.runtime !== s.runtime ? '<div class="muted" style="font-size:12px;margin-top:8px">No changes needed — fully portable.</div>' : '');
           const skillMd = (ex.files.find(f => f.path === 'SKILL.md') || {}).content_b64;
-          box.innerHTML = `<p class="muted" style="font-size:12px">Installs into <code>${esc(d.dir)}/${esc(slug)}/</code>. Set <code>$ASGARD_PAT</code> first (see Getting started), then run:</p>
+          box.innerHTML = `<p class="muted" style="font-size:12px">Installs into <code>${esc(d.dir)}/${esc(slug)}/</code>. Set <code>$FRONTKEEP_PAT</code> first (see Getting started), then run:</p>
             ${snip(one)}
             <details id="sk-preview" style="margin-top:8px"><summary class="muted" style="cursor:pointer;font-size:12px">Preview the install script</summary><div id="sk-script" style="margin-top:6px">${loading('Loading…')}</div></details>
             ${loss}
@@ -2506,7 +2506,7 @@
         ? `<p class="muted" style="margin:6px 0 0;font-size:12px">Single sign-on is required for this deployment.</p>`
         : '';
       document.getElementById('view').innerHTML = `<div class="card" style="max-width:340px;margin:96px auto">
-        <div class="row" style="gap:10px;margin-bottom:14px"><span class="logo">A</span><span class="brand">Asgard</span></div>
+        <div class="row" style="gap:10px;margin-bottom:14px"><span class="logo">F</span><span class="brand">Frontkeep</span></div>
         ${form}
         ${sso}
         ${note}
@@ -2532,7 +2532,7 @@
     // boot: require a session, then preload per-project series so sparklines
     // render on first paint. Falls back to the sign-in view when unauthenticated.
     function applyBranding(name) {
-      name = (name && String(name).trim()) || 'Asgard';
+      name = (name && String(name).trim()) || 'Frontkeep';
       SYS_NAME = name;
       document.title = name;
       document.querySelectorAll('.brand').forEach(e => e.textContent = name);
@@ -2560,7 +2560,7 @@
       document.getElementById('view').className = tabs[active].full ? 'full' : 'wrap';
       tabs[active].render();
     }
-    applyTheme((() => { try { return localStorage.getItem('asgard-theme') || 'light'; } catch { return 'light'; } })());
+    applyTheme((() => { try { return localStorage.getItem('frontkeep-theme') || 'light'; } catch { return 'light'; } })());
     const _tb = document.getElementById('themebtn');
     if (_tb) { _tb.textContent = theme() === 'light' ? '☀' : '☾'; _tb.onclick = toggleTheme; }
     boot();

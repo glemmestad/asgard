@@ -49,4 +49,4 @@ retain audit + cost history.
 
 See the golden-path template under
 [`templates/code-review/`](https://github.com/asgard/asgard/tree/main/templates/code-review)
-for a complete, valid example produced by `asgard agent new --template code-review`.
+for a complete, valid example produced by `frontkeep agent new --template code-review`.

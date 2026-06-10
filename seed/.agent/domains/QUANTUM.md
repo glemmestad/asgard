@@ -21,7 +21,7 @@ don't forgive sloppiness the way CRUD code does.
 
 ## Resources & cost
 - Quantum resource estimates (qubit count, gate depth, T-count, runtime) are load-bearing — show the method and assumptions, not just the number.
-- Simulation and hardware time are expensive. Size the run before launching it; route provisioning and any hardware/QPU access through Asgard so it's attributed and budgeted.
+- Simulation and hardware time are expensive. Size the run before launching it; route provisioning and any hardware/QPU access through Frontkeep so it's attributed and budgeted.
 
 ## Done bar
 A quantum change is done when conventions are stated explicitly, the result is

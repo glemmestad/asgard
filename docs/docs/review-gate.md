@@ -8,7 +8,7 @@ title: The review gate (machine-judged promotion)
 Promoting a project up the classification ladder (POC → Light → Wide → Critical)
 is gated. The base gate is a **machine evidence check**: are the required fields
 for the target tier present, and did any exception signal fire? On top of that,
-Asgard can run a **reviewer panel** that *judges* the promotion — including a deep
+Frontkeep can run a **reviewer panel** that *judges* the promotion — including a deep
 reviewer that **reads the actual repository** and checks it against your coding
 standards.
 
@@ -27,7 +27,7 @@ of:
 - an enabled **`openai-compatible` gateway module** (LiteLLM, Databricks Model
   Serving, etc. — see [Inference backends](./inference-backends.md)).
 
-The offline **mock model does not count.** With no real model wired, Asgard logs
+The offline **mock model does not count.** With no real model wired, Frontkeep logs
 
 ```
 review gate DISABLED: no LLM access — set an OpenAI/Anthropic key or enable an
@@ -37,7 +37,7 @@ LLM gateway module (LiteLLM/etc.) to turn it on; promotion uses the presence che
 and promotion falls back to the pure evidence/presence check. When a model is
 reachable it logs `review gate enabled (model: …)`.
 
-> **Dev/test only:** `ASGARD_REVIEW_ALLOW_MOCK=1` forces the gate on against the
+> **Dev/test only:** `FRONTKEEP_REVIEW_ALLOW_MOCK=1` forces the gate on against the
 > mock model. It runs a deterministic stub (no real model call) so the async path
 > is exercisable offline. Never use it in production.
 
@@ -53,7 +53,7 @@ catalog — drop a file, no recompile), dispatched by `kind`. Two ship built-in:
 
 You can add an external reviewer (`kind: webhook`) that delegates to CodeRabbit,
 Greptile, or an in-house service, or disable a built-in with an operator overlay
-(`ASGARD_REVIEWERS_DIR`).
+(`FRONTKEEP_REVIEWERS_DIR`).
 
 ## The async code reviewer
 
@@ -77,15 +77,15 @@ promotion never hangs in `reviewing` — after the retry budget is exhausted it
 
 The reviewer reads code; it **never executes it** (static review only).
 
-### Repository access — the token Asgard holds
+### Repository access — the token Frontkeep holds
 
-The reviewer reads repos with a token Asgard holds in its environment, selected by
+The reviewer reads repos with a token Frontkeep holds in its environment, selected by
 host:
 
 | Host | Token env | Fallback |
 | --- | --- | --- |
-| `github.com` / GitHub Enterprise | `ASGARD_GITHUB_TOKEN` | `ASGARD_GIT_TOKEN` |
-| `gitlab.com` / self-hosted GitLab | `ASGARD_GITLAB_TOKEN` | `ASGARD_GIT_TOKEN` |
+| `github.com` / GitHub Enterprise | `FRONTKEEP_GITHUB_TOKEN` | `FRONTKEEP_GIT_TOKEN` |
+| `gitlab.com` / self-hosted GitLab | `FRONTKEEP_GITLAB_TOKEN` | `FRONTKEEP_GIT_TOKEN` |
 
 The token needs read access to the repositories you expect to review. Self-hosted
 hosts are detected from the URL (`github.<host>` → `…/api/v3`; everything else is

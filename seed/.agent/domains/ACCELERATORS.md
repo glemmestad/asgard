@@ -20,7 +20,7 @@ be subtly wrong at full speed.
 - State the hardware target and its assumptions (compute capability, board, clock). Code tuned for one device can regress on another.
 
 ## Resources & cost
-- Accelerator time is expensive and contended. Size and budget runs before launching; route hardware provisioning through Asgard so it's attributed and capped.
+- Accelerator time is expensive and contended. Size and budget runs before launching; route hardware provisioning through Frontkeep so it's attributed and capped.
 
 ## Done bar
 An accelerator change is done when the result is validated against a reference

@@ -20,7 +20,7 @@ Conventions for any infrastructure-as-code, layered on top of
 
 ## Cost attribution
 - Apply the standard tag set to every provisioned resource: project id, owner, and data classification. Resources missing these fail cost reconciliation and show up as untagged spend.
-- Request infrastructure through Asgard's catalog when it exists there — the provisioner enforces tagging, classification, and audit for you.
+- Request infrastructure through Frontkeep's catalog when it exists there — the provisioner enforces tagging, classification, and audit for you.
 
 ## Idempotency & destroy-safety
 - A second `apply` with no config change must produce no changes. If it doesn't, your config is non-deterministic — fix it.

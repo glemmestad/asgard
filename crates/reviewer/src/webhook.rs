@@ -141,7 +141,7 @@ mod tests {
         let v = r.review(&manifest(None), &req()).await.unwrap();
         assert_eq!(v.disposition, Disposition::Abstain);
         let v2 = r
-            .review(&manifest(Some("ASGARD_TEST_REVIEWER_URL_UNSET")), &req())
+            .review(&manifest(Some("FRONTKEEP_TEST_REVIEWER_URL_UNSET")), &req())
             .await
             .unwrap();
         assert_eq!(v2.disposition, Disposition::Abstain);

@@ -2849,7 +2849,7 @@ mod tests {
                 "flat",
                 120.0,
                 Default::default(),
-                "pre-Asgard infra",
+                "pre-Frontkeep infra",
             )
             .await
             .unwrap();

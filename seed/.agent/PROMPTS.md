@@ -1,6 +1,6 @@
 # Operating prompts
 
-Reusable prompt patterns for working through Asgard. These are the moves you make
+Reusable prompt patterns for working through Frontkeep. These are the moves you make
 on yourself and on the platform — how to plan, self-review, request what you need,
 and hand back. Adapt the wording; keep the shape.
 
@@ -26,7 +26,7 @@ Run this against your own diff before handing back:
 
 If the review surfaces a gap, fix it before you say done — don't report it as a caveat you could have closed.
 
-## Request a resource through Asgard
+## Request a resource through Frontkeep
 When the task needs a model, a secret, storage, or an existing tool, don't wire it
 directly — discover and request it through the catalog:
 

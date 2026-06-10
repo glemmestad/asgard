@@ -5,7 +5,7 @@ title: Governed onboarding loop
 
 # Governed onboarding loop
 
-Asgard's headline workflow is a **governed onboarding loop** for AI/agent work, designed agents-first: every capability below is an MCP tool, not just a UI button.
+Frontkeep's headline workflow is a **governed onboarding loop** for AI/agent work, designed agents-first: every capability below is an MCP tool, not just a UI button.
 
 > Point any new effort's agent at the seed → it learns the standards → it registers the project (the gate) → that unlocks gateway keys and resources → all spend is attributed by project / owner / manager / group.
 
@@ -28,10 +28,10 @@ control plane. Mint the key, then POST to `/api/gateway/chat` with it (see
 
 ## 2. Registration is the gate
 
-A project must be **registered and active** before Asgard will mint a gateway key or provision a resource. Registration records the owner, manager, group/cost-center, classification and budget, and mints a stable `proj-YYYY-NNNN` id.
+A project must be **registered and active** before Frontkeep will mint a gateway key or provision a resource. Registration records the owner, manager, group/cost-center, classification and budget, and mints a stable `proj-YYYY-NNNN` id.
 
 ```bash
-asgard project register \
+frontkeep project register \
   --name "Fraud Detection" \
   --owner alice@corp.example --manager bob@corp.example \
   --group platform --classification poc --budget-usd 100
@@ -56,14 +56,14 @@ groups:
 Every gateway call is attributed to its project, and the owner / manager / group / cost-center / classification are denormalized onto each usage event at write time — so cost rolls up by any of them with a single query, and historical spend stays attributed to who owned the project when the cost was incurred.
 
 ```bash
-asgard cost report --by group        # or: project | owner | manager | classification | model | provider
+frontkeep cost report --by group        # or: project | owner | manager | classification | model | provider
 # REST:  GET /api/cost?by=group
 # MCP:   cost_report { "by": "group" }
 ```
 
 ## 4. Provisioning through the orchestrator
 
-Resources are requested through Asgard so they're owned, governed, and cost-tagged. Cheap, reversible types (object storage, key/value tables, secrets) auto-provision; high blast-radius types (databases, compute) require platform approval before they're fulfilled.
+Resources are requested through Frontkeep so they're owned, governed, and cost-tagged. Cheap, reversible types (object storage, key/value tables, secrets) auto-provision; high blast-radius types (databases, compute) require platform approval before they're fulfilled.
 
 ```bash
 # MCP: request_resource { project_id, resource_type: "s3-bucket", name: "assets", spec: {...} }
@@ -78,8 +78,8 @@ The universal backend is the **Terraform connector**: a service manifest plus a 
 
 ## 5. Adopting an existing system (brownfield)
 
-The same loop works for a system that already exists outside Asgard — nothing
-is re-provisioned, and Asgard never takes over infrastructure it didn't create:
+The same loop works for a system that already exists outside Frontkeep — nothing
+is re-provisioned, and Frontkeep never takes over infrastructure it didn't create:
 
 1. **Merge the seed.** Run `bootstrap` against the existing repo. New files are
    written; an existing `AGENTS.md`/`CLAUDE.md` is merged, not replaced.
@@ -89,12 +89,12 @@ is re-provisioned, and Asgard never takes over infrastructure it didn't create:
    for governance triage instead of blocking it.
 3. **Link the existing infrastructure.** `link_resource` records each existing
    stack with its cost source (`aws-cost-explorer`, `databricks-billing`, …)
-   and a monthly estimate. Asgard does not manage it; you tag the real cloud
+   and a monthly estimate. Frontkeep does not manage it; you tag the real cloud
    resources `project=<id>` yourself, and the source attributes actual spend by
    that tag — into the same rollup as everything else.
 4. **Graduate or retire.** The first successful promotion (real evidence,
    machine-checked) flips the project to `active`; a system not worth keeping
    is decommissioned through the normal lifecycle.
 
-To *re-provision* an existing app onto Asgard-managed primitives instead, see
+To *re-provision* an existing app onto Frontkeep-managed primitives instead, see
 [Migrate an app](migrate-app.md) — a different journey.

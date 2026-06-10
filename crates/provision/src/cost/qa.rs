@@ -1,5 +1,5 @@
 //! The cost Q&A dogfood: an agentic answer to a natural-language spend question,
-//! grounded only in the rollup store and routed through Asgard's own governed
+//! grounded only in the rollup store and routed through Frontkeep's own governed
 //! gateway. The model can call thin tools over [`CostRollupRepo`]; it never sees
 //! anything but their outputs, so it can't invent numbers.
 
@@ -283,7 +283,7 @@ pub async fn answer_cost_question(
         return Ok(tools.briefing().await);
     }
     let grounding = format!(
-        "You are Asgard's cost assistant. Today is {as_of_day}. Answer questions about \
+        "You are Frontkeep's cost assistant. Today is {as_of_day}. Answer questions about \
          cloud infrastructure and model spend strictly from the cost tools."
     );
     run_tool_loop(

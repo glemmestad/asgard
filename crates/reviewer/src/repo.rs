@@ -33,7 +33,7 @@ enum Backend {
     Local {
         root: PathBuf,
     },
-    /// An in-memory file tree (a skill bundle already stored in Asgard) — reviewed
+    /// An in-memory file tree (a skill bundle already stored in Frontkeep) — reviewed
     /// the same way as a repo, no fetch.
     Bundle {
         files: BTreeMap<String, Vec<u8>>,
@@ -47,7 +47,7 @@ pub struct RepoReader {
 
 impl RepoReader {
     /// Resolve a `repo_or_source_url` (or local path) to a reader, picking the host
-    /// token from `ASGARD_{GITHUB,GITLAB}_TOKEN`, falling back to `ASGARD_GIT_TOKEN`.
+    /// token from `FRONTKEEP_{GITHUB,GITLAB}_TOKEN`, falling back to `FRONTKEEP_GIT_TOKEN`.
     pub fn from_url(url: &str) -> Result<Self, ReviewError> {
         let backend = parse_backend(url)?;
         Ok(RepoReader {
@@ -249,7 +249,7 @@ async fn send_text(rb: reqwest::RequestBuilder) -> Result<String, ReviewError> {
 fn token_for(host_env: &str) -> Option<String> {
     std::env::var(host_env)
         .ok()
-        .or_else(|| std::env::var("ASGARD_GIT_TOKEN").ok())
+        .or_else(|| std::env::var("FRONTKEEP_GIT_TOKEN").ok())
         .filter(|t| !t.trim().is_empty())
 }
 
@@ -296,7 +296,7 @@ fn parse_backend(url: &str) -> Result<Backend, ReviewError> {
             owner,
             repo,
             git_ref: "HEAD".into(),
-            token: token_for("ASGARD_GITHUB_TOKEN"),
+            token: token_for("FRONTKEEP_GITHUB_TOKEN"),
         });
     }
 
@@ -306,7 +306,7 @@ fn parse_backend(url: &str) -> Result<Backend, ReviewError> {
         api_base: format!("https://{host}/api/v4"),
         project: path.to_string(),
         git_ref: "HEAD".into(),
-        token: token_for("ASGARD_GITLAB_TOKEN"),
+        token: token_for("FRONTKEEP_GITLAB_TOKEN"),
     })
 }
 

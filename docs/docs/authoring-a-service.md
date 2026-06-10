@@ -21,7 +21,7 @@ and as an MCP `request_resource` target.
 
 - **Built-in defaults** are embedded in the binary from `services/<id>/service.yaml`.
 - **Operator overlay**: point `provisioning.services_dir` (config) or
-  `ASGARD_TF_MODULES_DIR` + a services directory (env) at a directory of
+  `FRONTKEEP_TF_MODULES_DIR` + a services directory (env) at a directory of
   `service.yaml` files to add or override services at runtime. Overlay entries with
   an existing `id` replace the built-in one.
 
@@ -61,7 +61,7 @@ provisioner:
     module: aws/my-service     # terraform: module path under the modules dir
     cloud: aws                 # recorded on the resource + used for tag/target checks
     # defaults:                # optional operator-env-sourced tfvars the agent never sets
-    #   subnet_group_name: "${ASGARD_MY_SUBNET}"
+    #   subnet_group_name: "${FRONTKEEP_MY_SUBNET}"
 
 # --- latency + resilience -------------------------------------------------------
 long_running: false            # latency hint ONLY. true → request returns its
@@ -110,13 +110,13 @@ a worked example.
 1. Write `modules/<cloud>/<id>/*.tf` (resolved against the configured modules dir).
 2. The connector writes **every spec field** plus the immutable project `tags` as
    tfvars, runs `terraform apply -auto-approve -no-color`, and persists state
-   **encrypted in Asgard's own DB** (the work dir is just scratch).
+   **encrypted in Frontkeep's own DB** (the work dir is just scratch).
 3. Outputs named in `secret_outputs` route to the secret store; the rest land on
    the resource record.
 
 Non-AWS is the same path — `modules/databricks/*`, `modules/auth0/*` prove the
 connector is provider-agnostic (the Terraform subprocess inherits provider creds
-from Asgard's environment).
+from Frontkeep's environment).
 
 Other connectors: `exec` (run a command, parse JSON stdout), `http`/`mcp`, and
 `stub` (the dry-run fallback used when a declared connector isn't registered, so
@@ -164,7 +164,7 @@ service overlay <dir> failed: …      # ← a malformed manifest shows up here
 ```
 
 `schemas/service.schema.json` is the authoritative field reference (what the UI
-and tooling read). (`asgard validate` today only lints *entity* manifests — agents
+and tooling read). (`frontkeep validate` today only lints *entity* manifests — agents
 and the like, which carry a `kind` — not `service.yaml`; see the roadmap.)
 
 Then provision it end-to-end against a running binary (or the `stub` connector

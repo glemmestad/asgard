@@ -1,4 +1,4 @@
-//! Storage layer for Asgard.
+//! Storage layer for Frontkeep.
 //!
 //! One connection abstraction (`Db`) over SQLite and Postgres via sqlx's `Any`
 //! driver. Schema is portable SQL; ids/timestamps/json are app-side TEXT so both

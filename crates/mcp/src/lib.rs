@@ -13,7 +13,7 @@
 //! extension) to each tool, so project-scoped tools (`request_resource`,
 //! `get_secret`, …) authorize the target project per [`AsgardMcp::resolve_project`]
 //! — a project id is never a spoofable argument. Over stdio there is no token; the
-//! project comes from `ASGARD_PROJECT` (local trust), passed as `default_project`.
+//! project comes from `FRONTKEEP_PROJECT` (local trust), passed as `default_project`.
 
 use std::sync::Arc;
 
@@ -60,7 +60,7 @@ pub struct AsgardMcp {
     registry: ProjectRegistry,
     workflow: Arc<WorkflowEngine>,
     provision: ProvisionService,
-    /// stdio/local fallback project (from `ASGARD_PROJECT`); `None` over HTTP,
+    /// stdio/local fallback project (from `FRONTKEEP_PROJECT`); `None` over HTTP,
     /// where the project comes from the authenticated key instead.
     default_project: Option<String>,
     tool_router: ToolRouter<Self>,
@@ -1407,7 +1407,7 @@ impl AsgardMcp {
         Ok(json!({
             "resource": rec,
             "next": format!(
-                "Asgard does not manage this infrastructure. Tag the underlying cloud resources \
+                "Frontkeep does not manage this infrastructure. Tag the underlying cloud resources \
                  `project={pid}` yourself — the cost source attributes spend by that tag. One link \
                  per cost source per project is enough.{feed} Unlink (record-only) with deprovision_resource."
             ),
@@ -1715,7 +1715,7 @@ impl AsgardMcp {
         Ok(json!({
             "tier": tier.as_str(),
             "files": files,
-            "next": "Each entry's `body` is the actual file content. Write each NEW file verbatim to its `path` (create directories as needed) — actually create the files, do not summarize or just describe them. If a file already exists (an AGENTS.md or CLAUDE.md in an existing repo), do NOT overwrite it: merge — keep the repo's guidance and add the Asgard sections it lacks (the project id, the MCP tools, the gateway rule). The .agent/ files are additive. Then call register_project.",
+            "next": "Each entry's `body` is the actual file content. Write each NEW file verbatim to its `path` (create directories as needed) — actually create the files, do not summarize or just describe them. If a file already exists (an AGENTS.md or CLAUDE.md in an existing repo), do NOT overwrite it: merge — keep the repo's guidance and add the Frontkeep sections it lacks (the project id, the MCP tools, the gateway rule). The .agent/ files are additive. Then call register_project.",
         })
         .to_string())
     }
@@ -2203,7 +2203,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Link pre-existing (brownfield) infrastructure to a project for cost attribution WITHOUT Asgard managing it: records a `linked` external resource whose declared cost source and monthly estimate flow into the project's cost rollup. Asgard never touches the infrastructure itself — tag the real cloud resources `project=<id>` so the source can attribute actuals. Unlink (record-only) with deprovision_resource. On a user token pass project_id; on a project key omit it."
+        description = "Link pre-existing (brownfield) infrastructure to a project for cost attribution WITHOUT Frontkeep managing it: records a `linked` external resource whose declared cost source and monthly estimate flow into the project's cost rollup. Frontkeep never touches the infrastructure itself — tag the real cloud resources `project=<id>` so the source can attribute actuals. Unlink (record-only) with deprovision_resource. On a user token pass project_id; on a project key omit it."
     )]
     async fn link_resource(
         &self,
@@ -2612,7 +2612,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Set up a repo on Asgard in one call: returns the agent-seed plan with every file's body inlined (AGENTS.md + the .agent/ coding and security standards for the repo's languages/work). Write each file to its path, then register_project. One shot — no seed_plan/seed_get loop."
+        description = "Set up a repo on Frontkeep in one call: returns the agent-seed plan with every file's body inlined (AGENTS.md + the .agent/ coding and security standards for the repo's languages/work). Write each file to its path, then register_project. One shot — no seed_plan/seed_get loop."
     )]
     async fn bootstrap(
         &self,
@@ -2629,18 +2629,18 @@ impl AsgardMcp {
     /// the seed → register loop. No arguments, so it expands without prompting.
     #[prompt(
         name = "bootstrap",
-        description = "Set up the current repo on Asgard: pull the AGENTS.md starting point + coding/security standards, then register the project."
+        description = "Set up the current repo on Frontkeep: pull the AGENTS.md starting point + coding/security standards, then register the project."
     )]
     async fn bootstrap_prompt(&self) -> Vec<PromptMessage> {
         vec![PromptMessage::new_text(
             PromptMessageRole::User,
-            "Set this repository up on Asgard now. Do it, don't describe it:\n\
+            "Set this repository up on Frontkeep now. Do it, don't describe it:\n\
              1. Call the `bootstrap` tool.\n\
              2. For every NEW file it returns, write the `body` verbatim to its `path` \
              (create directories as needed) — actually create the files on disk; do \
              not paraphrase or just summarize what the seed contains. If a file \
              already exists (e.g. this repo has an AGENTS.md or CLAUDE.md), merge \
-             instead of overwriting: keep the repo's guidance and add the Asgard \
+             instead of overwriting: keep the repo's guidance and add the Frontkeep \
              sections it lacks.\n\
              3. Call `register_project` to register this project — ask me for the \
              owner, budget, and data classification if you don't already have them.\n\
@@ -2659,7 +2659,7 @@ impl ServerHandler for AsgardMcp {
             .enable_tools()
             .enable_prompts()
             .build();
-        info.server_info = Implementation::new("asgard", env!("CARGO_PKG_VERSION"));
+        info.server_info = Implementation::new("frontkeep", env!("CARGO_PKG_VERSION"));
         info.instructions = Some(
             "Governance control plane. Connect with a user token to register projects \
              and manage every project you own/manage, or a project key scoped to \
@@ -2781,7 +2781,7 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(str::to_string);
     let origin = self_origin(&req);
-    // An unset $ASGARD_PAT expands to nothing in the client's `claude mcp add`, so
+    // An unset $FRONTKEEP_PAT expands to nothing in the client's `claude mcp add`, so
     // the stored header is `Bearer ` and the token arrives empty — the single most
     // common first-run failure. Name it instead of treating it as a bad key.
     let token = match token {
@@ -2791,7 +2791,7 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
                 StatusCode::UNAUTHORIZED,
                 format!(
                     "no bearer token on the request. If you added the MCP server with \
-                     `$ASGARD_PAT`, it was unset when the command ran (the value is baked in \
+                     `$FRONTKEEP_PAT`, it was unset when the command ran (the value is baked in \
                      at add-time). Mint a PAT at {origin} → Get Started and put it in the \
                      Authorization header."
                 ),
@@ -2988,7 +2988,7 @@ mod tests {
     async fn get_info_declares_tools_and_prompts() {
         let s = server(None).await;
         let info = s.get_info();
-        assert_eq!(info.server_info.name, "asgard");
+        assert_eq!(info.server_info.name, "frontkeep");
         assert!(info.capabilities.tools.is_some());
         assert!(info.capabilities.prompts.is_some());
     }

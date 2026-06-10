@@ -1,22 +1,22 @@
 ---
 sidebar_position: 6.2
-title: Migrate an app onto Asgard
+title: Migrate an app onto Frontkeep
 ---
 
-# Agent runbook: stand a collaborative app on Asgard
+# Agent runbook: stand a collaborative app on Frontkeep
 
 This is a machine-oriented, idempotent runbook for an agent told *"move our app
-onto Asgard."* The worked example is a real-time collaborative editor: a Node
+onto Frontkeep."* The worked example is a real-time collaborative editor: a Node
 service behind a load balancer, a Postgres metadata store, an S3 bucket of
 collaborative-document blobs, an HMAC key for signing collab tokens, and an
 Auth0 SPA + M2M pair for login. It is **standalone** — it used the predecessor
 platform only to *provision* infrastructure, so there is no runtime API to
-replace. This runbook reprovisions that footprint through Asgard's primitives and
+replace. This runbook reprovisions that footprint through Frontkeep's primitives and
 repoints the app at the new resources. Substitute your own app's footprint where
 it differs.
 
 Execute the steps in order. After each, run the verification and **do not proceed
-until it passes**. Everything here is provisioned through Asgard's MCP tools
+until it passes**. Everything here is provisioned through Frontkeep's MCP tools
 (`request_resource`, `get_secret`, `deprovision_resource`) against a registered
 project — the same governed path any agent uses.
 
@@ -30,9 +30,9 @@ touch the live app's data unattended.
 ## Why this is now possible
 
 The predecessor platform got this app running only after a string of manual
-workarounds. Asgard's primitives close each one — this runbook is the proof:
+workarounds. Frontkeep's primitives close each one — this runbook is the proof:
 
-| Predecessor gap | Asgard's close |
+| Predecessor gap | Frontkeep's close |
 |---|---|
 | Declared `grants:` silently dropped → runtime `AccessDenied` | `ecs-service` builds the task-role inline policy *from* `grants`; a declared grant is an effective grant |
 | Task role missing `kms:Decrypt` for the secret-wrapping key | `grants.kms_decrypt` is a first-class field; a secret grant without it is inert, so it ships together |
@@ -46,13 +46,13 @@ workarounds. Asgard's primitives close each one — this runbook is the proof:
 
 Stop and ask a human for any you cannot derive.
 
-- A **registered, active** Asgard project for the app and a project key (Step 0).
-- `VPC_ID`, `SUBNET_IDS` (≥2 AZs) — the existing network the app runs in. Asgard
+- A **registered, active** Frontkeep project for the app and a project key (Step 0).
+- `VPC_ID`, `SUBNET_IDS` (≥2 AZs) — the existing network the app runs in. Frontkeep
   never creates a VPC.
 - `CERT_ARN` — an ACM certificate for the app's hostname (required for the Auth0
   SPA; login cannot work over plain HTTP).
 - `AUTH0_TENANT` — the Auth0 tenant the SPA + M2M apps live in, and M2M
-  Management-API creds set on the Asgard process (see the
+  Management-API creds set on the Frontkeep process (see the
   [deploy runbook](./deploy-agent.md) Step 8).
 - The app's container image, built and pushed to the ECR repo from Step 2.
 
@@ -153,7 +153,7 @@ request_resource auth0-application { "name": "api", "app_type": "non_interactive
 >   `AUTH0_AUDIENCE`.
 >
 > An operator that wants these on *every* app sets them as `config.defaults` in
-> an `ASGARD_SERVICES_DIR` overlay (env-sourced via `${VAR}` / `${VAR:csv}`)
+> an `FRONTKEEP_SERVICES_DIR` overlay (env-sourced via `${VAR}` / `${VAR:csv}`)
 > rather than per request — the tenant-specific values stay in the deployment's
 > config, never in the catalog.
 
@@ -261,7 +261,7 @@ deploy_image { "resource_id": "<ecs-service id>", "image": "<ECR_URI>:sha-<new>"
 registers a new task-definition revision and rolls with circuit-breaker rollback.
 It stays self-service (no per-deploy approval) and returns the `provisioning`
 record; poll `get_resource` until `provisioned`. This is the whole CD loop —
-runner builds + pushes, Asgard cycles ECS, no AWS credentials on the runner.
+runner builds + pushes, Frontkeep cycles ECS, no AWS credentials on the runner.
 
 ## Done criteria
 

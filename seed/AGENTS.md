@@ -19,7 +19,7 @@ Do these in order. Stop as soon as you have enough context for the task in front
 
 You should be able to go from an empty repo to a working, governed component **without filing a ticket or waiting on a person.** If you can't, that is a gap — surface it (see the escalation list at the bottom).
 
-**Already have an `AGENTS.md` or `CLAUDE.md`?** Merge, don't replace. Keep the repo's existing guidance and add the Asgard sections it lacks — the project id, the MCP tools, the gateway rule. The `.agent/` files are additive.
+**Already have an `AGENTS.md` or `CLAUDE.md`?** Merge, don't replace. Keep the repo's existing guidance and add the Frontkeep sections it lacks — the project id, the MCP tools, the gateway rule. The `.agent/` files are additive.
 
 ---
 

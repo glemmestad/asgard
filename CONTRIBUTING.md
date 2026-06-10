@@ -1,6 +1,6 @@
-# Contributing to Asgard
+# Contributing to Frontkeep
 
-Thanks for your interest. Asgard is Apache-2.0 and accepts contributions under
+Thanks for your interest. Frontkeep is Apache-2.0 and accepts contributions under
 the [CLA](CLA.md) — opening a pull request constitutes acceptance.
 
 ## Ground rules

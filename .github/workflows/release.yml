@@ -68,7 +68,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Native install path: cross-build the single `asgard` binary (server + CLI) for
+  # Native install path: cross-build the single `frontkeep` binary (server + CLI) for
   # macOS and Linux and attach versionless tarballs + checksums to the release
   # semantic-release already created. Gated on `published` and pinned to the
   # version-bumped tag — same contract as the image job above, so it fires despite
@@ -100,11 +100,11 @@ jobs:
           ref: v${{ needs.release.outputs.version }}
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: asgard
+          bin: frontkeep
           target: ${{ matrix.target }}
-          # Versionless names so `releases/latest/download/asgard-<target>.tar.gz`
+          # Versionless names so `releases/latest/download/frontkeep-<target>.tar.gz`
           # is a stable URL for the installer.
-          archive: asgard-$target
+          archive: frontkeep-$target
           tar: all
           checksum: sha256
           ref: refs/tags/v${{ needs.release.outputs.version }}

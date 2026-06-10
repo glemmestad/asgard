@@ -1,4 +1,4 @@
-name: asgard-eval
+name: frontkeep-eval
 
 on: [pull_request]
 
@@ -9,12 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Run Asgard eval gate
+      - name: Run Frontkeep eval gate
         env:
-          ASGARD_URL: ${{ secrets.ASGARD_URL }}
-          ASGARD_TOKEN: ${{ secrets.ASGARD_TOKEN }}
+          FRONTKEEP_URL: ${{ secrets.FRONTKEEP_URL }}
+          FRONTKEEP_TOKEN: ${{ secrets.FRONTKEEP_TOKEN }}
         run: |
-          asgard eval run \
+          frontkeep eval run \
             --suite eval.yaml \
             --cases cases.json \
             --comment \

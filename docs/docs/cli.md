@@ -3,7 +3,7 @@ sidebar_position: 2.3
 title: Use the CLI
 ---
 
-# The Asgard CLI
+# The Frontkeep CLI
 
 The `asgard` binary is both the server and a full command-line client. The CLI is
 a **PAT-authenticated MCP client**: it talks to a deployment's `/mcp` endpoint
@@ -23,16 +23,16 @@ profile:
 
 ```bash
 # Save a reusable profile (prompts for the PAT if --pat is omitted):
-asgard --url https://asgard.example login
+frontkeep --url https://asgard.example login
 
 # …or pass it ad hoc / via the environment:
-asgard --url https://asgard.example --pat asg_pat_… project ls
-export ASGARD_URL=https://asgard.example ASGARD_PAT=asg_pat_…
+frontkeep --url https://asgard.example --pat asg_pat_… project ls
+export FRONTKEEP_URL=https://asgard.example FRONTKEEP_PAT=asg_pat_…
 ```
 
 Profiles live in `~/.config/asgard/config.toml`. Settings resolve in order:
 **flag → environment → selected profile → built-in default**. Pick a profile with
-`--profile <name>` (or `ASGARD_PROFILE`); `asgard login` writes the one named by
+`--profile <name>` (or `FRONTKEEP_PROFILE`); `frontkeep login` writes the one named by
 `--profile` (default `default`).
 
 A user PAT acts across **every project you own or manage** — register new ones,
@@ -41,13 +41,13 @@ read cost, mint keys — with no per-project credential.
 ## Discover everything
 
 ```bash
-asgard tools                      # every tool the server exposes
-asgard call <tool> --json '{…}'   # call any tool directly (raw arguments)
-asgard call cost_by --arg by=group
+frontkeep tools                      # every tool the server exposes
+frontkeep call <tool> --json '{…}'   # call any tool directly (raw arguments)
+frontkeep call cost_by --arg by=group
 ```
 
 `call` is the engine; every typed subcommand below is sugar over it, so a new
-server tool is reachable via `asgard call` the day it ships. `--arg key=value`
+server tool is reachable via `frontkeep call` the day it ships. `--arg key=value`
 coerces values as JSON when they parse (`budget_usd=100` → number,
 `spec={"size":1}` → object) and as strings otherwise; `--json -` reads stdin.
 
@@ -69,20 +69,20 @@ coerces values as JSON when they parse (`budget_usd=100` → number,
 Examples:
 
 ```bash
-asgard project register --name "Billing API" --manager lead@corp.example --group platform
-asgard project ls
-asgard cost tree
-asgard resource request --project proj-2026-0001 --resource-type s3-bucket --name assets
-asgard secret get --project proj-2026-0001 --name db-password
+frontkeep project register --name "Billing API" --manager lead@corp.example --group platform
+frontkeep project ls
+frontkeep cost tree
+frontkeep resource request --project proj-2026-0001 --resource-type s3-bucket --name assets
+frontkeep secret get --project proj-2026-0001 --name db-password
 ```
 
 ## Output formats
 
-`-o table` (default, human), `-o json`, or `-o yaml` (also `ASGARD_OUTPUT`). Use
+`-o table` (default, human), `-o json`, or `-o yaml` (also `FRONTKEEP_OUTPUT`). Use
 `-o json` for scripting:
 
 ```bash
-asgard -o json project ls | jq -r '.[].project_id'
+frontkeep -o json project ls | jq -r '.[].project_id'
 ```
 
 ## Beyond the agent surface
@@ -92,14 +92,14 @@ asgard -o json project ls | jq -r '.[].project_id'
   and calls the gateway:
 
   ```bash
-  asgard chat --project proj-2026-0001 --model model:default/mock --message "hello"
+  frontkeep chat --project proj-2026-0001 --model model:default/mock --message "hello"
   ```
 
 - **Seed a repo to disk.** The `bootstrap` tool returns file bodies; the CLI
   writes them:
 
   ```bash
-  asgard seed apply --languages rust --task "build a service" --write
+  frontkeep seed apply --languages rust --task "build a service" --write
   # dry-run by default; --write creates AGENTS.md + .agent/** ; --force overwrites
   ```
 
@@ -108,19 +108,19 @@ asgard -o json project ls | jq -r '.[].project_id'
   `publish --dir` bundles a local skill folder (each file base64-encoded):
 
   ```bash
-  asgard skills publish --dir ./my-skill            # or --bundle <json|->
-  asgard skills install <id> --dest claude-code     # writes into ~/.claude/skills/<name>
-  asgard skills export <id> --runtime codex --out ./out
+  frontkeep skills publish --dir ./my-skill            # or --bundle <json|->
+  frontkeep skills install <id> --dest claude-code     # writes into ~/.claude/skills/<name>
+  frontkeep skills export <id> --runtime codex --out ./out
   # install writes by default; --dry-run previews, --force overwrites
   ```
 
 - **Shell completions.**
 
   ```bash
-  asgard completions zsh > ~/.zfunc/_asgard
+  frontkeep completions zsh > ~/.zfunc/_frontkeep
   ```
 
-- **Offline manifest validation** (no server): `asgard validate service.yaml`.
+- **Offline manifest validation** (no server): `frontkeep validate service.yaml`.
 
 ## Exit codes
 

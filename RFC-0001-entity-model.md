@@ -7,7 +7,7 @@
 
 **Goals**
 
-- A typed entity graph that is *Backstage-shaped where it helps* (so federation and existing `catalog-info.yaml` muscle memory transfer) and *CMDB-compatible* (CI-like records + a relationship graph) so Asgard can stand alone or later sync to a CMDB.
+- A typed entity graph that is *Backstage-shaped where it helps* (so federation and existing `catalog-info.yaml` muscle memory transfer) and *CMDB-compatible* (CI-like records + a relationship graph) so Frontkeep can stand alone or later sync to a CMDB.
 - **Source of truth is YAML files in Git repos** (federated, dev-led ownership), reconciled into a catalog store.
 - **Pull-based reconciliation so deletes propagate** — explicitly avoiding Backstage's well-known catalog-drift failure where removed files leave ghost entities.
 - Identical behavior on SQLite and Postgres (storage is an implementation detail behind a trait).
@@ -88,7 +88,7 @@ The store (SQLite or Postgres, behind the `Store` trait) holds three core tables
 
 ## 6. Stable project id
 
-A `Project` gets a human-readable **stable id** of the form `proj-YYYY-NNNN` (year + zero-padded monotonic counter), minted once at registration and never reused or renamed. It is the join key for cost attribution (`project=<id>` tag), audit, and classification, and it survives the entity through `decommissioned`/`archived`. The internal `uid` (ULID) is separate and used for relational integrity. (The predecessor's `<prefix>-YYYY-NNNN` convention validated this pattern; Asgard generalizes the prefix to `proj`.)
+A `Project` gets a human-readable **stable id** of the form `proj-YYYY-NNNN` (year + zero-padded monotonic counter), minted once at registration and never reused or renamed. It is the join key for cost attribution (`project=<id>` tag), audit, and classification, and it survives the entity through `decommissioned`/`archived`. The internal `uid` (ULID) is separate and used for relational integrity. (The predecessor's `<prefix>-YYYY-NNNN` convention validated this pattern; Frontkeep generalizes the prefix to `proj`.)
 
 ## 7. Reconciliation (the anti-drift design)
 
@@ -105,9 +105,9 @@ Reconciliation is idempotent and source-scoped: re-running with no changes is a 
 
 ## 8. Backstage & CMDB interop
 
-- **Backstage:** *emit* `catalog-info.yaml` for any entity (one-way). No ingest of Backstage's processing pipeline, no bidirectional sync (§3.10 of the brief). Asgard *can* read a repo's existing `catalog-info.yaml` as one more manifest source, but it owns its own `spec`.
+- **Backstage:** *emit* `catalog-info.yaml` for any entity (one-way). No ingest of Backstage's processing pipeline, no bidirectional sync (§3.10 of the brief). Frontkeep *can* read a repo's existing `catalog-info.yaml` as one more manifest source, but it owns its own `spec`.
 - **CMDB:** the `entities` + `relations` tables are CI-records + relationship-graph shaped, so a future connector can map entities→CIs and relations→CI relationships without remodeling.
 
 ## 9. Validation
 
-Each kind has a JSON Schema in `schemas/<kind>.schema.json`. Manifests are validated at ingestion and by `asgard validate` / `asgard agent new`. Schemas are the readable contract operators inspect before deploying (brief §3.5). Validation failures are surfaced as PR comments by the Git integration and never silently dropped.
+Each kind has a JSON Schema in `schemas/<kind>.schema.json`. Manifests are validated at ingestion and by `frontkeep validate` / `frontkeep agent new`. Schemas are the readable contract operators inspect before deploying (brief §3.5). Validation failures are surfaced as PR comments by the Git integration and never silently dropped.

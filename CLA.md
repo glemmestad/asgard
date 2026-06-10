@@ -1,6 +1,6 @@
 # Contributor License Agreement (CLA)
 
-Asgard is open source under the Apache License 2.0. To keep the project's
+Frontkeep is open source under the Apache License 2.0. To keep the project's
 licensing options open (including the right to offer the software under
 alternative terms as part of an open-core model), all contributions are
 accepted under the following Contributor License Agreement. By submitting a

@@ -3,30 +3,30 @@ sidebar_position: 6.3
 title: Databricks (in front of)
 ---
 
-# Databricks: Asgard sits in front of it
+# Databricks: Frontkeep sits in front of it
 
-Asgard **orchestrates** Databricks — it does not replace it, and Databricks does
-not replace Asgard. Databricks runs the lakehouse, Spark, Unity Catalog, and
-serves models. Asgard is the org-wide, cross-vendor, **agent-first control plane**
+Frontkeep **orchestrates** Databricks — it does not replace it, and Databricks does
+not replace Frontkeep. Databricks runs the lakehouse, Spark, Unity Catalog, and
+serves models. Frontkeep is the org-wide, cross-vendor, **agent-first control plane**
 that sits in front: it governs *who* gets *what*, attributes the cost, and fronts
 the model calls — for Databricks exactly as it does for AWS, Auth0, and OpenAI.
 
-This integration is built entirely from Asgard's existing primitives — Databricks
+This integration is built entirely from Frontkeep's existing primitives — Databricks
 is "just another tenant of the building," wired three ways:
 
 ## 1. Inference — in front of Databricks Model Serving
 
-Model calls flow **agent → Asgard's gateway → Databricks Model Serving / Foundation
-Model APIs**. The project gets an Asgard virtual key, never the Databricks token.
+Model calls flow **agent → Frontkeep's gateway → Databricks Model Serving / Foundation
+Model APIs**. The project gets an Frontkeep virtual key, never the Databricks token.
 Every call is budget-checked, Cedar-policy- and data-class-gated, guardrailed,
 kill-switchable, audited, and **cost-attributed per project**.
 
 This sits in front of even Databricks' own **Mosaic AI Gateway** (which is
-per-workspace model governance): Asgard is the layer above it that spans projects
+per-workspace model governance): Frontkeep is the layer above it that spans projects
 and vendors and exposes an MCP control plane to agents.
 
 The `databricks` inference module is a **plug-in manifest** (`services/databricks/
-service.yaml`), the same shape as LiteLLM — no Databricks-specific code in Asgard's
+service.yaml`), the same shape as LiteLLM — no Databricks-specific code in Frontkeep's
 core. It's `kind: openai-compatible` with a `chat_path` override, because Databricks
 queries a served model at `{host}/serving-endpoints/{endpoint-name}/invocations`.
 
@@ -46,11 +46,11 @@ curl -sS https://<asgard-host>/api/gateway/chat \
 
 ## 2. Provisioning — Databricks resources through the gate
 
-Databricks resources are provisioned **through Asgard** via the universal
+Databricks resources are provisioned **through Frontkeep** via the universal
 `terraform` connector + the Databricks Terraform provider (`modules/databricks/*`).
 Same registration gate, classification floor, approval tier, project tagging, and
 audit as AWS. The TF subprocess inherits `DATABRICKS_HOST`/`DATABRICKS_TOKEN` from
-Asgard's env — no connector code.
+Frontkeep's env — no connector code.
 
 | Service | Resource | Tier |
 |---|---|---|
@@ -63,11 +63,11 @@ Each stamps the immutable `project=<id>` tag, so spend attributes back (below).
 Provisioning a serving endpoint **closes the loop** with §1: add its name to the
 `databricks` inference module and the gateway fronts it.
 
-## 3. Cost — Databricks spend in Asgard's single pane
+## 3. Cost — Databricks spend in Frontkeep's single pane
 
 The `databricks-billing` cost source reads `system.billing.usage` (joined to
 `system.billing.list_prices`) via the SQL Statement Execution API, filtered to the
-`project` custom tag — so Databricks DBU spend lands **per project** in Asgard's
+`project` custom tag — so Databricks DBU spend lands **per project** in Frontkeep's
 cost dashboard next to AWS and model spend. Set:
 ```
 DATABRICKS_WAREHOUSE_ID=<a SQL warehouse id>   # runs the billing query
@@ -83,13 +83,13 @@ Unity Catalog governs *data*; Mosaic AI Gateway governs *one workspace's* models
 Neither is a cross-vendor service orchestrator, neither attributes spend across
 AWS + Auth0 + OpenAI + Databricks in one place, and neither exposes an agent MCP
 control plane that turns "register → provision → use" into governed tool calls.
-That's Asgard's job — in front.
+That's Frontkeep's job — in front.
 
 ## Setup checklist
 
 1. A Databricks **PAT** (`dapi…`) for a service principal that can create
    warehouses/jobs/serving endpoints/UC volumes and `SELECT` on `system.billing`.
-2. Env on the Asgard process (`.env`): `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and
+2. Env on the Frontkeep process (`.env`): `DATABRICKS_HOST`, `DATABRICKS_TOKEN`, and
    `DATABRICKS_WAREHOUSE_ID` (for the cost source) — the standard Databricks vars.
 3. Edit `services/databricks/service.yaml` `models[]` to your serving endpoints +
    pricing.

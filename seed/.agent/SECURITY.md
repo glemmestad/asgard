@@ -20,13 +20,13 @@ Rules:
 ## Secrets
 
 - **Never** put a secret in code, `.env`, a manifest, a commit message, a PR description, an issue, or a chat message.
-- Request secrets through Asgard (`request_resource`); the platform stores them and returns a reference, not the value.
+- Request secrets through Frontkeep (`request_resource`); the platform stores them and returns a reference, not the value.
 - Fetch secret *values* at runtime through the approved secret path. References (ARNs / names / handles) may live in config; values never do.
 - Rotate credentials on a schedule. The project owner is accountable.
 
 ## Identity and least privilege
 
-- **The user's identity flows through the agent.** When an AI agent calls an Asgard tool on a user's behalf, it acts as that authenticated user. There is no shared "AI service account" that bypasses identity, and there is no anonymous call.
+- **The user's identity flows through the agent.** When an AI agent calls an Frontkeep tool on a user's behalf, it acts as that authenticated user. There is no shared "AI service account" that bypasses identity, and there is no anonymous call.
 - Grant the minimum access a task needs. Scope access to the specific resources a component owns; no wildcard (`*`) grants without explicit, written justification.
 - Treat agent-generated code as untrusted from the platform's perspective: it must not be able to rewrite the control plane, escalate its own privileges, or reach resources outside its project.
 
@@ -37,8 +37,8 @@ Rules:
 
 ## The gateway and shadow AI
 
-- **Every model call goes through the Asgard gateway** — mint the project key with `gateway_credential`, call the gateway endpoint (`POST /api/gateway/chat`). The gateway enforces budgets, the data-class × model policy, guardrails (secret/PII/prompt-injection detection), the audit trail, and the kill switch. A direct provider call has none of that.
-- **Shadow AI** — proprietary or sensitive data going to an unapproved model — is the exact failure mode Asgard exists to prevent. Do not do it, and do not help a user do it, even when it would be faster.
+- **Every model call goes through the Frontkeep gateway** — mint the project key with `gateway_credential`, call the gateway endpoint (`POST /api/gateway/chat`). The gateway enforces budgets, the data-class × model policy, guardrails (secret/PII/prompt-injection detection), the audit trail, and the kill switch. A direct provider call has none of that.
+- **Shadow AI** — proprietary or sensitive data going to an unapproved model — is the exact failure mode Frontkeep exists to prevent. Do not do it, and do not help a user do it, even when it would be faster.
 - If a model you want isn't allowlisted for your data class, that is a signal to stop and ask, not to find another route.
 
 ## Execution limits

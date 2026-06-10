@@ -1,4 +1,4 @@
-//! The Asgard gateway: every model call routes through here. Per-project virtual
+//! The Frontkeep gateway: every model call routes through here. Per-project virtual
 //! keys, budgets, kill switch, data-class×model policy, regex guardrails, full
 //! audit with a propagated `x-asgard-trace-id`, and cost attribution (brief §4.2).
 //! Non-optional, non-pluggable spine.

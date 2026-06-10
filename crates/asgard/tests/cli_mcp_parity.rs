@@ -1,6 +1,6 @@
 //! CLI ↔ MCP lock-step gate.
 //!
-//! Asgard is "agents first, humans second": every capability is an MCP tool, and
+//! Frontkeep is "agents first, humans second": every capability is an MCP tool, and
 //! the CLI is a thin typed client over those same tools. The two surfaces must
 //! stay in step — a tool that an agent can call over `/mcp` but a human can't
 //! reach with a first-class `asgard …` subcommand (or vice-versa) is a silent

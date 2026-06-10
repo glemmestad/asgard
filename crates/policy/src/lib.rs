@@ -1,4 +1,4 @@
-//! Authorization for Asgard (RFC-0002 Part A). One `PolicyEngine` trait queried
+//! Authorization for Frontkeep (RFC-0002 Part A). One `PolicyEngine` trait queried
 //! by gateway, catalog, workflow, and runtime. Cedar is the in-tree default;
 //! `PolicyEngine` is the seam an OPA/Rego backend would implement.
 

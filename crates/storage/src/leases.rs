@@ -1,4 +1,4 @@
-//! Cross-instance coordination leases over the shared DB, so Asgard is safe to
+//! Cross-instance coordination leases over the shared DB, so Frontkeep is safe to
 //! run with more than one replica. A lease is a named row one process holds until
 //! its TTL expires; whoever holds it owns the work it guards — a background-loop
 //! tick, or a Terraform apply for one resource. Acquire/renew is a single

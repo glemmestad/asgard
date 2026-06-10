@@ -5,7 +5,7 @@ title: Getting started
 
 # Getting started
 
-:::tip You need a running Asgard instance
+:::tip You need a running Frontkeep instance
 Almost certainly your company already gave you one — that's how you're reading
 these docs. Use its URL wherever you see `<host>` below. Standing one up
 yourself? [Deploy your own](#deploy-your-own) is at the bottom.
@@ -17,9 +17,9 @@ project, and provision what it needs — all governed and cost-attributed.
 **Two front doors, one token.** Every capability is reachable two ways, and the
 same `asg_pat_…` token authenticates both:
 
-- **Your agent (MCP)** — Asgard's capabilities are MCP tools, so you don't type
+- **Your agent (MCP)** — Frontkeep's capabilities are MCP tools, so you don't type
   commands, you *ask your agent* in plain English and it calls them. This is the
-  primary path: the same agent building your project drives Asgard.
+  primary path: the same agent building your project drives Frontkeep.
 - **The CLI** — the `asgard` binary talks to the same control plane, for humans,
   scripts, and CI. Composable, scriptable, no agent required.
 
@@ -40,10 +40,10 @@ from step 1.
 
 ### Your agent (MCP)
 
-Add Asgard's MCP server, pasting your token in as the value. For Claude Code:
+Add Frontkeep's MCP server, pasting your token in as the value. For Claude Code:
 
 ```sh
-claude mcp add --transport http asgard https://<host>/mcp \
+claude mcp add --transport http frontkeep https://<host>/mcp \
   --header "Authorization: Bearer asg_pat_paste_your_token_here"
 ```
 
@@ -65,16 +65,16 @@ That fetches the static binary for your OS/arch and drops it in `~/.local/bin`
 profile once:
 
 ```bash
-asgard login --url https://<host>   # prompts for the PAT, validates it, saves the profile
-asgard project ls                   # verify — lists the projects you own or manage
+frontkeep login --url https://<host>   # prompts for the PAT, validates it, saves the profile
+frontkeep project ls                   # verify — lists the projects you own or manage
 ```
 
 …or export environment variables instead (handy in CI):
 
 ```bash
-export ASGARD_URL="https://<host>"
-export ASGARD_PAT="asg_pat_paste_your_token_here"
-asgard project ls
+export FRONTKEEP_URL="https://<host>"
+export FRONTKEEP_PAT="asg_pat_paste_your_token_here"
+frontkeep project ls
 ```
 
 Full reference: [Install the CLI](./install.md) and [Use the CLI](./cli.md).
@@ -83,7 +83,7 @@ Full reference: [Install the CLI](./install.md) and [Use the CLI](./cli.md).
 
 `cd` into your project — if it's brand new, `git init` first. Then tell your agent:
 
-> **"Pull the Asgard seed into this repo."**
+> **"Pull the Frontkeep seed into this repo."**
 
 In Claude Code there's a shortcut for this exact step — the slash command
 **`/mcp__asgard__bootstrap`** (other clients namespace it differently). Either way
@@ -92,7 +92,7 @@ agent reads first) and the `.agent/` coding and security standards in one shot, 
 writes them in. From here your agent builds to your company's conventions, and the
 live, versioned standards stay available over MCP.
 
-**From the CLI:** `asgard seed apply --languages python --task "what you're building" --write`
+**From the CLI:** `frontkeep seed apply --languages python --task "what you're building" --write`
 writes the same `AGENTS.md` + `.agent/**` into the current repo.
 
 ## 4. Register the project
@@ -100,22 +100,22 @@ writes the same `AGENTS.md` + `.agent/**` into the current repo.
 The gate: nothing provisions or spends until a project is registered. Tell your
 agent:
 
-> **"Register this project with Asgard."**
+> **"Register this project with Frontkeep."**
 
 It asks you for whatever it needs — owner, manager, cost-center, data
 classification, budget — and mints a `proj-YYYY-NNNN` id. You're the owner, so
 you can provision it right away.
 
-**From the CLI:** `asgard project register --name "My Service" --manager you@corp.example --group platform --classification poc`
+**From the CLI:** `frontkeep project register --name "My Service" --manager you@corp.example --group platform --classification poc`
 
 ## 5. See what you can provision
 
-> **"What can I provision through Asgard?"**
+> **"What can I provision through Frontkeep?"**
 
 Storage, secrets, databases, compute, an LLM gateway — whatever your operator has
 enabled.
 
-**From the CLI:** `asgard catalog services`
+**From the CLI:** `frontkeep catalog services`
 
 ## 6. Provision what the project needs
 
@@ -126,13 +126,13 @@ cost-bearing ones (databases, compute) route to a manager for approval.
 
 > **"Give this project a private S3 bucket for file storage."**
 
-**From the CLI:** `asgard resource request --project proj-2026-0001 --resource-type s3-bucket --name file-storage`
+**From the CLI:** `frontkeep resource request --project proj-2026-0001 --resource-type s3-bucket --name file-storage`
 
 **An LLM key — for your application's inference:**
 
 > **"Mint this project's LLM key."**
 
-**From the CLI:** `asgard project credential proj-2026-0001`
+**From the CLI:** `frontkeep project credential proj-2026-0001`
 
 :::caution This key is for app inference, not your dev tools
 The project LLM key exists so your **deployed application** can call a model
@@ -140,7 +140,7 @@ through the governed gateway — budget, the data-class × model policy, guardra
 audit, and the kill switch all apply, and the spend lands on this project.
 
 It is **not** a general-purpose key for your coding assistant, your terminal, or
-ad-hoc chat. Your coding agent already talks to Asgard's *control plane* over MCP;
+ad-hoc chat. Your coding agent already talks to Frontkeep's *control plane* over MCP;
 it does not use this key. If you just want to experiment with a model yourself,
 that's not what this is. Mint it when the product itself needs to query an LLM.
 :::
@@ -186,8 +186,8 @@ Every model call and resource is attributed to the project (and its owner /
 manager / group). To stop everything instantly, tell your agent to **kill the
 project** — the next gateway call is rejected and no further spend can land.
 
-**From the CLI:** `asgard cost project proj-2026-0001` (full spend) or
-`asgard cost report --by group` (rolled up by dimension).
+**From the CLI:** `frontkeep cost project proj-2026-0001` (full spend) or
+`frontkeep cost report --by group` (rolled up by dimension).
 
 ## Where to go next
 
@@ -202,15 +202,15 @@ project** — the next gateway call is rejected and no further spend can land.
 ## Deploy your own
 
 Most readers can skip this — you're already on a company instance. To stand one
-up, Asgard is a single binary; the default path needs only a Git token and SQLite:
+up, Frontkeep is a single binary; the default path needs only a Git token and SQLite:
 
 ```sh
 # Docker (SQLite, embedded UI)
-docker run -p 8080:8080 -e ASGARD_GIT_TOKEN=ghp_xxx ghcr.io/asgard/asgard:latest
+docker run -p 8080:8080 -e FRONTKEEP_GIT_TOKEN=ghp_xxx ghcr.io/asgard/asgard:latest
 
 # native binary — same install one-liner as the CLI above (macOS/Linux), then run it
 curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/install.sh | sh
-asgard serve --database-url sqlite://asgard.db
+frontkeep serve --database-url sqlite://asgard.db
 
 # or from source
 cargo run -p asgard -- serve --database-url sqlite://asgard.db

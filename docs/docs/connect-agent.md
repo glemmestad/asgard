@@ -3,15 +3,15 @@ sidebar_position: 2.2
 title: Connect an agent (MCP)
 ---
 
-# Connect an agent to Asgard
+# Connect an agent to Frontkeep
 
-This is the **user** side: you have an Asgard instance running (someone deployed
+This is the **user** side: you have an Frontkeep instance running (someone deployed
 it — see the [operator guide](./deploy.md)) and you want to point your coding
-agent at it and start building. Asgard's MCP server is the **control plane** —
+agent at it and start building. Frontkeep's MCP server is the **control plane** —
 your agent discovers services, registers projects, provisions resources, and
-fetches the credentials Asgard mints, all by invoking MCP tools.
+fetches the credentials Frontkeep mints, all by invoking MCP tools.
 
-You need two things: the **base URL** of the Asgard instance and a credential.
+You need two things: the **base URL** of the Frontkeep instance and a credential.
 There are two kinds, and the difference matters:
 
 - **User token** (`asg_pat_…`) — a long-lived credential tied to *you*. One token
@@ -21,18 +21,18 @@ There are two kinds, and the difference matters:
 - **Project key** (`asg_…`) — scoped to a *single* registered project. Use it for
   a deployed app or CI that lives in one project. Minted per project.
 
-> **Control plane vs. service usage.** The Asgard MCP is the control plane:
+> **Control plane vs. service usage.** The Frontkeep MCP is the control plane:
 > register/manage projects, request/manage services, read cost, and fetch the
-> credentials Asgard minted. *Using* a provisioned service — calling an LLM,
+> credentials Frontkeep minted. *Using* a provisioned service — calling an LLM,
 > reading a bucket, hitting a DB — is **service usage**: it uses that service's
-> own credential, out-of-band from Asgard. A user token never calls a service.
+> own credential, out-of-band from Frontkeep. A user token never calls a service.
 > In particular, **inference does not go through MCP** (see
 > [Calling models](#calling-models-the-inference-path) below).
 
 ## Connect your client
 
-Asgard exposes MCP over **Streamable HTTP at `https://<host>/mcp`**, authenticated
-with your **user token** as a bearer credential. Asgard's `/mcp` uses bearer-PAT
+Frontkeep exposes MCP over **Streamable HTTP at `https://<host>/mcp`**, authenticated
+with your **user token** as a bearer credential. Frontkeep's `/mcp` uses bearer-PAT
 auth (not OAuth), so the token is supplied by the client at setup rather than
 prompted on first connect. How it's supplied differs per client — see each below.
 
@@ -44,19 +44,19 @@ each client.
 
 `claude mcp add` **bakes the header value at add-time** — the shell expands the
 token then and stores it in `~/.claude.json`. So put the real token in the command;
-an unset `$ASGARD_PAT` would silently store an empty bearer and every call would
+an unset `$FRONTKEEP_PAT` would silently store an empty bearer and every call would
 fail with `401`:
 
 ```sh
-claude mcp add --transport http asgard https://<host>/mcp \
+claude mcp add --transport http frontkeep https://<host>/mcp \
   --header "Authorization: Bearer asg_pat_your_user_token"
 ```
 
 To keep the token out of `~/.claude.json`, export it (`export
-ASGARD_PAT=asg_pat_…`) and use `$ASGARD_PAT` in the header instead — but only if
+FRONTKEEP_PAT=asg_pat_…`) and use `$FRONTKEEP_PAT` in the header instead — but only if
 it's set in the shell you run the command in, since it's expanded immediately.
 
-Then `claude mcp list` should show `asgard` connected, and the Asgard tools
+Then `claude mcp list` should show `asgard` connected, and the Frontkeep tools
 (`list_services`, `register_project`, `request_resource`, `seed_plan`, …) are
 available in the session.
 
@@ -68,7 +68,7 @@ environment at call time, so the token never lands in the file:
 ```toml
 [mcp_servers.asgard]
 url = "https://<host>/mcp"
-bearer_token_env_var = "ASGARD_PAT"
+bearer_token_env_var = "FRONTKEEP_PAT"
 ```
 
 ### Cursor / generic Streamable-HTTP clients
@@ -81,7 +81,7 @@ project `.cursor/mcp.json`):
   "mcpServers": {
     "asgard": {
       "url": "https://<host>/mcp",
-      "headers": { "Authorization": "Bearer ${ASGARD_PAT}" }
+      "headers": { "Authorization": "Bearer ${FRONTKEEP_PAT}" }
     }
   }
 }
@@ -103,7 +103,7 @@ For a local instance, run the server over stdio instead of HTTP — no token nee
 (local trust); set the default project via env:
 
 ```sh
-ASGARD_PROJECT=proj-2026-0001 asgard mcp
+FRONTKEEP_PROJECT=proj-2026-0001 frontkeep mcp
 ```
 
 Wire it as a stdio MCP server in your client (command `asgard`, args `mcp`).
@@ -114,7 +114,7 @@ Wire it as a stdio MCP server in your client (command `asgard`, args `mcp`).
   "Create a PAT"). It's shown once; store it like a password. Revoke it any time.
   This is the agent credential: it can register projects and acts as you across
   the projects you own or manage. On a fresh deploy with no users yet, the
-  operator mints the first one with `asgard admin bootstrap` (see
+  operator mints the first one with `frontkeep admin bootstrap` (see
   [Deploy → The first credential](deploy.md#the-first-credential)).
 - **Project key** — minted per **registered project** (dashboard, or your agent
   calling `gateway_credential`). Use it for an app/CI scoped to one project, or as
@@ -195,7 +195,7 @@ a provider SDK directly.
 - **`401` on every call** — the bearer token must be a valid **user token**
   (`asg_pat_…`) or **project key** (`asg_…`), not a human session token. Re-mint
   one in the dashboard.
-- **`404` on `/mcp`** — wrong path; it's exactly `/mcp` on the Asgard host.
+- **`404` on `/mcp`** — wrong path; it's exactly `/mcp` on the Frontkeep host.
 - **"project_id is required for a user token"** — a user token isn't scoped to one
   project, so project-scoped tools need you to name which one.
 - **"not authorized for project …"** — you named a project you don't own or

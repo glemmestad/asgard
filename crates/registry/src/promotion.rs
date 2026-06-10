@@ -139,7 +139,7 @@ impl ClassificationRequirements {
 
 /// The machine verdict for a promotion to `target`. `evidence_complete` gates
 /// auto-approval; `exception_signals` force a human even when evidence is
-/// complete; `unverified_signals` are the policy's exception triggers Asgard has
+/// complete; `unverified_signals` are the policy's exception triggers Frontkeep has
 /// no data source for yet (surfaced honestly rather than silently passed).
 #[derive(Debug, Clone, Serialize)]
 pub struct EvidenceVerdict {
@@ -169,7 +169,7 @@ pub struct PromotionChecklist {
     pub verdict: Option<EvidenceVerdict>,
 }
 
-/// Exception signals the policy lists but Asgard cannot machine-check: they need
+/// Exception signals the policy lists but Frontkeep cannot machine-check: they need
 /// usage/exposure telemetry or an out-of-band human report that the control
 /// plane doesn't have. Emitted on every verdict so the gate is honest about what
 /// it didn't verify rather than implying a clean pass.

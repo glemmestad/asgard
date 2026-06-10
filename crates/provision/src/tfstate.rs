@@ -1,4 +1,4 @@
-//! Durable Terraform state, stored in Asgard's own DB (SQLite or Postgres) so it
+//! Durable Terraform state, stored in Frontkeep's own DB (SQLite or Postgres) so it
 //! survives ephemeral compute with no external backend (no S3, no EFS). The
 //! terraform connector snapshots each resource's `terraform.tfstate` here around
 //! every apply/destroy. Values are envelope-encrypted (AES-256-GCM) with the

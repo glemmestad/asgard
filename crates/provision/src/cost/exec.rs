@@ -1,7 +1,7 @@
 //! Exec source: the open escape hatch for any billing feed. Runs an
 //! operator-configured command with `--project <id> --start <s> --end <e>`; the
 //! command's stdout must be a bare USD number (or JSON `{"usd": <n>}`). Lets a
-//! site attribute cost from a billing system Asgard has no native adapter for.
+//! site attribute cost from a billing system Frontkeep has no native adapter for.
 
 use async_trait::async_trait;
 use tokio::process::Command;

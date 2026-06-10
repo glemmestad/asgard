@@ -82,12 +82,15 @@ pub trait Runtime: Send + Sync {
 
 fn caps_env(spec: &InvocationSpec) -> Vec<(String, String)> {
     vec![
-        ("ASGARD_MAX_STEPS".into(), spec.caps.max_steps.to_string()),
         (
-            "ASGARD_BUDGET_USD".into(),
+            "FRONTKEEP_MAX_STEPS".into(),
+            spec.caps.max_steps.to_string(),
+        ),
+        (
+            "FRONTKEEP_BUDGET_USD".into(),
             format!("{}", spec.caps.budget_usd),
         ),
-        ("ASGARD_TRACE_ID".into(), spec.trace_id.clone()),
+        ("FRONTKEEP_TRACE_ID".into(), spec.trace_id.clone()),
     ]
 }
 

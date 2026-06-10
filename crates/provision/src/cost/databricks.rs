@@ -2,7 +2,7 @@
 //! `system.billing.usage` system table via the SQL Statement Execution API and
 //! filtered to the `project=<id>` custom tag that the connector stamps on every
 //! Databricks resource. This is how Databricks spend lands per-project in
-//! Asgard's dashboard — Asgard fronts Databricks for cost too.
+//! Frontkeep's dashboard — Frontkeep fronts Databricks for cost too.
 //!
 //! Like the AWS source, real numbers need two operator prerequisites (both a
 //! human's job): the workspace's system schemas must be enabled and readable by

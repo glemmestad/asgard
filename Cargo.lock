@@ -181,7 +181,7 @@ checksum = "71938f30533e4d95a6d17aa530939da3842c2ab6f4f84b9dae68447e4129f74a"
 
 [[package]]
 name = "asgard"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "anyhow",
  "asgard-api",
@@ -216,7 +216,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-api"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-catalog",
  "asgard-gateway",
@@ -240,7 +240,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-catalog"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-storage",
  "async-trait",
@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-cli"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-catalog",
  "asgard-skills",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-eval"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-storage",
  "async-trait",
@@ -293,7 +293,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-gateway"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-catalog",
  "asgard-policy",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-identity"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "argon2",
  "asgard-storage",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-mcp"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-catalog",
  "asgard-gateway",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-policy"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "async-trait",
  "cedar-policy",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-provision"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "aes-gcm",
  "asgard-catalog",
@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-registry"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-catalog",
  "asgard-gateway",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-reviewer"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-gateway",
  "asgard-registry",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-runtime"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-skills"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "base64",
  "schemars 1.2.1",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-storage"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -469,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "asgard-workflow"
-version = "0.20.0"
+version = "0.21.0"
 dependencies = [
  "asgard-policy",
  "asgard-storage",

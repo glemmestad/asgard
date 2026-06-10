@@ -39,10 +39,13 @@ pub struct Resolved {
 
 const DEFAULT_URL: &str = "http://localhost:8080";
 
-/// The directory holding `config.toml` and the `keys/` cache. `$ASGARD_CONFIG`
-/// points at the config *file*; its parent is the directory.
+/// The directory holding `config.toml` and the `keys/` cache. `$FRONTKEEP_CONFIG`
+/// points at the config *file*; its parent is the directory. When neither env
+/// var is set, prefer `<base>/frontkeep` but fall back to `<base>/asgard` if
+/// only the legacy directory exists — that way an upgrade from the previous
+/// binary keeps the user's profiles and PATs.
 pub fn config_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("ASGARD_CONFIG") {
+    if let Ok(p) = std::env::var("FRONTKEEP_CONFIG") {
         return PathBuf::from(p)
             .parent()
             .map(PathBuf::from)
@@ -51,11 +54,19 @@ pub fn config_dir() -> PathBuf {
     let base = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| home_dir().join(".config"));
-    base.join("asgard")
+    let new_dir = base.join("frontkeep");
+    if new_dir.exists() {
+        return new_dir;
+    }
+    let legacy = base.join("asgard");
+    if legacy.exists() {
+        return legacy;
+    }
+    new_dir
 }
 
 pub fn config_path() -> PathBuf {
-    if let Ok(p) = std::env::var("ASGARD_CONFIG") {
+    if let Ok(p) = std::env::var("FRONTKEEP_CONFIG") {
         return PathBuf::from(p);
     }
     config_dir().join("config.toml")

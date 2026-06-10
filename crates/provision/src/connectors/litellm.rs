@@ -1,6 +1,6 @@
 //! LiteLLM connector: mints a per-project virtual key on a LiteLLM proxy through
 //! the normal governed `request_resource` flow. Each project gets its own
-//! budgeted, project-tagged key, calls LiteLLM directly, and Asgard pulls the
+//! budgeted, project-tagged key, calls LiteLLM directly, and Frontkeep pulls the
 //! key's spend back via the `litellm` cost source. The key value is a secret
 //! output (routed to the secret store); the `key_alias` stays plaintext so the
 //! cost source can read spend back without unsealing anything.

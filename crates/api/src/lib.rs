@@ -40,7 +40,7 @@ pub struct AppState {
     pub identity: IdentityService,
     pub gql: AsgardSchema,
     /// Display name for this deployment, shown as the wordmark/title in the UI.
-    /// Defaults to `Asgard`; operators rebrand via `ASGARD_SYSTEM_NAME`.
+    /// Defaults to `Frontkeep`; operators rebrand via `FRONTKEEP_SYSTEM_NAME`.
     pub system_name: String,
     /// A platform-owned gateway key the dashboard's cost Q&A uses when the caller
     /// supplies none, so the human-first dashboard works without pasting a key.
@@ -99,7 +99,7 @@ impl AppState {
             provision,
             identity,
             gql,
-            system_name: "Asgard".to_string(),
+            system_name: "Frontkeep".to_string(),
             system_cost_key: None,
             cost_qa_model: "model:default/mock".to_string(),
             oidc: None,
@@ -2043,17 +2043,22 @@ fn render_install_sh(
     let mut s = String::new();
     s.push_str("#!/bin/sh\n");
     s.push_str(&format!(
-        "# Install the '{}' skill from Asgard into a {} skills directory.\n",
+        "# Install the '{}' skill from Frontkeep into a {} skills directory.\n",
         comment_safe(name),
         dest.key
     ));
     s.push_str(&format!(
-        "# Run: curl -fsSL -H \"Authorization: Bearer $ASGARD_PAT\" \"{base}/api/skills/{id}/install.sh?dest={}\" | sh\n",
+        "# Run: curl -fsSL -H \"Authorization: Bearer $FRONTKEEP_PAT\" \"{base}/api/skills/{id}/install.sh?dest={}\" | sh\n",
         dest.key
     ));
     s.push_str("# Or pass a target directory:  sh install.sh /path/to/dir\n");
     s.push_str("set -eu\n");
-    s.push_str(": \"${ASGARD_PAT:?set ASGARD_PAT to your Asgard user token (asg_pat_...)}\"\n");
+    // Back-compat: an upgrade from the previous binary may still set ASGARD_PAT.
+    // Promote it into FRONTKEEP_PAT silently before requiring the new name.
+    s.push_str(": \"${FRONTKEEP_PAT:=${ASGARD_PAT:-}}\"\n");
+    s.push_str(
+        ": \"${FRONTKEEP_PAT:?set FRONTKEEP_PAT to your Frontkeep user token (asg_pat_...)}\"\n",
+    );
     s.push_str(&format!("dir=\"${{1:-{default_dir}}}\"\n"));
     s.push_str("mkdir -p \"$dir\"\n");
     for d in &subdirs {
@@ -2061,7 +2066,7 @@ fn render_install_sh(
     }
     s.push_str("fetch() {\n");
     s.push_str(&format!(
-        "  curl -fsSL -H \"Authorization: Bearer $ASGARD_PAT\" \"{base}/api/skills/{id}/raw/$1?runtime={runtime}\" -o \"$dir/$1\"\n"
+        "  curl -fsSL -H \"Authorization: Bearer $FRONTKEEP_PAT\" \"{base}/api/skills/{id}/raw/$1?runtime={runtime}\" -o \"$dir/$1\"\n"
     ));
     s.push_str("}\n");
     for p in &paths {
@@ -2072,7 +2077,7 @@ fn render_install_sh(
 }
 
 /// A ready-to-run `sh` installer that fetches each of the skill's files (translated for
-/// `dest`) from Asgard into the right per-runtime directory. Replaces the v1 base64
+/// `dest`) from Frontkeep into the right per-runtime directory. Replaces the v1 base64
 /// snippet — the data is pulled at run time, not embedded.
 async fn skill_install_sh(
     State(st): State<AppState>,
@@ -2114,7 +2119,7 @@ async fn skill_install_sh(
 
 /// Run the (advisory, escalate-only) machine code-review on a submitted skill and
 /// store the verdict for the approver. Admin-gated. Off when no real LLM is reachable
-/// (mirrors the promotion review gate); `ASGARD_REVIEW_ALLOW_MOCK=1` forces the
+/// (mirrors the promotion review gate); `FRONTKEEP_REVIEW_ALLOW_MOCK=1` forces the
 /// deterministic stub for dev/e2e.
 async fn review_skill(
     State(st): State<AppState>,
@@ -2136,13 +2141,13 @@ async fn review_skill(
         asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
 
     let model = st.cost_qa_model.clone();
-    let allow_mock = std::env::var("ASGARD_REVIEW_ALLOW_MOCK")
+    let allow_mock = std::env::var("FRONTKEEP_REVIEW_ALLOW_MOCK")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     if st.system_cost_key.is_none() || (model.contains("mock") && !allow_mock) {
         return Ok(Json(serde_json::json!({
             "enabled": false,
-            "reason": "code-review assist is off: no real LLM is reachable (configure a provider key, or set ASGARD_REVIEW_ALLOW_MOCK=1 for a deterministic dev stub)",
+            "reason": "code-review assist is off: no real LLM is reachable (configure a provider key, or set FRONTKEEP_REVIEW_ALLOW_MOCK=1 for a deterministic dev stub)",
         })));
     }
 
@@ -2735,12 +2740,12 @@ fn client_ip(headers: &HeaderMap) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Whether this request arrived over TLS. Adaptive by design: Asgard is an OSS
+/// Whether this request arrived over TLS. Adaptive by design: Frontkeep is an OSS
 /// single-binary core that must run with no ancillary services, so it serves
 /// plain http out of the box. `Secure` cookies are therefore set only when TLS is
 /// actually present (a proxy sets `X-Forwarded-Proto: https`) — otherwise a plain
 /// http first deployment could never establish a session. No TLS terminator is
-/// ever *required* to get Asgard going.
+/// ever *required* to get Frontkeep going.
 fn is_https(headers: &HeaderMap) -> bool {
     headers
         .get("x-forwarded-proto")
@@ -2764,7 +2769,7 @@ fn secure_suffix(secure: bool) -> &'static str {
 }
 
 /// Whether auth cookies should be `Secure`: forced on when the operator requires
-/// HTTPS (`ASGARD_FORCE_HTTPS`), otherwise adaptive to the detected scheme.
+/// HTTPS (`FRONTKEEP_FORCE_HTTPS`), otherwise adaptive to the detected scheme.
 fn cookie_secure(st: &AppState, headers: &HeaderMap) -> bool {
     st.force_https || is_https(headers)
 }

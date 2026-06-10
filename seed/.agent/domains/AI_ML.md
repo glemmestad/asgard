@@ -3,7 +3,7 @@
 Pulled in when the work involves models, prompts, training, inference, or evals.
 Copy only if the repo actually does ML/agentic work.
 
-## Route every model call through Asgard's gateway
+## Route every model call through Frontkeep's gateway
 - Never wire a provider SDK (OpenAI, Anthropic, …) directly. Mint the project's virtual key (`gateway_credential`) and call the gateway endpoint (`POST /api/gateway/chat`) so budget, policy, guardrails, audit, and the kill switch apply.
 - Pick the model by data classification, not habit. Confidential data only goes to models cleared for it (check `list_services` / model metadata).
 

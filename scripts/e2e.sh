@@ -21,7 +21,7 @@ PORT="${PORT:-8071}"
 BASE="http://127.0.0.1:${PORT}"
 WORK="$(mktemp -d)"
 DB_URL="${DATABASE_URL:-sqlite://${WORK}/asgard.db}"
-BIN="${BIN:-$ROOT/target/debug/asgard}"
+BIN="${BIN:-$ROOT/target/debug/frontkeep}"
 PASS=0
 FAIL=0
 
@@ -270,8 +270,8 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/mcp" \
 
 curl -s -D "$WORK/mcp.hdr" -o "$WORK/mcp.out" -X POST "$BASE/mcp" \
   -H "authorization: Bearer $KEY" -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$INIT"
-grep -qi '200 OK' "$WORK/mcp.hdr" && grep -q '"serverInfo"' "$WORK/mcp.out" && grep -q '"name":"asgard"' "$WORK/mcp.out" \
-  && ok "MCP initialize negotiates with a valid key (serverInfo: asgard)" || { bad "MCP initialize did not return a valid result"; cat "$WORK/mcp.hdr" "$WORK/mcp.out"; }
+grep -qi '200 OK' "$WORK/mcp.hdr" && grep -q '"serverInfo"' "$WORK/mcp.out" && grep -q '"name":"frontkeep"' "$WORK/mcp.out" \
+  && ok "MCP initialize negotiates with a valid key (serverInfo: frontkeep)" || { bad "MCP initialize did not return a valid result"; cat "$WORK/mcp.hdr" "$WORK/mcp.out"; }
 SID=$(grep -i 'mcp-session-id' "$WORK/mcp.hdr" | tr -d '\r' | awk '{print $2}')
 curl -s -o /dev/null -X POST "$BASE/mcp" -H "authorization: Bearer $KEY" -H "mcp-session-id: $SID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'

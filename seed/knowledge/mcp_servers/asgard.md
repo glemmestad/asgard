@@ -1,4 +1,4 @@
-# Asgard control plane (this hub)
+# Frontkeep control plane (this hub)
 
 The governance hub exposes itself over MCP. Once connected, an agent can register
 a project (the mandatory gate), discover and provision services, read cost, and
@@ -8,8 +8,8 @@ agent-first.
 ## Prerequisites
 
 - A **Personal Access Token** (`asg_pat_…`). Create one on the Users page; it acts
-  across every project you own or manage. Export it as `ASGARD_PAT` and reference
-  `$ASGARD_PAT` in the install snippet rather than pasting the literal token.
+  across every project you own or manage. Export it as `FRONTKEEP_PAT` and reference
+  `$FRONTKEEP_PAT` in the install snippet rather than pasting the literal token.
 - The URL is your deployment's `/mcp` endpoint — replace the example host with
   your own.
 

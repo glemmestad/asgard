@@ -1,4 +1,4 @@
-//! Starter guidance + recipes shipped with the binary, adapted for Asgard's
+//! Starter guidance + recipes shipped with the binary, adapted for Frontkeep's
 //! primitives. Seeded into an empty store on boot (see `seed_knowledge`) so a
 //! fresh deploy isn't blank; never overwrites human- or agent-authored content.
 
@@ -100,9 +100,9 @@ pub const MCP_SERVERS: &[(&str, &str, &str, &[&str], &str)] = &[
         include_str!("../../../seed/knowledge/mcp_servers/filesystem.md"),
     ),
     (
-        "Asgard control plane",
+        "Frontkeep control plane",
         "This hub's own MCP server — register projects, provision services, read cost, pull standards/guidance/recipes.",
-        r#"{"transport":"remote","url":"https://asgard.example.com/mcp"}"#,
+        r#"{"transport":"remote","url":"https://frontkeep.example.com/mcp"}"#,
         &["asgard", "governance", "remote"],
         include_str!("../../../seed/knowledge/mcp_servers/asgard.md"),
     ),

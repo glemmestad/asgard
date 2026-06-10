@@ -18,7 +18,7 @@ trust or reproduce — speed without rigor is just faster wrong answers.
 ## Sweeps & cost
 - Size a sweep before launching it: estimate the run count, cost, and wall-time, and bound it. An unbounded autonomous loop is how budgets evaporate overnight.
 - Make runs idempotent and resumable; checkpoint long jobs. A crash at hour nine shouldn't cost you the whole sweep.
-- Route compute, datasets, and any model calls through Asgard so they're attributed, budgeted, and auditable. Model calls go through the gateway, not a direct SDK.
+- Route compute, datasets, and any model calls through Frontkeep so they're attributed, budgeted, and auditable. Model calls go through the gateway, not a direct SDK.
 
 ## Agentic loops
 - Cap the loop: max iterations, budget, and wall-time enforced outside the agent's own logic. Expect the circuit breaker to trip a runaway and handle it as a normal condition.
@@ -28,5 +28,5 @@ trust or reproduce — speed without rigor is just faster wrong answers.
 A research change is done when every result is reproducible from a recorded
 (code, data, params, seed) tuple, the environment is pinned, the hypothesis and
 success criterion were stated up front, negative results are reported, sweeps are
-bounded/resumable and cost-attributed through Asgard, and autonomous loops have
+bounded/resumable and cost-attributed through Frontkeep, and autonomous loops have
 enforced caps and an auditable trace.

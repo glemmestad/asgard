@@ -3,11 +3,11 @@ sidebar_position: 2.1
 title: Install the CLI
 ---
 
-# Install Asgard
+# Install Frontkeep
 
-Asgard is **one statically-linked binary** that is both the server (`asgard
-serve`, `asgard mcp`) and the command-line client (`asgard project`, `asgard
-cost`, `asgard chat`, …). Installing it gives you both.
+Frontkeep is **one statically-linked binary** that is both the server (`asgard
+serve`, `frontkeep mcp`) and the command-line client (`frontkeep project`, `asgard
+cost`, `frontkeep chat`, …). Installing it gives you both.
 
 ## macOS / Linux (one-liner)
 
@@ -17,14 +17,14 @@ curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/inst
 
 This downloads the right tarball for your OS/architecture from the latest
 release, verifies its checksum, and installs to `~/.local/bin` (override with
-`ASGARD_BIN_DIR`). The Linux builds are static (musl) — no system libraries
+`FRONTKEEP_BIN_DIR`). The Linux builds are static (musl) — no system libraries
 required, works on Alpine too.
 
 Then point it at a deployment and go:
 
 ```bash
-asgard login                 # stores a server URL + PAT in a profile
-asgard tools                 # list everything the server exposes
+frontkeep login                 # stores a server URL + PAT in a profile
+frontkeep tools                 # list everything the server exposes
 ```
 
 See [Use the CLI](./cli.md) for the full command surface.
@@ -41,8 +41,8 @@ Grab a tarball from the [latest release](https://github.com/glemmestad/asgard/re
 | macOS Intel | `asgard-x86_64-apple-darwin.tar.gz` |
 
 ```bash
-tar -xzf asgard-*.tar.gz && sudo install -m755 asgard /usr/local/bin/asgard
-asgard --version
+tar -xzf asgard-*.tar.gz && sudo install -m755 frontkeep /usr/local/bin/asgard
+frontkeep --version
 ```
 
 Each tarball ships with a matching `.sha256`.
@@ -50,7 +50,7 @@ Each tarball ships with a matching `.sha256`.
 ## From source
 
 ```bash
-cargo install --git https://github.com/glemmestad/asgard asgard
+cargo install --git https://github.com/glemmestad/frontkeep asgard
 ```
 
 ## Docker
@@ -64,7 +64,7 @@ docker run -p 8080:8080 ghcr.io/glemmestad/asgard:latest
 
 ## Notes
 
-- **Armed provisioning** (`asgard serve` against real AWS/Auth0) needs
+- **Armed provisioning** (`frontkeep serve` against real AWS/Auth0) needs
   `terraform` on your `PATH`; the native binary ships only itself, while the
   Docker image bundles Terraform. The control plane and the CLI work with no
   extra dependencies.

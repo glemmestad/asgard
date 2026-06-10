@@ -2,7 +2,7 @@
 //! into unmanaged production: a review deadline per project, a sweep that flags
 //! overdue ones, and the policy's one-automatic-extension rule. Expiry is a
 //! *flag* (`review_state` ok→expired), never a lifecycle state — it blocks
-//! nothing, it surfaces. "Notification" = an audit event; Asgard has no notify
+//! nothing, it surfaces. "Notification" = an audit event; Frontkeep has no notify
 //! sink (a real one is a future item).
 //!
 //! Thresholds are the org-specific mutable layer ([`ReviewConfig`], defaults from

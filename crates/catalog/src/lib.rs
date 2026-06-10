@@ -1,4 +1,4 @@
-//! Asgard catalog: the typed entity graph, schema validation, Git ingestion, and
+//! Frontkeep catalog: the typed entity graph, schema validation, Git ingestion, and
 //! pull-based reconciliation. See RFC-0001.
 
 pub mod entity;

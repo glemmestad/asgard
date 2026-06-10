@@ -1,5 +1,5 @@
 //! Builtin secret store: values envelope-encrypted (AES-256-GCM) at rest in
-//! Asgard's DB. Zero-config default so the single binary works out of the box;
+//! Frontkeep's DB. Zero-config default so the single binary works out of the box;
 //! the master key comes from operator config (KMS/env/file) in production.
 //!
 //! A name is versioned in place: re-`put` or `rotate` inserts a new row with the

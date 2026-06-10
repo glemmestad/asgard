@@ -1,4 +1,4 @@
-//! Pure, storage- and network-free skill primitives shared across Asgard: the
+//! Pure, storage- and network-free skill primitives shared across Frontkeep: the
 //! bundle/manifest model, a `SKILL.md` frontmatter parser, the Claude Code ⇄ Codex
 //! translation layer, and a portability lint. Everything here is deterministic and
 //! unit-testable; persistence lives in `asgard-registry`, wiring in `asgard-api` /

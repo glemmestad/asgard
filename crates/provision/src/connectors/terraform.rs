@@ -1,13 +1,13 @@
 //! Terraform connector — the universal, unrestricted provisioning path. The
 //! "how" lives in hub-supplied TF modules, so any AWS/GCP/Azure (or other)
-//! resource Terraform can express is reachable with zero Asgard code per
+//! resource Terraform can express is reachable with zero Frontkeep code per
 //! service. The connector materializes a per-resource working dir, writes tfvars
 //! from the request spec, injects the immutable project tags as a `tags`
 //! variable, runs `init`/`apply`, and captures `terraform output -json`.
 //! Sensitive outputs are reported as `sensitive_keys` so the caller routes their
 //! values to the secret store — they never land in the resource record.
 //!
-//! State is snapshotted into Asgard's DB (encrypted) around every apply/destroy
+//! State is snapshotted into Frontkeep's DB (encrypted) around every apply/destroy
 //! via an attached [`TfStateStore`], so it survives an ephemeral `work_root`; the
 //! work dir under `work_root/<project>/<type>/<name>` is just scratch. Without a
 //! store attached (tests) state stays local to the work dir.
@@ -753,15 +753,15 @@ mod tests {
 
     #[test]
     fn config_defaults_source_env_yield_to_spec_and_drop_when_unset() {
-        std::env::set_var("ASGARD_TEST_DEF_SUBNET", "subnet-grp-1");
-        std::env::set_var("ASGARD_TEST_DEF_SGS", "sg-1, sg-2");
-        std::env::remove_var("ASGARD_TEST_DEF_REGION");
+        std::env::set_var("FRONTKEEP_TEST_DEF_SUBNET", "subnet-grp-1");
+        std::env::set_var("FRONTKEEP_TEST_DEF_SGS", "sg-1, sg-2");
+        std::env::remove_var("FRONTKEEP_TEST_DEF_REGION");
         let mut r = req();
         r.spec = serde_json::json!({"name": "db", "instance_class": "db.t3.small"});
         r.config = serde_json::json!({"defaults": {
-            "subnet_group_name": "${ASGARD_TEST_DEF_SUBNET}",
-            "vpc_security_group_ids": "${ASGARD_TEST_DEF_SGS:csv}",
-            "region": "${ASGARD_TEST_DEF_REGION}",
+            "subnet_group_name": "${FRONTKEEP_TEST_DEF_SUBNET}",
+            "vpc_security_group_ids": "${FRONTKEEP_TEST_DEF_SGS:csv}",
+            "region": "${FRONTKEEP_TEST_DEF_REGION}",
             "instance_class": "db.t3.micro"
         }});
         let v = tfvars(&r, &plan(), &Value::Null);
@@ -776,8 +776,8 @@ mod tests {
             serde_json::json!("db.t3.small"),
             "the request spec overrides a manifest default"
         );
-        std::env::remove_var("ASGARD_TEST_DEF_SUBNET");
-        std::env::remove_var("ASGARD_TEST_DEF_SGS");
+        std::env::remove_var("FRONTKEEP_TEST_DEF_SUBNET");
+        std::env::remove_var("FRONTKEEP_TEST_DEF_SGS");
     }
 
     /// The durability guarantee, without needing terraform installed: state

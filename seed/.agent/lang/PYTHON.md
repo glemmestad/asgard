@@ -18,4 +18,4 @@ repo contains Python.
 
 ## Security
 - Never build SQL or shell strings by concatenation — parameterize. Validate and bound all external input.
-- Secrets come from the environment / Asgard's secret tools, never from source or notebooks committed to the repo.
+- Secrets come from the environment / Frontkeep's secret tools, never from source or notebooks committed to the repo.

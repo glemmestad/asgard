@@ -15,7 +15,7 @@ CONCURRENCY="${CONCURRENCY:-32}"
 ENTITIES="${ENTITIES:-2000}"
 WORK="$(mktemp -d)"
 DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5433/asgard}"
-BIN="${BIN:-$ROOT/target/release/asgard}"
+BIN="${BIN:-$ROOT/target/release/frontkeep}"
 
 cleanup() { [[ -n "${SP:-}" ]] && kill "$SP" 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT

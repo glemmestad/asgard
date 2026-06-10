@@ -1,6 +1,6 @@
 //! Provisioning run-logs: the full output of every connector run (terraform
 //! plan+apply log, exec output, HTTP response), captured per resource for operator
-//! audit and debugging. Stored in Asgard's own DB, append-only, and envelope-
+//! audit and debugging. Stored in Frontkeep's own DB, append-only, and envelope-
 //! encrypted (AES-256-GCM) with the secret-store master key — the output can carry
 //! provider secrets in the clear, the same exposure `tf_state` already has, so it
 //! gets the same protection and is only ever returned over a `ViewAudit`-gated read.

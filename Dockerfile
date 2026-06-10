@@ -19,7 +19,7 @@ RUN cargo build --release -p asgard
 # Minimal runtime. SQLite default works with no extra setup; Postgres + the
 # terraform connector (armed provisioning) work too — terraform is on PATH and
 # the bundled modules are at /modules (point provisioning.terraform.modules_dir
-# there in asgard.yaml).
+# there in frontkeep.yaml).
 FROM debian:bookworm-slim
 ARG TF_VERSION=1.9.8
 RUN apt-get update \
@@ -35,7 +35,7 @@ RUN apt-get update \
     && rm /tmp/tf.zip \
     && apt-get purge -y unzip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=build /src/target/release/asgard /usr/local/bin/asgard
+COPY --from=build /src/target/release/frontkeep /usr/local/bin/frontkeep
 # Bundled terraform modules (the connector resolves manifest `module` paths
 # against modules_dir). Shipped in the image so a deploy needs no mounted tree.
 COPY --from=build /src/modules /modules
@@ -44,10 +44,10 @@ RUN useradd --system --create-home asgard \
     && chown asgard:asgard /data
 USER asgard
 VOLUME /data
-ENV ASGARD_DATABASE_URL=sqlite:///data/asgard.db
-ENV ASGARD_BIND=0.0.0.0:8080
+ENV FRONTKEEP_DATABASE_URL=sqlite:///data/asgard.db
+ENV FRONTKEEP_BIND=0.0.0.0:8080
 EXPOSE 8080
 # Readiness: confirms the process is up and the database is reachable.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -fsS http://localhost:8080/readyz || exit 1
-ENTRYPOINT ["asgard", "serve"]
+ENTRYPOINT ["frontkeep", "serve"]

@@ -1,6 +1,6 @@
 # Workflow
 
-How an AI agent (or a human) should actually do work in a repository that has adopted the Asgard seed. Read this when you are about to make changes. If you are only reading the catalog from somewhere else, you don't need this file — read [`../AGENTS.md`](../AGENTS.md).
+How an AI agent (or a human) should actually do work in a repository that has adopted the Frontkeep seed. Read this when you are about to make changes. If you are only reading the catalog from somewhere else, you don't need this file — read [`../AGENTS.md`](../AGENTS.md).
 
 ## Before you start
 
@@ -22,9 +22,9 @@ Before you request any chargeable resource — a gateway key, a model call, shar
 - Check `AGENTS.md` for an existing `proj-YYYY-NNNN` id. If it's there, the project is already registered; reuse it.
 - If not, call **`register_project`** with the project name, owner, and the data classification you'll be handling. It returns a stable `proj-YYYY-NNNN` id. Record that id back in `AGENTS.md`.
 
-Asgard will refuse to issue resources to an unregistered project. This is by design: every resource carries a project owner so cost is attributed and every action is auditable. There is no anonymous spend.
+Frontkeep will refuse to issue resources to an unregistered project. This is by design: every resource carries a project owner so cost is attributed and every action is auditable. There is no anonymous spend.
 
-## Request shared capabilities through Asgard
+## Request shared capabilities through Frontkeep
 
 Don't wire providers, storage, or secrets directly. Use the catalog and the MCP tools:
 

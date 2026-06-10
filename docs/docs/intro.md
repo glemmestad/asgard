@@ -4,15 +4,17 @@ sidebar_position: 1
 title: Introduction
 ---
 
-# Asgard
+# Frontkeep
 
-**An open-source control plane for AI & agent development inside a company.**
+**The Agent Control Plane.** Where your agents ship at AI speed — with your
+policies and budgets built in.
 
-Backstage answers *"what exists and who owns it."* For non-deterministic agent
-systems that isn't enough — you also need to know **is it safe, is it working,
-what is it costing, and what did it just do.** Asgard adds that governance
-overlay — gateway, evals, audit, cost, policy, kill switches — as the spine, not
-a plugin.
+Most platforms answer *"what services exist and who owns them."* For an agent
+that isn't enough — the agent needs to know **is this safe, is it working,
+what is it costing, and what did it just do.** Frontkeep adds that governance
+overlay — gateway, evals, audit, cost, policy, kill switches — as the spine,
+not a plugin. It's the front door agents pass through to do real work in
+your company.
 
 ## The six load-bearing components
 
@@ -39,10 +41,14 @@ recipes, served to humans in the UI and to agents over MCP.
 
 ## Design principles
 
-- **One static binary.** Rust, embedded UI. `docker run asgard` with a Git token.
+- **One static binary.** Rust, embedded UI. `docker run` with a Git token.
 - **SQLite by default, Postgres opt-in.** Identical behavior on both; the same
   binary scales out by switching `--database-url` and adding stateless replicas.
 - **Kubernetes supported, never required.** Headline paths are `docker run` and
   systemd; a Helm chart and Terraform module ship too.
 - **Open core with honest seams.** The governance core is OSS; enterprise
   features (SAML/SCIM, multi-tenant, SIEM streaming) sit behind clear trait seams.
+
+> The default SQLite filename is still `asgard.db` so an existing deploy's data
+> survives an in-place upgrade. Legacy `ASGARD_*` env vars continue to work
+> transparently — set either name; the new one wins when both are set.

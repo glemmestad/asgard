@@ -540,7 +540,7 @@ mod tests {
 
     // Terraform `module` paths must be relative to `modules_dir` (the modules-tree
     // root, e.g. `aws/ecs-service`). A repo-root `modules/` prefix double-counts
-    // under the documented `ASGARD_TF_MODULES_DIR=/modules` (→ `/modules/modules/…`)
+    // under the documented `FRONTKEEP_TF_MODULES_DIR=/modules` (→ `/modules/modules/…`)
     // and 500s every provision.
     #[test]
     fn terraform_module_paths_are_relative_to_modules_dir() {

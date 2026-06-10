@@ -1,7 +1,7 @@
 //! Recipes: parameterized provisioning compositions. A recipe names a set of
 //! catalog primitives and how to wire one's outputs into the next's inputs
 //! (`${steps.<id>.<output>}` / `${inputs.<name>}` placeholders). The agent reads
-//! a recipe, fills the inputs, and issues each `request_resource` itself — Asgard
+//! a recipe, fills the inputs, and issues each `request_resource` itself — Frontkeep
 //! never executes the steps, so per-resource cost/approval/tiering still apply.
 
 use asgard_storage::Db;
