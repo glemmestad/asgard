@@ -1,3 +1,10 @@
+# [0.22.0](https://github.com/glemmestad/asgard/compare/v0.21.0...v0.22.0) (2026-06-10)
+
+
+### Features
+
+* rebrand Asgard → Frontkeep — The Agent Control Plane ([#46](https://github.com/glemmestad/asgard/issues/46)) ([ca331e3](https://github.com/glemmestad/asgard/commit/ca331e3cf8b68046e36c03ade51f0695e196941e))
+
 # [0.21.0](https://github.com/glemmestad/asgard/compare/v0.20.0...v0.21.0) (2026-06-10)
 
 
