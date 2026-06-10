@@ -75,3 +75,26 @@ Every provisioned resource is stamped with `project=<id>` (and owner/group/cost-
 :::note Provisioning backend
 The universal backend is the **Terraform connector**: a service manifest plus a Terraform module, no core code. A service without live credentials falls back to a dry-run stub that computes the plan, tags, and a cost estimate — enough to drive the whole request → approve → fulfill → cost loop without touching a cloud. Arming live provisioning is an explicit operator decision.
 :::
+
+## 5. Adopting an existing system (brownfield)
+
+The same loop works for a system that already exists outside Asgard — nothing
+is re-provisioned, and Asgard never takes over infrastructure it didn't create:
+
+1. **Merge the seed.** Run `bootstrap` against the existing repo. New files are
+   written; an existing `AGENTS.md`/`CLAUDE.md` is merged, not replaced.
+2. **Register provisional.** `register_project` with `provisional: true` (CLI:
+   `--provisional`). The project is **fully live** — gateway keys, resources,
+   cost attribution all work — but its lifecycle is `provisional`, flagging it
+   for governance triage instead of blocking it.
+3. **Link the existing infrastructure.** `link_resource` records each existing
+   stack with its cost source (`aws-cost-explorer`, `databricks-billing`, …)
+   and a monthly estimate. Asgard does not manage it; you tag the real cloud
+   resources `project=<id>` yourself, and the source attributes actual spend by
+   that tag — into the same rollup as everything else.
+4. **Graduate or retire.** The first successful promotion (real evidence,
+   machine-checked) flips the project to `active`; a system not worth keeping
+   is decommissioned through the normal lifecycle.
+
+To *re-provision* an existing app onto Asgard-managed primitives instead, see
+[Migrate an app](migrate-app.md) — a different journey.

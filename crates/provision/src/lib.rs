@@ -567,7 +567,7 @@ impl ProvisionService {
         let records = self.repo.list_by_project(project_id).await?;
         let live: Vec<&ProvisionedRecord> = records
             .iter()
-            .filter(|r| r.state == "provisioned")
+            .filter(|r| r.state == "provisioned" || r.state == "linked")
             .collect();
         let resources: Vec<InfraResourceCost> = live
             .iter()
@@ -581,10 +581,13 @@ impl ProvisionService {
             .collect();
         let estimated_monthly_usd = resources.iter().map(|r| r.est_monthly_usd).sum();
 
-        // Distinct cost sources across the project's live resources.
+        // Distinct cost sources across the project's live resources. A linked
+        // external record has no manifest — its source rides in its spec.
         let mut source_types: BTreeSet<String> = BTreeSet::new();
         for r in &live {
-            if let Some(m) = self.catalog.get(&r.rtype) {
+            if let Some(st) = linked_source(r) {
+                source_types.insert(st);
+            } else if let Some(m) = self.catalog.get(&r.rtype) {
                 source_types.insert(m.cost.source.source_type.clone());
             }
         }
@@ -651,8 +654,15 @@ impl ProvisionService {
             let pid = &reg.project_id;
             let records = self.repo.list_by_project(pid).await?;
             let mut est_by_source: BTreeMap<String, f64> = BTreeMap::new();
-            for r in records.iter().filter(|r| r.state == "provisioned") {
-                if let Some(m) = self.catalog.get(&r.rtype) {
+            for r in records
+                .iter()
+                .filter(|r| r.state == "provisioned" || r.state == "linked")
+            {
+                if let Some(st) = linked_source(r) {
+                    // Linked external infra: no manifest; the record carries its
+                    // own source + estimate.
+                    *est_by_source.entry(st).or_default() += r.est_monthly_usd;
+                } else if let Some(m) = self.catalog.get(&r.rtype) {
                     *est_by_source
                         .entry(m.cost.source.source_type.clone())
                         .or_default() += m.cost.estimated_monthly_usd;
@@ -1288,12 +1298,93 @@ impl ProvisionService {
         if rec.state == "destroyed" || rec.state == "destroying" {
             return Ok(rec);
         }
+        // A linked external resource is never managed: deprovision just unlinks
+        // the record — no connector call, the real infrastructure is untouched.
+        if rec.state == "linked" {
+            self.repo.mark_state(resource_id, "destroyed").await?;
+            return self
+                .repo
+                .get(resource_id)
+                .await?
+                .ok_or_else(|| ProvisionError::NotFound(resource_id.to_string()));
+        }
         // Mark the work item, then drive the teardown in the background (or inline
         // without a workflow handle) and wait the service's budget for completion.
         self.repo.mark_state(resource_id, "destroying").await?;
         self.dispatch(resource_id).await?;
         let budget = self.budget_for(self.catalog.get(&rec.rtype));
         self.inline_wait(resource_id, budget).await
+    }
+
+    /// Record pre-existing infrastructure for cost attribution without managing
+    /// it. The record is `linked` (rtype/backend `external`): it shows in the
+    /// project's resource list and its declared cost source + estimate flow into
+    /// the cost rollup, but no connector ever touches it — deprovision just
+    /// unlinks the record. Cost sources filter account-wide on the
+    /// `project=<id>` tag, so the caller still tags the real cloud resources.
+    pub async fn link_resource(
+        &self,
+        reg: &Registration,
+        name: &str,
+        cost_source: &str,
+        est_monthly_usd: f64,
+        extra_tags: BTreeMap<String, String>,
+        note: &str,
+    ) -> Result<ProvisionedRecord, ProvisionError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(ProvisionError::InvalidSpec("name is required".into()));
+        }
+        let cost_source = cost_source.trim();
+        if cost_source.is_empty() {
+            return Err(ProvisionError::InvalidSpec(
+                "cost_source is required (e.g. aws-cost-explorer, databricks-billing, flat, none)"
+                    .into(),
+            ));
+        }
+        let ctx = ResourceContext::from_registration(reg, "", "");
+        let mut tags = ctx.tags();
+        tags.insert("managed-by".into(), "external".into());
+        tags.extend(extra_tags);
+        let now = asgard_storage::now();
+        let rec = ProvisionedRecord {
+            id: asgard_storage::new_uid(),
+            project_id: reg.project_id.clone(),
+            rtype: "external".into(),
+            name: name.to_string(),
+            spec: serde_json::json!({"cost_source": cost_source, "note": note}),
+            outputs: serde_json::json!({}),
+            tags,
+            est_monthly_usd,
+            state: "linked".into(),
+            backend: "external".into(),
+            dry_run: false,
+            request_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+            error: String::new(),
+            attempts: 0,
+            next_retry_at: None,
+        };
+        self.repo.record(&rec).await?;
+        let _ = asgard_storage::audit::append(
+            self.repo.db(),
+            &asgard_storage::audit::AuditRecord::new(&reg.owner, "resource.linked")
+                .entity(format!("project:{}", reg.project_id))
+                .outcome("linked")
+                .data(serde_json::json!({
+                    "resource_id": rec.id, "name": rec.name, "cost_source": cost_source,
+                    "est_monthly_usd": est_monthly_usd,
+                })),
+        )
+        .await;
+        Ok(rec)
+    }
+
+    /// Whether `source_type` has a live feed wired in this deployment (vs
+    /// declared-only, where the estimate stands in).
+    pub fn cost_source_configured(&self, source_type: &str) -> bool {
+        self.cost_sources.get(source_type).is_some()
     }
 
     /// Manually retry a stuck resource now, bypassing the backoff window. Two cases:
@@ -1444,6 +1535,12 @@ impl ProvisionService {
         let mut summary = LifecycleSummary::default();
         for rec in self.repo.list_by_project(project_id).await? {
             if rec.state == "destroyed" {
+                continue;
+            }
+            // Linked external infrastructure is unlinked, never destroyed.
+            if rec.state == "linked" {
+                self.repo.mark_state(&rec.id, "destroyed").await?;
+                summary.destroyed.push(rec.name);
                 continue;
             }
             let prior = rec.state.clone();
@@ -2122,6 +2219,18 @@ fn backoff_secs(attempts: i64, policy: &RetryPolicy) -> i64 {
         .min(policy.cap_secs) as i64
 }
 
+/// The cost source a `linked` external record declared in its spec, or `None`
+/// for a managed record (whose source comes from its service manifest).
+fn linked_source(r: &ProvisionedRecord) -> Option<String> {
+    if r.state != "linked" {
+        return None;
+    }
+    r.spec
+        .get("cost_source")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
 fn ctx_from_record(rec: &ProvisionedRecord) -> ResourceContext {
     let g = |k: &str| rec.tags.get(k).cloned().unwrap_or_default();
     ResourceContext {
@@ -2725,6 +2834,63 @@ mod tests {
             assert_eq!(r.actual_usd, Some(10.0), "each day's delta is a flat 10");
         }
         assert_eq!(series.last().unwrap().cumulative_usd, Some(50.0));
+    }
+
+    #[tokio::test]
+    async fn linked_external_resource_attributes_cost_without_management() {
+        let (_wf, reg, svc, pid) = harness().await;
+        let r = reg.get(&pid).await.unwrap().unwrap();
+        let rec = svc
+            .link_resource(
+                &r,
+                "legacy-stack",
+                "flat",
+                120.0,
+                Default::default(),
+                "pre-Asgard infra",
+            )
+            .await
+            .unwrap();
+        assert_eq!(rec.state, "linked");
+        assert_eq!(rec.backend, "external");
+        assert_eq!(rec.tags.get("project"), Some(&pid));
+
+        // The declared estimate flows into the project's infra cost…
+        let cost = svc
+            .project_cost(&pid, &CostWindow::current_month())
+            .await
+            .unwrap();
+        assert!(cost.resources.iter().any(|x| x.rtype == "external"));
+        assert!((cost.estimated_monthly_usd - 120.0).abs() < 1e-9);
+
+        // …and into the daily rollup keyed by its declared source.
+        svc.roll_up_costs(&reg, "2026-06-10").await.unwrap();
+        let series = svc
+            .rollup_repo()
+            .series(&pid, "2026-06-01", "2026-06-30")
+            .await
+            .unwrap();
+        assert!(
+            series.iter().any(|row| row.source == "flat"),
+            "linked record's source must produce a rollup row"
+        );
+
+        // Deprovision unlinks the record only — no connector is ever invoked
+        // ('external' has no backend; a dispatch would error).
+        let after = svc.deprovision(&rec.id, "u").await.unwrap();
+        assert_eq!(after.state, "destroyed");
+    }
+
+    #[tokio::test]
+    async fn project_destroy_unlinks_external_without_connector_calls() {
+        let (_wf, reg, svc, pid) = harness().await;
+        let r = reg.get(&pid).await.unwrap().unwrap();
+        svc.link_resource(&r, "legacy", "none", 0.0, Default::default(), "")
+            .await
+            .unwrap();
+        let summary = svc.destroy_project_resources(&pid).await.unwrap();
+        assert_eq!(summary.destroyed, vec!["legacy".to_string()]);
+        assert!(summary.failed.is_empty());
     }
 
     #[tokio::test]

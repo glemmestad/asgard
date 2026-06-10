@@ -993,6 +993,25 @@ curl -s -o "$WORK/pcred.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PCRED"
 grep -q 'asg_' "$WORK/pcred.out" && ok "provisional project mints a gateway key (live, not blocked)" || { bad "provisional project denied a key"; cat "$WORK/pcred.out"; }
 
+# 20f-ii-c. link_resource: pre-existing infra is recorded for cost attribution
+# without Asgard managing it; deprovision merely unlinks the record.
+PLINK="{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"tools/call\",\"params\":{\"name\":\"link_resource\",\"arguments\":{\"project_id\":\"${PPROV_PID}\",\"name\":\"legacy-stack\",\"cost_source\":\"flat\",\"est_monthly_usd\":120}}}"
+curl -s -o "$WORK/plink.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PLINK"
+grep -q 'linked' "$WORK/plink.out" && grep -q 'does not manage' "$WORK/plink.out" \
+  && ok "link_resource records external infra (state=linked, tag instruction returned)" || { bad "link_resource failed"; cat "$WORK/plink.out"; }
+PLINK_ID=$(python3 - "$WORK/plink.out" <<'PY' 2>/dev/null
+import json,sys,re
+raw=open(sys.argv[1]).read()
+m=re.search(r'\\"id\\":\\"([0-9a-f-]+)\\"', raw) or re.search(r'"id":"([0-9a-f-]+)"', raw)
+print(m.group(1) if m else '')
+PY
+)
+PUNLINK="{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"tools/call\",\"params\":{\"name\":\"deprovision_resource\",\"arguments\":{\"resource_id\":\"${PLINK_ID}\"}}}"
+curl -s -o "$WORK/punlink.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
+  -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PUNLINK"
+grep -q 'destroyed' "$WORK/punlink.out" && ok "deprovision unlinks a linked resource (record-only)" || { bad "unlink failed"; cat "$WORK/punlink.out"; }
+
 # 20f-iii. Approvals over MCP. A governed credential (litellm-key, auto_approvable:false)
 # parks for approval; finn — the project's manager — sees it via list_pending_approvals
 # and clears it with approve_request, so the agent loop never needs the web UI.

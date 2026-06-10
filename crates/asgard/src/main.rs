@@ -594,6 +594,24 @@ enum ResourceCmd {
         #[arg(long)]
         spec: Option<String>,
     },
+    /// Link pre-existing infrastructure for cost attribution (never managed).
+    Link {
+        #[arg(long)]
+        name: String,
+        /// Cost source that attributes its spend (aws-cost-explorer, databricks-billing, flat, none, …).
+        #[arg(long)]
+        cost_source: String,
+        #[arg(long)]
+        project: Option<String>,
+        /// Monthly estimate until the source reports actuals.
+        #[arg(long)]
+        est_monthly_usd: Option<f64>,
+        /// Repeated key=value tags to record on the link.
+        #[arg(long = "tag", value_name = "KEY=VALUE")]
+        tags: Vec<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Grant one resource access to another.
     Grant {
         #[arg(long)]
@@ -1516,6 +1534,30 @@ async fn main() -> anyhow::Result<()> {
                         m.insert("spec".into(), parse_json(&s)?);
                     }
                     run_tool(&r, "request_resource", m, Shape::Auto).await;
+                }
+                ResourceCmd::Link {
+                    name,
+                    cost_source,
+                    project,
+                    est_monthly_usd,
+                    tags,
+                    note,
+                } => {
+                    let mut m = Map::new();
+                    m.insert("name".into(), json!(name));
+                    m.insert("cost_source".into(), json!(cost_source));
+                    opt(&mut m, "project_id", project);
+                    opt(&mut m, "est_monthly_usd", est_monthly_usd);
+                    if !tags.is_empty() {
+                        let kv: Map<String, serde_json::Value> = tags
+                            .iter()
+                            .filter_map(|t| t.split_once('='))
+                            .map(|(k, v)| (k.to_string(), json!(v)))
+                            .collect();
+                        m.insert("tags".into(), serde_json::Value::Object(kv));
+                    }
+                    opt(&mut m, "note", note);
+                    run_tool(&r, "link_resource", m, Shape::Auto).await;
                 }
                 ResourceCmd::Grant {
                     consumer,

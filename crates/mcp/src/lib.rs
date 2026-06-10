@@ -371,6 +371,22 @@ pub struct RequestResourceArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct LinkResourceArgs {
+    pub project_id: Option<String>,
+    /// Human label for the linked infrastructure (e.g. "legacy RDS + S3").
+    pub name: String,
+    /// The cost source that attributes its spend (e.g. aws-cost-explorer,
+    /// databricks-billing, litellm, flat, none).
+    pub cost_source: String,
+    /// Monthly estimate, reported until/unless the source measures actuals.
+    pub est_monthly_usd: Option<f64>,
+    /// Extra tags to record on the link (informational — the cloud-side
+    /// `project=<id>` tag is what cost sources filter on).
+    pub tags: Option<std::collections::BTreeMap<String, String>>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct DeployImageArgs {
     /// Target project (required on a user token; omit on a project key).
     pub project_id: Option<String>,
@@ -1365,6 +1381,40 @@ impl AsgardMcp {
         Ok(serde_json::to_string(&outcome).unwrap_or_default())
     }
 
+    async fn do_link_resource(&self, pid: &str, a: LinkResourceArgs) -> Result<String, String> {
+        let reg = self
+            .registry
+            .require_active(pid)
+            .await
+            .map_err(|e| e.to_string())?;
+        let rec = self
+            .provision
+            .link_resource(
+                &reg,
+                &a.name,
+                &a.cost_source,
+                a.est_monthly_usd.unwrap_or(0.0),
+                a.tags.unwrap_or_default(),
+                a.note.as_deref().unwrap_or(""),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let feed = if self.provision.cost_source_configured(a.cost_source.trim()) {
+            ""
+        } else {
+            " This source has no live feed in this deployment yet, so the estimate stands in until an operator wires it."
+        };
+        Ok(json!({
+            "resource": rec,
+            "next": format!(
+                "Asgard does not manage this infrastructure. Tag the underlying cloud resources \
+                 `project={pid}` yourself — the cost source attributes spend by that tag. One link \
+                 per cost source per project is enough.{feed} Unlink (record-only) with deprovision_resource."
+            ),
+        })
+        .to_string())
+    }
+
     async fn do_deploy_image(&self, pid: &str, a: DeployImageArgs) -> Result<String, String> {
         let requester = a.requester.as_deref().unwrap_or(DEFAULT_REQUESTER);
         let outcome = self
@@ -2150,6 +2200,21 @@ impl AsgardMcp {
             a.requester = Self::requester_from_auth(&ctx);
         }
         wrap(self.do_request_resource(&pid, a).await)
+    }
+
+    #[tool(
+        description = "Link pre-existing (brownfield) infrastructure to a project for cost attribution WITHOUT Asgard managing it: records a `linked` external resource whose declared cost source and monthly estimate flow into the project's cost rollup. Asgard never touches the infrastructure itself — tag the real cloud resources `project=<id>` so the source can attribute actuals. Unlink (record-only) with deprovision_resource. On a user token pass project_id; on a project key omit it."
+    )]
+    async fn link_resource(
+        &self,
+        ctx: RequestContext<RoleServer>,
+        Parameters(a): Parameters<LinkResourceArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let pid = match self.resolve_project(&ctx, a.project_id.clone()).await {
+            Ok(p) => p,
+            Err(e) => return deny(e),
+        };
+        wrap(self.do_link_resource(&pid, a).await)
     }
 
     #[tool(
