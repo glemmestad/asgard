@@ -1,3 +1,10 @@
+# [0.21.0](https://github.com/glemmestad/asgard/compare/v0.20.0...v0.21.0) (2026-06-10)
+
+
+### Features
+
+* re-trigger release for bootstrap excellence hardening ([#44](https://github.com/glemmestad/asgard/issues/44)) ([#45](https://github.com/glemmestad/asgard/issues/45)) ([207e13a](https://github.com/glemmestad/asgard/commit/207e13a9e598966499038664ca73251471989802))
+
 # [0.20.0](https://github.com/glemmestad/asgard/compare/v0.19.0...v0.20.0) (2026-06-10)
 
 
