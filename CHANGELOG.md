@@ -1,3 +1,10 @@
+## [0.25.1](https://github.com/glemmestad/asgard/compare/v0.25.0...v0.25.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* **provision:** bound terraform connector host disk to stop volume fill ([#50](https://github.com/glemmestad/asgard/issues/50)) ([cc1f671](https://github.com/glemmestad/asgard/commit/cc1f67189f1d1b7bd3c3e38e6f260a4b2b6ad4fc))
+
 # [0.25.0](https://github.com/glemmestad/asgard/compare/v0.24.0...v0.25.0) (2026-06-11)
 
 
