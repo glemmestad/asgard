@@ -32,10 +32,10 @@ const principles = [
             <span class="code-title">quickstart</span>
           </div>
           <pre><span class="c"># 1 · run it, SQLite, no external services</span>
-<span class="p">$</span> docker run -p 8080:8080 <span class="o">asgard</span> serve
+<span class="p">$</span> docker run -p 8080:8080 <span class="o">frontkeep</span> serve
 
 <span class="c"># 2 · register the project (the gate)</span>
-<span class="p">$</span> asgard project register \
+<span class="p">$</span> frontkeep project register \
     --name <span class="s">"Fraud Detection"</span> --owner <span class="s">you@corp.example</span> \
     --manager <span class="s">lead@corp.example</span> --group <span class="s">platform</span> \
     --classification <span class="s">poc</span> --budget-usd <span class="o">100</span>
