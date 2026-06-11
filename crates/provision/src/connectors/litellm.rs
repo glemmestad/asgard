@@ -31,10 +31,10 @@ impl LiteLlmConnector {
 /// always carry the project id so the cost source can read spend back per project.
 fn build_generate_body(req: &ProvisionRequest) -> Value {
     let project_id = &req.ctx.project_id;
-    let alias = format!("asgard-{}-{}", project_id, req.name);
+    let alias = format!("frontkeep-{}-{}", project_id, req.name);
     let mut body = json!({
         "key_alias": alias,
-        "metadata": { "project_id": project_id, "managed_by": "asgard" },
+        "metadata": { "project_id": project_id, "managed_by": "frontkeep" },
         "budget_duration": "30d",
     });
     let map = body.as_object_mut().unwrap();
@@ -91,7 +91,7 @@ impl Provisioner for LiteLlmConnector {
         req: &ProvisionRequest,
         _plan: &Plan,
     ) -> Result<Provisioned, ProvisionError> {
-        let alias = format!("asgard-{}-{}", req.ctx.project_id, req.name);
+        let alias = format!("frontkeep-{}-{}", req.ctx.project_id, req.name);
         let body = build_generate_body(req);
         let url = format!("{}/key/generate", self.base_url.trim_end_matches('/'));
         let resp = self
@@ -188,9 +188,9 @@ mod tests {
     #[test]
     fn body_carries_alias_metadata_and_budget() {
         let b = build_generate_body(&req(json!({ "max_budget_usd": 25.0 })));
-        assert_eq!(b["key_alias"], "asgard-proj-2026-0001-default");
+        assert_eq!(b["key_alias"], "frontkeep-proj-2026-0001-default");
         assert_eq!(b["metadata"]["project_id"], "proj-2026-0001");
-        assert_eq!(b["metadata"]["managed_by"], "asgard");
+        assert_eq!(b["metadata"]["managed_by"], "frontkeep");
         assert_eq!(b["budget_duration"], "30d");
         assert_eq!(b["max_budget"], 25.0);
     }
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn parses_minted_key() {
-        let v = json!({ "key": "sk-abc123", "key_name": "asgard-proj-default" });
+        let v = json!({ "key": "sk-abc123", "key_name": "frontkeep-proj-default" });
         assert_eq!(parse_generate_response(&v).unwrap(), "sk-abc123");
         assert!(parse_generate_response(&json!({ "error": "nope" })).is_err());
     }

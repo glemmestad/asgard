@@ -22,8 +22,8 @@ provisioner:
     # vpc_id/subnet_ids wins; else these fleet defaults (dropped when the env is unset);
     # else the module falls back to the account's default VPC and its subnets.
     defaults:
-      vpc_id: ${ASGARD_DEFAULT_VPC_ID}
-      subnet_ids: ${ASGARD_DEFAULT_SUBNET_IDS:csv}
+      vpc_id: ${FRONTKEEP_DEFAULT_VPC_ID}
+      subnet_ids: ${FRONTKEEP_DEFAULT_SUBNET_IDS:csv}
     # Kill suspends the service to halt charges by re-applying with the task count
     # at zero; un-kill re-applies the original spec.
     stop_tfvars:

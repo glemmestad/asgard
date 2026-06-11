@@ -6,10 +6,10 @@
 export const site = {
   name: 'Frontkeep',
   tagline: 'The Agent Control Plane.',
-  domain: 'asgard.build',
-  github: 'https://github.com/glemmestad/asgard',
+  domain: 'frontkeep.build',
+  github: 'https://github.com/glemmestad/frontkeep',
   docs: '/docs',
-  contact: 'mailto:hello@asgard.build',
+  contact: 'mailto:hello@frontkeep.build',
 };
 
 export const nav = [
@@ -131,7 +131,7 @@ export const openCore = {
       'Multi-tenant isolation',
       'Priority support & SLAs',
     ],
-    cta: { label: 'Register interest', href: 'mailto:hello@asgard.build?subject=Frontkeep%20Enterprise' },
+    cta: { label: 'Register interest', href: 'mailto:hello@frontkeep.build?subject=Frontkeep%20Enterprise' },
     note: 'Enterprise licensing isn’t generally available yet. Contact us to register interest.',
   },
 };

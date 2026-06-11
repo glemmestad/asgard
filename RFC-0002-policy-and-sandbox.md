@@ -41,7 +41,7 @@ Every `Decision` is written to the `audit_log` with the originating `trace_id`, 
 
 ### A.2 Why Cedar is the default
 
-- **Rust-native and embeddable** (`cedar-policy` crate) — no sidecar, no extra process, no network hop. This is the deciding factor for the lightweight goal: a 100-person company's `docker run asgard` must not require standing up a policy server.
+- **Rust-native and embeddable** (`cedar-policy` crate) — no sidecar, no extra process, no network hop. This is the deciding factor for the lightweight goal: a 100-person company's `docker run frontkeep` must not require standing up a policy server.
 - **Verified, analyzable policy language** with a typed schema and validation, designed for authorization specifically (PARC: principal/action/resource/condition).
 - **Fast** — in-process evaluation, microsecond-range, which matters because the gateway is on the hot path of every model call (target < 50 ms p95 total overhead).
 

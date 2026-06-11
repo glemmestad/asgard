@@ -41,7 +41,10 @@ BUILD_BRIEF.md
 CHATLOG.md
 COMPETITIVE_ANALYSIS.md
 
-# Local operator config (deployment-specific; use `asgard init` to generate)
+# Local operator config (deployment-specific; use `frontkeep init` to generate).
+# The pre-rename name is still ignored: it's read as a fallback and existing
+# checkouts may still have one with deployment-specific secrets.
+frontkeep.yaml
 asgard.yaml
 
 # Terraform: modules under modules/ are templates the connector copies + inits at

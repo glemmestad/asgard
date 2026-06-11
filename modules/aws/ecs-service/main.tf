@@ -55,11 +55,11 @@ data "aws_subnets" "default" {
 }
 
 locals {
-  prefix  = lower("${lookup(var.tags, "project", "asgard")}-${var.name}")
+  prefix  = lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}")
   make_sg = length(var.security_group_ids) == 0
   task_sg = local.make_sg ? [aws_security_group.task[0].id] : var.security_group_ids
   # Precedence: caller-supplied id → account default VPC. The fleet-default layer
-  # (ASGARD_DEFAULT_VPC_ID/SUBNET_IDS) is applied upstream as a manifest tfvar, so by
+  # (FRONTKEEP_DEFAULT_VPC_ID/SUBNET_IDS) is applied upstream as a manifest tfvar, so by
   # the time it reaches here it looks like a caller-supplied value.
   vpc_id     = var.vpc_id != "" ? var.vpc_id : try(one(data.aws_vpcs.default[0].ids), "")
   subnet_ids = length(var.subnet_ids) > 0 ? var.subnet_ids : try(data.aws_subnets.default[0].ids, [])
@@ -175,7 +175,7 @@ resource "aws_security_group" "alb" {
   lifecycle {
     precondition {
       condition     = local.vpc_id != "" && length(local.subnet_ids) > 0
-      error_message = "No VPC/subnets resolved for ecs-service: pass vpc_id + subnet_ids, set the fleet defaults (ASGARD_DEFAULT_VPC_ID / ASGARD_DEFAULT_SUBNET_IDS), or ensure the target account has a default VPC."
+      error_message = "No VPC/subnets resolved for ecs-service: pass vpc_id + subnet_ids, set the fleet defaults (FRONTKEEP_DEFAULT_VPC_ID / FRONTKEEP_DEFAULT_SUBNET_IDS), or ensure the target account has a default VPC."
     }
   }
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/mcp.schema.json",
-  "title": "Asgard MCPServer Manifest",
-  "description": "Canonical schema for Asgard catalog entities of kind Tool or MCPServer. Describes tools and Model Context Protocol (MCP) servers, including their transport, ownership, auth, and consumer visibility.",
+  "$id": "https://frontkeep.dev/schemas/mcp.schema.json",
+  "title": "Frontkeep MCPServer Manifest",
+  "description": "Canonical schema for Frontkeep catalog entities of kind Tool or MCPServer. Describes tools and Model Context Protocol (MCP) servers, including their transport, ownership, auth, and consumer visibility.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,8 +13,8 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1",
-      "description": "Asgard catalog API version."
+      "const": "frontkeep.dev/v1",
+      "description": "Frontkeep catalog API version."
     },
     "kind": {
       "type": "string",

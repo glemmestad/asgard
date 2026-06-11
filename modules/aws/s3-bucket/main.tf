@@ -1,4 +1,4 @@
-# Private, versioned, encrypted S3 bucket. The Asgard terraform connector writes
+# Private, versioned, encrypted S3 bucket. The Frontkeep terraform connector writes
 # `name` + the immutable project `tags` map as tfvars; any extra spec keys it
 # passes (cloud, account, …) arrive as undeclared vars and are ignored.
 
@@ -29,7 +29,7 @@ provider "aws" {
 
 # Bucket names are globally unique + lowercase; namespace by project and account.
 locals {
-  bucket = lower("${lookup(var.tags, "project", "asgard")}-${var.name}-${lookup(var.tags, "account", "acct")}")
+  bucket = lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}-${lookup(var.tags, "account", "acct")}")
 }
 
 resource "aws_s3_bucket" "this" {

@@ -1,7 +1,7 @@
 //! Persistence for provisioned resources. `project_id` is the join key that ties
 //! infra spend into the same per-project rollup as model spend.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::Serialize;
 use sqlx::Row;
 
@@ -131,7 +131,7 @@ impl ProvisionRepo {
                 .q("UPDATE provisioned_resources SET state = ?, updated_at = ? WHERE id = ?"),
         )
         .bind(state)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .execute(self.db.pool())
         .await?;
@@ -241,7 +241,7 @@ impl ProvisionRepo {
              WHERE id = ? AND state = ? AND (worker_owner IS NULL OR updated_at < ?)",
         ))
         .bind(owner)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .bind(expect_state)
         .bind(stale)
@@ -256,7 +256,7 @@ impl ProvisionRepo {
         sqlx::query(&self.db.q(
             "UPDATE provisioned_resources SET updated_at = ? WHERE id = ? AND worker_owner = ?",
         ))
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .bind(owner)
         .execute(self.db.pool())
@@ -279,7 +279,7 @@ impl ProvisionRepo {
         ))
         .bind(state)
         .bind(outputs.to_string())
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .execute(self.db.pool())
         .await?;
@@ -305,7 +305,7 @@ impl ProvisionRepo {
         .bind(error)
         .bind(attempts)
         .bind(next_retry_at)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .execute(self.db.pool())
         .await?;
@@ -333,7 +333,7 @@ impl ProvisionRepo {
         .bind(spec.to_string())
         .bind(est_monthly_usd)
         .bind(request_id)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .execute(self.db.pool())
         .await?;
@@ -354,7 +354,7 @@ impl ProvisionRepo {
              WHERE id = ? AND state IN ('provisioning', 'destroying') \
              AND (worker_owner IS NULL OR updated_at < ?)",
         ))
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .bind(stale)
         .execute(self.db.pool())
@@ -370,7 +370,7 @@ impl ProvisionRepo {
              state = CASE state WHEN 'failed' THEN 'provisioning' \
                                 WHEN 'destroy_failed' THEN 'destroying' ELSE state END, \
              attempts = 0, next_retry_at = NULL, updated_at = ? WHERE id = ?"))
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .execute(self.db.pool())
         .await?;

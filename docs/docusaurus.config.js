@@ -1,10 +1,10 @@
 // @ts-check
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: 'Asgard',
+  title: 'Frontkeep',
   tagline: 'Open-source control plane for AI & agent development',
-  url: 'https://asgard.dev',
-  // Served by the Asgard binary under /docs (embedded via rust-embed), so every
+  url: 'https://frontkeep.dev',
+  // Served by the Frontkeep binary under /docs (embedded via rust-embed), so every
   // asset and route is prefixed accordingly.
   baseUrl: '/docs/',
   onBrokenLinks: 'warn',
@@ -26,7 +26,7 @@ const config = {
   ],
   themeConfig: {
     navbar: {
-      title: 'Asgard',
+      title: 'Frontkeep',
       items: [
         { type: 'docSidebar', sidebarId: 'docs', position: 'left', label: 'Docs' },
         { href: '/', label: '← App', position: 'right' },
@@ -34,7 +34,7 @@ const config = {
     },
     footer: {
       style: 'dark',
-      copyright: 'Apache-2.0. Asgard.',
+      copyright: 'Apache-2.0. Frontkeep.',
     },
   },
 };

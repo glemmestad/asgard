@@ -7,7 +7,7 @@ title: Architecture
 
 A Cargo workspace of focused crates. `storage` is the lowest layer; `catalog`
 owns the entity model and is depended on by the service crates; surfaces (`api`,
-`cli`, `mcp`) sit on top, wired together by the `asgard` binary.
+`cli`, `mcp`) sit on top, wired together by the `frontkeep` binary.
 
 ```
 frontkeep (binary: serve / mcp / cli)
@@ -44,5 +44,5 @@ See [RFC-0001]. Typed entity graph, Backstage-shaped where it helps, reconciled
 from Git with pull-based semantics so deletes propagate (avoiding catalog drift).
 Frontkeep emits `catalog-info.yaml` for Backstage interop (one-way).
 
-[RFC-0001]: https://github.com/asgard/asgard/blob/main/RFC-0001-entity-model.md
-[RFC-0002]: https://github.com/asgard/asgard/blob/main/RFC-0002-policy-and-sandbox.md
+[RFC-0001]: https://github.com/glemmestad/frontkeep/blob/main/RFC-0001-entity-model.md
+[RFC-0002]: https://github.com/glemmestad/frontkeep/blob/main/RFC-0002-policy-and-sandbox.md

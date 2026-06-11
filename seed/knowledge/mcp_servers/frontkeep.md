@@ -7,7 +7,7 @@ agent-first.
 
 ## Prerequisites
 
-- A **Personal Access Token** (`asg_pat_…`). Create one on the Users page; it acts
+- A **Personal Access Token** (`fk_pat_…`). Create one on the Users page; it acts
   across every project you own or manage. Export it as `FRONTKEEP_PAT` and reference
   `$FRONTKEEP_PAT` in the install snippet rather than pasting the literal token.
 - The URL is your deployment's `/mcp` endpoint — replace the example host with

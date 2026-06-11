@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/agent.schema.json",
-  "title": "Asgard Agent",
-  "description": "Canonical schema for an Asgard Agent entity manifest. An Agent represents an autonomous or assisted AI agent backed by a model, prompt, and a set of tools, owned by a group or user within the entity catalog.",
+  "$id": "https://frontkeep.dev/schemas/agent.schema.json",
+  "title": "Frontkeep Agent",
+  "description": "Canonical schema for an Frontkeep Agent entity manifest. An Agent represents an autonomous or assisted AI agent backed by a model, prompt, and a set of tools, owned by a group or user within the entity catalog.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1"
+      "const": "frontkeep.dev/v1"
     },
     "kind": {
       "const": "Agent"

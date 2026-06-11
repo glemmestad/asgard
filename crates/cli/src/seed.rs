@@ -1,4 +1,4 @@
-//! `asgard seed apply` / `bootstrap --write`: take the `bootstrap` tool's output
+//! `frontkeep seed apply` / `bootstrap --write`: take the `bootstrap` tool's output
 //! (`{ files: [{path, body}] }`) and write each file to disk under a destination
 //! directory. The MCP only returns the bodies and tells the agent to write them;
 //! the CLI is what actually creates the repo — the biggest ergonomic win over the
@@ -6,8 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use asgard_skills::SkillFile;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use frontkeep_skills::SkillFile;
 use serde_json::Value;
 
 use crate::CliError;
@@ -175,7 +175,8 @@ mod tests {
 
     #[test]
     fn writes_files_and_respects_dry_run_and_force() {
-        let dir = std::env::temp_dir().join(format!("asgard-seed-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-seed-{}", frontkeep_storage::new_uid()));
         let plan = json!({
             "files": [
                 {"path": "AGENTS.md", "body": "hello"},
@@ -211,7 +212,8 @@ mod tests {
 
     #[test]
     fn apply_b64_decodes_and_writes() {
-        let dir = std::env::temp_dir().join(format!("asgard-skb64-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-skb64-{}", frontkeep_storage::new_uid()));
         let value = json!({
             "files": [
                 {"path": "SKILL.md", "content_b64": STANDARD.encode(b"hello")},
@@ -230,7 +232,8 @@ mod tests {
 
     #[test]
     fn apply_install_handles_both_encodings() {
-        let dir = std::env::temp_dir().join(format!("asgard-skin-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-skin-{}", frontkeep_storage::new_uid()));
         let binary = [0u8, 159, 146, 150]; // not valid UTF-8
         let value = json!({
             "files": [
@@ -250,7 +253,8 @@ mod tests {
 
     #[test]
     fn dir_to_bundle_walks_nested_and_binary() {
-        let dir = std::env::temp_dir().join(format!("asgard-skdir-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-skdir-{}", frontkeep_storage::new_uid()));
         std::fs::create_dir_all(dir.join("scripts")).unwrap();
         std::fs::write(dir.join("SKILL.md"), "---\nname: t\n---\n").unwrap();
         let binary = [0u8, 159, 146, 150];
@@ -264,7 +268,8 @@ mod tests {
         assert!(paths.contains(&"scripts/bin"));
 
         // Round-trips the binary file back to disk through the export writer.
-        let out = std::env::temp_dir().join(format!("asgard-skout-{}", asgard_storage::new_uid()));
+        let out =
+            std::env::temp_dir().join(format!("frontkeep-skout-{}", frontkeep_storage::new_uid()));
         apply_b64(&json!({ "files": bundle }), &out, true, false).unwrap();
         assert_eq!(std::fs::read(out.join("scripts/bin")).unwrap(), binary);
 
@@ -274,7 +279,8 @@ mod tests {
 
     #[test]
     fn dir_to_bundle_errors_on_empty_dir() {
-        let dir = std::env::temp_dir().join(format!("asgard-skmt-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-skmt-{}", frontkeep_storage::new_uid()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(dir_to_bundle(&dir).is_err());
         let _ = std::fs::remove_dir_all(&dir);

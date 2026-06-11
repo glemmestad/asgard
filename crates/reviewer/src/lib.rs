@@ -19,7 +19,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use asgard_registry::{EvidenceVerdict, Registration, ReviewerOutcome, ReviewerPanel};
+use frontkeep_registry::{EvidenceVerdict, Registration, ReviewerOutcome, ReviewerPanel};
 
 pub use code_review::{
     CodeReview, RegistryStandards, ReviewDepth, ReviewDepthMap, StandardsSource,
@@ -55,7 +55,7 @@ pub struct ReviewRequest {
     pub target: String,
     pub data_class: String,
     pub repo_url: String,
-    pub evidence: asgard_registry::Evidence,
+    pub evidence: frontkeep_registry::Evidence,
     /// The pure machine verdict, so a reviewer can reason about what already passed.
     pub machine_verdict: EvidenceVerdict,
 }
@@ -253,7 +253,7 @@ impl ReviewerRegistry {
 }
 
 /// Ties the reviewer catalog to its handler registry and runs the panel. Implements
-/// [`asgard_registry::ReviewerPanel`] so `request_promotion` can call it through the
+/// [`frontkeep_registry::ReviewerPanel`] so `request_promotion` can call it through the
 /// registry without depending on the gateway.
 pub struct ReviewService {
     catalog: ReviewerCatalog,

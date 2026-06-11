@@ -4,7 +4,7 @@
 //! reports are single-table `GROUP BY`s and never join `projects_runtime` at read
 //! time.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::Serialize;
 use sqlx::Row;
 
@@ -164,7 +164,7 @@ impl CostRollupRepo {
               cumulative_usd = excluded.cumulative_usd, owner = excluded.owner, \
               manager = excluded.manager, cost_group = excluded.cost_group, \
               cost_center = excluded.cost_center, classification = excluded.classification"))
-        .bind(asgard_storage::new_uid())
+        .bind(frontkeep_storage::new_uid())
         .bind(&r.project_id)
         .bind(&r.day)
         .bind(&r.service)
@@ -177,7 +177,7 @@ impl CostRollupRepo {
         .bind(&r.cost_group)
         .bind(&r.cost_center)
         .bind(&r.classification)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(())
@@ -329,7 +329,7 @@ impl CostRollupRepo {
         .bind(f.high_usd)
         .bind(f.r2)
         .bind(f.n_days)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(())
@@ -358,7 +358,7 @@ impl CostRollupRepo {
              expected_usd = excluded.expected_usd, actual_usd = excluded.actual_usd, \
              z_score = excluded.z_score, severity = excluded.severity, created_at = excluded.created_at",
         ))
-        .bind(asgard_storage::new_uid())
+        .bind(frontkeep_storage::new_uid())
         .bind(&a.project_id)
         .bind(&a.day)
         .bind(&a.service)
@@ -366,7 +366,7 @@ impl CostRollupRepo {
         .bind(a.actual_usd)
         .bind(a.z_score)
         .bind(&a.severity)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(())
@@ -453,8 +453,10 @@ mod tests {
     use super::*;
 
     async fn repo() -> CostRollupRepo {
-        let path =
-            std::env::temp_dir().join(format!("asgard-rollup-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-rollup-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

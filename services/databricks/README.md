@@ -38,7 +38,7 @@ Inference is **service usage**, not an MCP control-plane call. Call the gateway
 with the project's LLM key:
 
 ```sh
-curl -sS https://<asgard-host>/api/gateway/chat \
+curl -sS https://<frontkeep-host>/api/gateway/chat \
   -H "Authorization: Bearer <project-llm-key>" \
   -H 'content-type: application/json' \
   -d '{"model":"model:databricks/llama-3-3-70b","messages":[{"role":"user","content":"hi"}],"data_class":"internal"}'

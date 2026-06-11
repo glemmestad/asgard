@@ -4,7 +4,7 @@
 //! State lives here (not in memory), so a restart resumes: a crashed run leaves a
 //! stale lease that [`ReviewJobs::reclaim_stale`] returns to `pending`.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use sqlx::Row;
 
 use crate::RegistryError;
@@ -39,8 +39,8 @@ impl ReviewJobs {
         project_id: &str,
         target: &str,
     ) -> Result<String, RegistryError> {
-        let id = asgard_storage::new_uid();
-        let now = asgard_storage::now();
+        let id = frontkeep_storage::new_uid();
+        let now = frontkeep_storage::now();
         sqlx::query(&self.db.q(
             "INSERT INTO review_jobs (id, request_id, project_id, target, status, attempts, created_at, updated_at) \
              VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)",
@@ -59,7 +59,7 @@ impl ReviewJobs {
     /// Return `running` jobs whose lease has expired to `pending` (a worker crashed
     /// mid-run). Returns how many were reclaimed.
     pub async fn reclaim_stale(&self) -> Result<u64, RegistryError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let res = sqlx::query(&self.db.q(
             "UPDATE review_jobs SET status = 'pending', lease_until = NULL, updated_at = ? \
              WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?",
@@ -76,7 +76,7 @@ impl ReviewJobs {
     /// safe without `FOR UPDATE` (portable across SQLite + Postgres) — a losing
     /// racer updates zero rows and we retry. Returns `None` when the queue is empty.
     pub async fn claim_next(&self, lease_secs: i64) -> Result<Option<ReviewJob>, RegistryError> {
-        let lease_until = asgard_storage::plus_seconds(&asgard_storage::now(), lease_secs);
+        let lease_until = frontkeep_storage::plus_seconds(&frontkeep_storage::now(), lease_secs);
         loop {
             let row = sqlx::query(&self.db.q(
                 "SELECT id, request_id, project_id, target, status, attempts FROM review_jobs \
@@ -86,7 +86,7 @@ impl ReviewJobs {
             .await?;
             let Some(row) = row else { return Ok(None) };
             let id: String = row.get("id");
-            let now = asgard_storage::now();
+            let now = frontkeep_storage::now();
             let res = sqlx::query(&self.db.q(
                 "UPDATE review_jobs SET status = 'running', lease_until = ?, attempts = attempts + 1, updated_at = ? \
                  WHERE id = ? AND status = 'pending'",
@@ -112,7 +112,7 @@ impl ReviewJobs {
 
     /// Mark a job complete.
     pub async fn finish(&self, id: &str) -> Result<(), RegistryError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         sqlx::query(&self.db.q(
             "UPDATE review_jobs SET status = 'done', lease_until = NULL, updated_at = ? WHERE id = ?",
         ))
@@ -133,7 +133,7 @@ impl ReviewJobs {
         attempts: i64,
         max_attempts: i64,
     ) -> Result<bool, RegistryError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let terminal = attempts >= max_attempts;
         let status = if terminal { "failed" } else { "pending" };
         sqlx::query(&self.db.q(
@@ -176,7 +176,8 @@ mod tests {
     use super::*;
 
     async fn jobs() -> ReviewJobs {
-        let path = std::env::temp_dir().join(format!("asgard-rj-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-rj-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

@@ -13,37 +13,37 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use asgard_api::AppState;
-use asgard_catalog::{
+use frontkeep_api::AppState;
+use frontkeep_catalog::{
     CatalogRepo, FixtureProvider, GitHubProvider, GitLabProvider, SchemaRegistry, SourceProvider,
 };
-use asgard_gateway::{
+use frontkeep_gateway::{
     AnthropicProvider, Gateway, GatewayRepo, MockProvider, Mode, ModelInfo, ModelRegistry,
     OpenAiProvider, Provider,
 };
-use asgard_identity::oidc::OidcConfig;
-use asgard_identity::{IdentityService, OidcRoleConfig};
-use asgard_policy::{CedarEngine, PolicyEngine};
-use asgard_provision::{
+use frontkeep_identity::oidc::OidcConfig;
+use frontkeep_identity::{IdentityService, OidcRoleConfig};
+use frontkeep_policy::{CedarEngine, PolicyEngine};
+use frontkeep_provision::{
     AutoApprovePolicy, AwsCostExplorerSource, BuiltinSecretStore, CloudTarget,
     DatabricksCostSource, ExecConnector, ExecCostSource, GatewaySource, LiteLlmConnector,
     LiteLlmCostSource, ProvisionRepo, ProvisionService, RunLogStore, SecretStore, ServiceCatalog,
     StubProvisioner, TerraformConnector, TfStateStore, DEV_SECRET_KEY,
 };
-use asgard_registry::{
+use frontkeep_registry::{
     ClassificationRequirements, GovernanceConfig, GroupAllowlist, GroupEntry, ProjectRegistry,
     RegistrationPolicy, ReviewConfig,
 };
-use asgard_reviewer::{
+use frontkeep_reviewer::{
     CodeReview, LlmJudge, RegistryStandards, ReviewDepth, ReviewDepthMap, ReviewService,
     ReviewerCatalog, ReviewerRegistry, WebhookReviewer,
 };
-use asgard_storage::{leases::Leases, Db};
-use asgard_workflow::WorkflowEngine;
+use frontkeep_storage::{leases::Leases, Db};
+use frontkeep_workflow::WorkflowEngine;
 
-use asgard_cli::config::Resolved;
-use asgard_cli::mcp::McpClient;
-use asgard_cli::render::{render, Output, Shape};
+use frontkeep_cli::config::Resolved;
+use frontkeep_cli::mcp::McpClient;
+use frontkeep_cli::render::{render, Output, Shape};
 
 #[derive(RustEmbed)]
 #[folder = "../../web/dist"]
@@ -69,7 +69,7 @@ struct Cli {
     #[arg(
         long,
         env = "FRONTKEEP_DATABASE_URL",
-        default_value = "sqlite://asgard.db",
+        default_value = "sqlite://frontkeep.db",
         global = true
     )]
     database_url: String,
@@ -77,11 +77,11 @@ struct Cli {
     /// selected profile, then `http://localhost:8080`.
     #[arg(long, env = "FRONTKEEP_URL", global = true)]
     url: Option<String>,
-    /// User PAT (`asg_pat_…`) authenticating CLI commands. Falls back to the
+    /// User PAT (`fk_pat_…`) authenticating CLI commands. Falls back to the
     /// selected profile. Mint one in the UI under "Get Started".
     #[arg(long, env = "FRONTKEEP_PAT", global = true)]
     pat: Option<String>,
-    /// Config profile to use (see `asgard login`); defaults to the file's default.
+    /// Config profile to use (see `frontkeep login`); defaults to the file's default.
     #[arg(long, env = "FRONTKEEP_PROFILE", global = true)]
     profile: Option<String>,
     /// Output format for CLI commands: json, table (default), or yaml.
@@ -105,7 +105,7 @@ enum Cmd {
         #[arg(long)]
         config: Option<PathBuf>,
     },
-    /// Write a starter asgard.yaml into the current directory.
+    /// Write a starter frontkeep.yaml into the current directory.
     Init,
     /// Save a server URL + PAT into a config profile (named by the global --profile).
     Login {
@@ -117,7 +117,7 @@ enum Cmd {
     Tools,
     /// Call any MCP tool by name — guarantees parity with the agent surface.
     Call {
-        /// Tool name (see `asgard tools`).
+        /// Tool name (see `frontkeep tools`).
         tool: String,
         /// Arguments as a JSON object ("-" reads stdin). Mutually exclusive with --arg.
         #[arg(long, conflicts_with = "arg")]
@@ -1020,7 +1020,7 @@ fn promote_legacy_env() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Restore default SIGPIPE so `asgard … | head` terminates quietly like any
+    // Restore default SIGPIPE so `frontkeep … | head` terminates quietly like any
     // Unix tool instead of panicking on a broken-pipe write.
     #[cfg(unix)]
     unsafe {
@@ -1070,18 +1070,18 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Serve { bind, config } => serve(&database_url, &bind, config).await?,
         Cmd::Mcp { config } => run_mcp(&database_url, config).await?,
         Cmd::Init => {
-            let p = asgard_cli::init_config(Path::new("."))?;
+            let p = frontkeep_cli::init_config(Path::new("."))?;
             println!("wrote {}", p.display());
         }
         Cmd::Validate { path } => {
-            let report = asgard_cli::validate_manifest(&path)?;
+            let report = frontkeep_cli::validate_manifest(&path)?;
             println!("{report}");
         }
         Cmd::Agent {
             cmd: AgentCmd::New { template, name },
         } => {
             let dir = PathBuf::from(&name);
-            let written = asgard_cli::agent_new(&template, &dir)?;
+            let written = frontkeep_cli::agent_new(&template, &dir)?;
             println!("scaffolded {} files into {}/", written.len(), dir.display());
         }
         Cmd::Completions { shell } => {
@@ -1107,17 +1107,17 @@ async fn main() -> anyhow::Result<()> {
                 .identity
                 .create_pat(&boot.user.id, &name, ttl_seconds)
                 .await?;
-            asgard_storage::audit::append(
+            frontkeep_storage::audit::append(
                 &core.db,
-                &asgard_storage::audit::AuditRecord::new(
+                &frontkeep_storage::audit::AuditRecord::new(
                     &boot.user.username,
                     "admin.bootstrap_pat",
                 )
                 .outcome("allow")
                 .reason(if boot.created {
-                    "admin created + PAT minted via `asgard admin bootstrap`"
+                    "admin created + PAT minted via `frontkeep admin bootstrap`"
                 } else {
-                    "PAT minted via `asgard admin bootstrap`"
+                    "PAT minted via `frontkeep admin bootstrap`"
                 }),
             )
             .await?;
@@ -1143,7 +1143,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Cmd::Call { tool, json, arg } => {
             let r = conn(&url, &pat, &profile, &output)?;
-            let args = asgard_cli::mcp::args_from(json, &arg)?;
+            let args = frontkeep_cli::mcp::args_from(json, &arg)?;
             run_tool(&r, &tool, args, Shape::Auto).await;
         }
         Cmd::Catalog { cmd } => {
@@ -1765,7 +1765,7 @@ fn conn(
     profile: &Option<String>,
     output: &Option<String>,
 ) -> anyhow::Result<Resolved> {
-    Ok(asgard_cli::config::load().resolve(
+    Ok(frontkeep_cli::config::load().resolve(
         url.clone(),
         pat.clone(),
         profile.clone(),
@@ -1797,7 +1797,7 @@ fn require_pat(r: &Resolved) -> String {
         Some(p) => p.clone(),
         None => {
             eprintln!(
-                "error: no PAT configured — pass --pat, set FRONTKEEP_PAT, or run `asgard login`"
+                "error: no PAT configured — pass --pat, set FRONTKEEP_PAT, or run `frontkeep login`"
             );
             std::process::exit(3);
         }
@@ -1807,7 +1807,7 @@ fn require_pat(r: &Resolved) -> String {
 /// Render a tool result and exit with a stable code: 0 ok, 2 tool error, else the
 /// error's own code (3 auth / 1 transport).
 fn emit(
-    out: Result<asgard_cli::mcp::ToolOutput, asgard_cli::CliError>,
+    out: Result<frontkeep_cli::mcp::ToolOutput, frontkeep_cli::CliError>,
     shape: Shape,
     output: Output,
 ) -> ! {
@@ -1857,7 +1857,7 @@ async fn cmd_tools(r: &Resolved) {
 
 fn read_pat() -> anyhow::Result<String> {
     use std::io::Write;
-    eprint!("Frontkeep PAT (asg_pat_…): ");
+    eprint!("Frontkeep PAT (fk_pat_…): ");
     std::io::stderr().flush().ok();
     let mut s = String::new();
     std::io::stdin().read_line(&mut s)?;
@@ -1883,7 +1883,7 @@ async fn cmd_login(
             std::process::exit(3);
         }
     }
-    let path = asgard_cli::config::save_login(&prof, url.as_deref(), &pat, !no_default)?;
+    let path = frontkeep_cli::config::save_login(&prof, url.as_deref(), &pat, !no_default)?;
     println!("saved profile '{prof}' → {}", path.display());
     Ok(())
 }
@@ -1900,7 +1900,7 @@ async fn cmd_chat(
     data_class: Option<String>,
 ) {
     let pat = require_pat(r);
-    let req = asgard_cli::chat::ChatRequest {
+    let req = frontkeep_cli::chat::ChatRequest {
         url: &r.url,
         pat: &pat,
         profile: &profile,
@@ -1911,7 +1911,7 @@ async fn cmd_chat(
         temperature,
         data_class,
     };
-    match asgard_cli::chat::chat(req).await {
+    match frontkeep_cli::chat::chat(req).await {
         Ok(v) => println!("{}", render(&v, Shape::Auto, r.output)),
         Err(e) => {
             eprintln!("error: {e}");
@@ -1941,7 +1941,7 @@ async fn call_value(r: &Resolved, tool: &str, args: Map<String, Value>) -> Value
 /// Print a materialization result (one line per file); `note` is an optional
 /// trailing message (e.g. the dry-run hint).
 fn emit_writes(
-    res: Result<Vec<(PathBuf, asgard_cli::seed::Action)>, asgard_cli::CliError>,
+    res: Result<Vec<(PathBuf, frontkeep_cli::seed::Action)>, frontkeep_cli::CliError>,
     note: Option<&str>,
 ) {
     match res {
@@ -1965,7 +1965,7 @@ fn emit_writes(
 /// rejects passing both.
 fn bundle_arg(dir: Option<PathBuf>, bundle: Option<String>) -> anyhow::Result<Value> {
     match (dir, bundle) {
-        (Some(d), _) => Ok(asgard_cli::seed::dir_to_bundle(&d)?),
+        (Some(d), _) => Ok(frontkeep_cli::seed::dir_to_bundle(&d)?),
         (None, Some(b)) => {
             let raw = if b == "-" {
                 use std::io::Read;
@@ -2011,7 +2011,10 @@ async fn cmd_apply_seed(
     let value = call_value(r, "bootstrap", m).await;
     let dest = dir.unwrap_or_else(|| PathBuf::from("."));
     let note = (!write).then_some("dry run — pass --write to create these files");
-    emit_writes(asgard_cli::seed::apply(&value, &dest, write, force), note);
+    emit_writes(
+        frontkeep_cli::seed::apply(&value, &dest, write, force),
+        note,
+    );
 }
 
 async fn cmd_skills_export(
@@ -2026,7 +2029,7 @@ async fn cmd_skills_export(
     let value = call_value(r, "skills_catalog_export", m).await;
     let dest = out.unwrap_or_else(|| PathBuf::from("."));
     emit_writes(
-        asgard_cli::seed::apply_b64(&value, &dest, true, false),
+        frontkeep_cli::seed::apply_b64(&value, &dest, true, false),
         None,
     );
 }
@@ -2049,7 +2052,7 @@ async fn cmd_skills_install(
     };
     let note = dry_run.then_some("dry run — re-run without --dry-run to write");
     emit_writes(
-        asgard_cli::seed::apply_install(&value, &target, !dry_run, force),
+        frontkeep_cli::seed::apply_install(&value, &target, !dry_run, force),
         note,
     );
 }
@@ -2096,7 +2099,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     .await;
 
     // Publish the enterprise standards as discoverable catalog entities.
-    if let Err(e) = asgard_catalog::standards::seed(&core.catalog).await {
+    if let Err(e) = frontkeep_catalog::standards::seed(&core.catalog).await {
         tracing::warn!("failed to seed standards: {e}");
     }
 
@@ -2129,7 +2132,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     ));
     let workflow = Arc::new(WorkflowEngine::new(core.db.clone(), core.policy.clone()));
     let lease_ttl = config.lease_ttl_secs.unwrap_or(600) as i64;
-    let leases = Leases::new(core.db.clone(), asgard_storage::new_uid());
+    let leases = Leases::new(core.db.clone(), frontkeep_storage::new_uid());
     let mut provision =
         build_provision(core.db.clone(), &config, Some((leases.clone(), lease_ttl)));
     provision.set_workflow(workflow.clone());
@@ -2145,11 +2148,11 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
     // attributed and governed like any other project's calls.
     let _ = core
         .gateway_repo
-        .ensure_project("proj-asgard-system", 0.0, "internal")
+        .ensure_project("proj-frontkeep-system", 0.0, "internal")
         .await;
     let system_cost_key = core
         .gateway_repo
-        .mint_key("proj-asgard-system", Some("dashboard"))
+        .mint_key("proj-frontkeep-system", Some("dashboard"))
         .await
         .ok()
         .map(|k| k.plaintext);
@@ -2405,7 +2408,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
 
     // Mount the MCP server (Streamable HTTP at /mcp, gated by project virtual
     // key) alongside the REST/GraphQL/UI surface — same process, same port.
-    let mcp_router = asgard_mcp::http_router(
+    let mcp_router = frontkeep_mcp::http_router(
         state.catalog.clone(),
         state.gateway.clone(),
         state.registry.clone(),
@@ -2415,7 +2418,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         state.identity.clone(),
     );
     let system_name = state.system_name.clone();
-    let app = asgard_api::router(state)
+    let app = frontkeep_api::router(state)
         .merge(mcp_router)
         .fallback(move |uri: Uri| {
             let system_name = system_name.clone();
@@ -2423,7 +2426,7 @@ async fn serve(database_url: &str, bind: &str, config_path: Option<PathBuf>) -> 
         });
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(
-        "asgard on http://{bind}  (UI at /, REST at /api, GraphQL at /graphql, MCP at /mcp)"
+        "frontkeep on http://{bind}  (UI at /, REST at /api, GraphQL at /graphql, MCP at /mcp)"
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -2459,7 +2462,7 @@ async fn shutdown_signal() {
 async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Result<()> {
     let config = load_config(config_path);
     let core = build_core(database_url).await?;
-    let _ = asgard_catalog::standards::seed(&core.catalog).await;
+    let _ = frontkeep_catalog::standards::seed(&core.catalog).await;
     let service_catalog = load_service_catalog(&config);
     let (providers, inf_models) = build_inference(&service_catalog);
     let mut model_registry = ModelRegistry::from_catalog(&core.catalog).await?;
@@ -2488,7 +2491,7 @@ async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Re
     let mut provision = build_provision(core.db.clone(), &config, None);
     provision.set_workflow(workflow.clone());
     let project = std::env::var("FRONTKEEP_PROJECT").ok();
-    let server = asgard_mcp::AsgardMcp::new(
+    let server = frontkeep_mcp::FrontkeepMcp::new(
         core.catalog,
         gateway,
         registry,
@@ -2496,7 +2499,7 @@ async fn run_mcp(database_url: &str, config_path: Option<PathBuf>) -> anyhow::Re
         provision,
         project,
     );
-    asgard_mcp::serve_stdio(server)
+    frontkeep_mcp::serve_stdio(server)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     Ok(())
@@ -2560,7 +2563,7 @@ fn build_governance_config(config: &Config) -> GovernanceConfig {
 /// overlay), the dry-run `stub` connector and an always-on `exec` connector, the
 /// gateway cost source, the builtin secret store, plus the `terraform` connector
 /// (the universal provisioning path, incl. all AWS resources), the AWS cost
-/// sources, and the guardrails the operator configures in asgard.yaml.
+/// sources, and the guardrails the operator configures in frontkeep.yaml.
 fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> ProvisionService {
     let mut svc = ProvisionService::new(ProvisionRepo::new(db.clone()));
     // The exec connector is harmless without a manifest command, so it's always
@@ -2640,7 +2643,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
     );
     svc.set_run_log(run_log.clone());
 
-    // Provisioning arms from an `asgard.yaml` block or, for a container-first
+    // Provisioning arms from an `frontkeep.yaml` block or, for a container-first
     // deploy with no config file, from env alone (FRONTKEEP_TF_MODULES_DIR + friends).
     let env_provisioning = provisioning_from_env();
     let Some(p) = config.provisioning.as_ref().or(env_provisioning.as_ref()) else {
@@ -2662,7 +2665,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
         let work = tf
             .work_dir
             .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("asgard-tf"));
+            .unwrap_or_else(|| std::env::temp_dir().join("frontkeep-tf"));
         let tf_state = Arc::new(TfStateStore::new(
             db.clone(),
             master_key.unwrap_or(DEV_SECRET_KEY),
@@ -2712,7 +2715,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
         p.forecast_window_days.unwrap_or(0),
         p.anomaly_z.unwrap_or(0.0),
     );
-    // Self-service ceilings: defaults, overridden by an asgard.yaml block, then by
+    // Self-service ceilings: defaults, overridden by an frontkeep.yaml block, then by
     // FRONTKEEP_AUTO_APPROVE_CEILINGS (per-tier merge) so an image-only deploy can
     // tune them without a config file or a recompile.
     let mut auto = AutoApprovePolicy::default();
@@ -2748,7 +2751,7 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
 }
 
 /// Synthesize a provisioning config from env so a container-first deploy can arm
-/// provisioning without an `asgard.yaml`. Returns `None` unless
+/// provisioning without an `frontkeep.yaml`. Returns `None` unless
 /// `FRONTKEEP_TF_MODULES_DIR` is set (the minimum to register the terraform
 /// connector). `FRONTKEEP_TF_WORK_DIR` sets the scratch dir (state lives in the DB);
 /// `FRONTKEEP_TF_ALLOWED` is a comma-separated `cloud:account` allowlist (a request
@@ -2871,7 +2874,7 @@ fn secret_master_key(p: Option<&ProvisioningCfg>) -> Option<[u8; 32]> {
         k.copy_from_slice(&bytes);
         Some(k)
     } else {
-        tracing::warn!("ASGARD secret key must be 64 hex chars (32 bytes); ignoring");
+        tracing::warn!("FRONTKEEP secret key must be 64 hex chars (32 bytes); ignoring");
         None
     }
 }
@@ -2884,7 +2887,7 @@ async fn reconcile_all(
 ) {
     for s in sources {
         if let Some(provider) = make_provider(s, git_token.clone()) {
-            match asgard_catalog::reconcile(catalog, schemas, provider.as_ref()).await {
+            match frontkeep_catalog::reconcile(catalog, schemas, provider.as_ref()).await {
                 Ok(r) => tracing::info!(
                     "reconciled {}: +{} ~{} -{} ({} invalid)",
                     provider.source_id(),
@@ -3204,7 +3207,17 @@ fn resolve_dev_insecure(bind: &str) -> bool {
 }
 
 fn load_config(path: Option<PathBuf>) -> Config {
-    let p = path.unwrap_or_else(|| PathBuf::from("asgard.yaml"));
+    let p = path.unwrap_or_else(|| {
+        // Prefer the current name; fall back to the pre-rename file so an existing
+        // install that auto-loads its config keeps working without `--config`.
+        let legacy = PathBuf::from("asgard.yaml");
+        let current = PathBuf::from("frontkeep.yaml");
+        if !current.exists() && legacy.exists() {
+            legacy
+        } else {
+            current
+        }
+    });
     if p.exists() {
         if let Ok(s) = std::fs::read_to_string(&p) {
             if let Ok(c) = serde_yaml::from_str::<Config>(&s) {

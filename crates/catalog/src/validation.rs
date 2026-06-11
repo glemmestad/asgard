@@ -100,7 +100,7 @@ mod tests {
     fn valid_agent_passes_invalid_fails() {
         let reg = SchemaRegistry::embedded().unwrap();
         let good = serde_json::json!({
-            "apiVersion": "asgard.dev/v1",
+            "apiVersion": "frontkeep.dev/v1",
             "kind": "Agent",
             "metadata": {"name": "code-reviewer", "namespace": "default"},
             "spec": {"owner": "group:default/platform", "model": "model:default/gpt"}
@@ -109,7 +109,7 @@ mod tests {
 
         // missing required spec.model
         let bad = serde_json::json!({
-            "apiVersion": "asgard.dev/v1",
+            "apiVersion": "frontkeep.dev/v1",
             "kind": "Agent",
             "metadata": {"name": "x"},
             "spec": {"owner": "group:default/platform"}

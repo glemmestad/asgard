@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://asgard.dev/schemas/service.schema.json",
+  "$id": "https://frontkeep.dev/schemas/service.schema.json",
   "title": "Service Manifest",
   "description": "One service in the manifest-driven catalog: how it is provisioned and how its cost is attributed back to a project.",
   "type": "object",

@@ -5,14 +5,14 @@ title: Install the CLI
 
 # Install Frontkeep
 
-Frontkeep is **one statically-linked binary** that is both the server (`asgard
-serve`, `frontkeep mcp`) and the command-line client (`frontkeep project`, `asgard
+Frontkeep is **one statically-linked binary** that is both the server (`frontkeep
+serve`, `frontkeep mcp`) and the command-line client (`frontkeep project`, `frontkeep
 cost`, `frontkeep chat`, …). Installing it gives you both.
 
 ## macOS / Linux (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/glemmestad/frontkeep/main/scripts/install.sh | sh
 ```
 
 This downloads the right tarball for your OS/architecture from the latest
@@ -31,17 +31,17 @@ See [Use the CLI](./cli.md) for the full command surface.
 
 ## Manual download
 
-Grab a tarball from the [latest release](https://github.com/glemmestad/asgard/releases/latest):
+Grab a tarball from the [latest release](https://github.com/glemmestad/frontkeep/releases/latest):
 
 | Platform | Asset |
 | --- | --- |
-| Linux x86-64 | `asgard-x86_64-unknown-linux-musl.tar.gz` |
-| Linux ARM64 | `asgard-aarch64-unknown-linux-musl.tar.gz` |
-| macOS Apple Silicon | `asgard-aarch64-apple-darwin.tar.gz` |
-| macOS Intel | `asgard-x86_64-apple-darwin.tar.gz` |
+| Linux x86-64 | `frontkeep-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64 | `frontkeep-aarch64-unknown-linux-musl.tar.gz` |
+| macOS Apple Silicon | `frontkeep-aarch64-apple-darwin.tar.gz` |
+| macOS Intel | `frontkeep-x86_64-apple-darwin.tar.gz` |
 
 ```bash
-tar -xzf asgard-*.tar.gz && sudo install -m755 frontkeep /usr/local/bin/asgard
+tar -xzf frontkeep-*.tar.gz && sudo install -m755 frontkeep /usr/local/bin/frontkeep
 frontkeep --version
 ```
 
@@ -50,7 +50,7 @@ Each tarball ships with a matching `.sha256`.
 ## From source
 
 ```bash
-cargo install --git https://github.com/glemmestad/frontkeep asgard
+cargo install --git https://github.com/glemmestad/frontkeep frontkeep
 ```
 
 ## Docker
@@ -59,7 +59,7 @@ For running the **server**, the container image bundles Terraform and the
 provisioning modules — see [Deploy](./deploy.md):
 
 ```bash
-docker run -p 8080:8080 ghcr.io/glemmestad/asgard:latest
+docker run -p 8080:8080 ghcr.io/glemmestad/frontkeep:latest
 ```
 
 ## Notes
@@ -69,8 +69,8 @@ docker run -p 8080:8080 ghcr.io/glemmestad/asgard:latest
   Docker image bundles Terraform. The control plane and the CLI work with no
   extra dependencies.
 - The in-app `/docs` route is empty in the native binary (the docs site is built
-  separately and lives at [asgard.build](https://asgard.build)); the Docker image
+  separately and lives at [frontkeep.build](https://frontkeep.build)); the Docker image
   embeds it.
 - **macOS Gatekeeper:** binaries are not yet notarized. `brew`/`curl` downloads
   generally run without a prompt; if macOS quarantines it, clear the flag with
-  `xattr -d com.apple.quarantine "$(command -v asgard)"`.
+  `xattr -d com.apple.quarantine "$(command -v frontkeep)"`.

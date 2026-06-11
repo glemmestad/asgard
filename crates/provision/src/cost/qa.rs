@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use asgard_gateway::{run_tool_loop, Gateway, GatewayError, ToolDef, ToolExecutor};
+use frontkeep_gateway::{run_tool_loop, Gateway, GatewayError, ToolDef, ToolExecutor};
 
 use super::report;
 use super::rollup::{CostRollupRepo, RollupDim};
@@ -305,10 +305,11 @@ pub async fn answer_cost_question(
 mod tests {
     use super::super::rollup::RollupRow;
     use super::*;
-    use asgard_storage::Db;
+    use frontkeep_storage::Db;
 
     async fn seeded() -> CostQaTools {
-        let path = std::env::temp_dir().join(format!("asgard-qa-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-qa-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

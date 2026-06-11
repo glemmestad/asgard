@@ -53,7 +53,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/glemmestad/asgard
+          images: ghcr.io/glemmestad/frontkeep
           tags: |
             type=raw,value=v${{ needs.release.outputs.version }}
             type=raw,value=latest

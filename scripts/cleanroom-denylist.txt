@@ -8,7 +8,7 @@
 #
 # High-signal traces only. Generic org-group nouns (e.g. team names) are
 # deliberately NOT listed: they are common English words that would cause false
-# positives, and Asgard never hardcodes them — classification/group taxonomies
+# positives, and Frontkeep never hardcodes them — classification/group taxonomies
 # are operator-configured, not baked in.
 
 # Company name (any casing/spacing variant)

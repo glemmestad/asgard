@@ -46,7 +46,7 @@ provider "aws" {
 }
 
 resource "aws_ecr_repository" "this" {
-  name                 = "${lookup(var.tags, "project", "asgard")}-${var.name}"
+  name                 = "${lookup(var.tags, "project", "frontkeep")}-${var.name}"
   image_tag_mutability = var.immutable ? "IMMUTABLE" : "MUTABLE"
 
   image_scanning_configuration {

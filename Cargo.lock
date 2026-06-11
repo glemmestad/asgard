@@ -180,309 +180,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71938f30533e4d95a6d17aa530939da3842c2ab6f4f84b9dae68447e4129f74a"
 
 [[package]]
-name = "asgard"
-version = "0.21.0"
-dependencies = [
- "anyhow",
- "asgard-api",
- "asgard-catalog",
- "asgard-cli",
- "asgard-eval",
- "asgard-gateway",
- "asgard-identity",
- "asgard-mcp",
- "asgard-policy",
- "asgard-provision",
- "asgard-registry",
- "asgard-reviewer",
- "asgard-storage",
- "asgard-workflow",
- "axum",
- "chrono",
- "clap",
- "clap_complete",
- "dotenvy",
- "libc",
- "mime_guess",
- "regex",
- "rust-embed",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "asgard-api"
-version = "0.21.0"
-dependencies = [
- "asgard-catalog",
- "asgard-gateway",
- "asgard-identity",
- "asgard-provision",
- "asgard-registry",
- "asgard-reviewer",
- "asgard-skills",
- "asgard-storage",
- "asgard-workflow",
- "async-graphql",
- "async-graphql-axum",
- "axum",
- "serde",
- "serde_json",
- "serde_yaml",
- "tokio",
- "tower-http",
- "tracing",
-]
-
-[[package]]
-name = "asgard-catalog"
-version = "0.21.0"
-dependencies = [
- "asgard-storage",
- "async-trait",
- "chrono",
- "jsonschema",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-cli"
-version = "0.21.0"
-dependencies = [
- "asgard-catalog",
- "asgard-skills",
- "asgard-storage",
- "base64",
- "comfy-table",
- "reqwest 0.12.28",
- "rmcp",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "asgard-eval"
-version = "0.21.0"
-dependencies = [
- "asgard-storage",
- "async-trait",
- "regex",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-gateway"
-version = "0.21.0"
-dependencies = [
- "asgard-catalog",
- "asgard-policy",
- "asgard-storage",
- "async-trait",
- "chrono",
- "regex",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "asgard-identity"
-version = "0.21.0"
-dependencies = [
- "argon2",
- "asgard-storage",
- "chrono",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "asgard-mcp"
-version = "0.21.0"
-dependencies = [
- "asgard-catalog",
- "asgard-gateway",
- "asgard-identity",
- "asgard-policy",
- "asgard-provision",
- "asgard-registry",
- "asgard-skills",
- "asgard-storage",
- "asgard-workflow",
- "axum",
- "http",
- "rmcp",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-policy"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "cedar-policy",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-provision"
-version = "0.21.0"
-dependencies = [
- "aes-gcm",
- "asgard-catalog",
- "asgard-gateway",
- "asgard-policy",
- "asgard-registry",
- "asgard-storage",
- "asgard-workflow",
- "async-trait",
- "chrono",
- "reqwest 0.12.28",
- "rust-embed",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-registry"
-version = "0.21.0"
-dependencies = [
- "asgard-catalog",
- "asgard-gateway",
- "asgard-policy",
- "asgard-skills",
- "asgard-storage",
- "asgard-workflow",
- "async-trait",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-reviewer"
-version = "0.21.0"
-dependencies = [
- "asgard-gateway",
- "asgard-registry",
- "asgard-storage",
- "async-trait",
- "reqwest 0.12.28",
- "rust-embed",
- "serde",
- "serde_json",
- "serde_yaml",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-runtime"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "serde",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "asgard-skills"
-version = "0.21.0"
-dependencies = [
- "base64",
- "schemars 1.2.1",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "asgard-storage"
-version = "0.21.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "asgard-workflow"
-version = "0.21.0"
-dependencies = [
- "asgard-policy",
- "asgard-storage",
- "chrono",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "async-graphql"
 version = "7.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1506,6 +1203,309 @@ checksum = "e076045bb43dac435333ed5f04caf35c7463631d0dae2deb2638d94dd0a5b872"
 dependencies = [
  "lazy_static",
  "num",
+]
+
+[[package]]
+name = "frontkeep"
+version = "0.25.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "dotenvy",
+ "frontkeep-api",
+ "frontkeep-catalog",
+ "frontkeep-cli",
+ "frontkeep-eval",
+ "frontkeep-gateway",
+ "frontkeep-identity",
+ "frontkeep-mcp",
+ "frontkeep-policy",
+ "frontkeep-provision",
+ "frontkeep-registry",
+ "frontkeep-reviewer",
+ "frontkeep-storage",
+ "frontkeep-workflow",
+ "libc",
+ "mime_guess",
+ "regex",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "frontkeep-api"
+version = "0.25.0"
+dependencies = [
+ "async-graphql",
+ "async-graphql-axum",
+ "axum",
+ "frontkeep-catalog",
+ "frontkeep-gateway",
+ "frontkeep-identity",
+ "frontkeep-provision",
+ "frontkeep-registry",
+ "frontkeep-reviewer",
+ "frontkeep-skills",
+ "frontkeep-storage",
+ "frontkeep-workflow",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-catalog"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "frontkeep-storage",
+ "jsonschema",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-cli"
+version = "0.25.0"
+dependencies = [
+ "base64",
+ "comfy-table",
+ "frontkeep-catalog",
+ "frontkeep-skills",
+ "frontkeep-storage",
+ "reqwest 0.12.28",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-eval"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "frontkeep-storage",
+ "regex",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-gateway"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "frontkeep-catalog",
+ "frontkeep-policy",
+ "frontkeep-storage",
+ "regex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "frontkeep-identity"
+version = "0.25.0"
+dependencies = [
+ "argon2",
+ "chrono",
+ "frontkeep-storage",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "frontkeep-mcp"
+version = "0.25.0"
+dependencies = [
+ "axum",
+ "frontkeep-catalog",
+ "frontkeep-gateway",
+ "frontkeep-identity",
+ "frontkeep-policy",
+ "frontkeep-provision",
+ "frontkeep-registry",
+ "frontkeep-skills",
+ "frontkeep-storage",
+ "frontkeep-workflow",
+ "http",
+ "rmcp",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-policy"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "cedar-policy",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-provision"
+version = "0.25.0"
+dependencies = [
+ "aes-gcm",
+ "async-trait",
+ "chrono",
+ "frontkeep-catalog",
+ "frontkeep-gateway",
+ "frontkeep-policy",
+ "frontkeep-registry",
+ "frontkeep-storage",
+ "frontkeep-workflow",
+ "reqwest 0.12.28",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-registry"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "frontkeep-catalog",
+ "frontkeep-gateway",
+ "frontkeep-policy",
+ "frontkeep-skills",
+ "frontkeep-storage",
+ "frontkeep-workflow",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-reviewer"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "frontkeep-gateway",
+ "frontkeep-registry",
+ "frontkeep-storage",
+ "reqwest 0.12.28",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-runtime"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "frontkeep-skills"
+version = "0.25.0"
+dependencies = [
+ "base64",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "frontkeep-storage"
+version = "0.25.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "frontkeep-workflow"
+version = "0.25.0"
+dependencies = [
+ "chrono",
+ "frontkeep-policy",
+ "frontkeep-storage",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

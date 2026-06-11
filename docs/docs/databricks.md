@@ -38,7 +38,7 @@ DATABRICKS_TOKEN=dapi...
 Then edit the module's `models[]` so each `route` is one of your serving endpoint
 names (`databricks serving-endpoints list`). Use it out-of-band, like any service:
 ```sh
-curl -sS https://<asgard-host>/api/gateway/chat \
+curl -sS https://<frontkeep-host>/api/gateway/chat \
   -H "Authorization: Bearer <project-llm-key>" \
   -H 'content-type: application/json' \
   -d '{"model":"model:databricks/llama-3-3-70b","messages":[{"role":"user","content":"hi"}],"data_class":"internal"}'

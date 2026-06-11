@@ -1,4 +1,4 @@
-# asgard.build
+# frontkeep.build
 
 Marketing site for Frontkeep. Astro, static output, deploys to Vercel's free tier.
 This is Vercel-hosted marketing — **not** part of the Frontkeep product binary.
@@ -35,8 +35,8 @@ Pushing to the connected Git repo auto-deploys via Vercel. Manual deploy:
 npx vercel deploy --prod
 ```
 
-Production URL: https://asgard-build.vercel.app
-Custom domain `asgard.build`: add it in the Vercel project's Domains tab and
+Production URL: https://frontkeep-build.vercel.app
+Custom domain `frontkeep.build`: add it in the Vercel project's Domains tab and
 point DNS at Vercel (see HANDOFF notes).
 
 ## Assets

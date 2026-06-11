@@ -39,7 +39,7 @@ It's a **hub, not a workflow engine**: Frontkeep serves the standards, mints the
 
 ```sh
 # SQLite, no external services, no login on loopback — browse the UI at http://localhost:8080
-cargo run -p asgard -- serve --database-url sqlite://asgard.db
+cargo run -p frontkeep -- serve --database-url sqlite://frontkeep.db
 # (set FRONTKEEP_DEV_INSECURE=1 to skip auth on loopback while exploring)
 ```
 
@@ -54,7 +54,7 @@ frontkeep cost report --by group                                        # spend 
 frontkeep validate services/s3-bucket/service.yaml                      # offline manifest check
 ```
 
-> The default SQLite filename is still `asgard.db` so an existing deploy's data
+> The default SQLite filename is still `frontkeep.db` so an existing deploy's data
 > survives an in-place upgrade. Override it with `--database-url` if you'd
 > rather start fresh on `frontkeep.db`. Legacy `ASGARD_*` env vars continue to
 > work transparently — set either name; the new one wins when both are set.

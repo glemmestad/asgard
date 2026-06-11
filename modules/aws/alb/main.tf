@@ -24,7 +24,7 @@ variable "tags" {
   default = {}
 }
 
-# Leave blank to fall back to a fleet default (ASGARD_DEFAULT_VPC_ID/SUBNET_IDS via the
+# Leave blank to fall back to a fleet default (FRONTKEEP_DEFAULT_VPC_ID/SUBNET_IDS via the
 # manifest) or, failing that, the account's default VPC and its subnets.
 variable "vpc_id" {
   type    = string
@@ -79,7 +79,7 @@ data "aws_subnets" "default" {
 }
 
 locals {
-  prefix     = substr(lower("${lookup(var.tags, "project", "asgard")}-${var.name}"), 0, 32)
+  prefix     = substr(lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}"), 0, 32)
   enable_tls = var.certificate_arn != ""
   make_sg    = length(var.security_group_ids) == 0
   vpc_id     = var.vpc_id != "" ? var.vpc_id : try(one(data.aws_vpcs.default[0].ids), "")
@@ -126,7 +126,7 @@ resource "aws_lb" "this" {
   lifecycle {
     precondition {
       condition     = local.vpc_id != "" && length(local.subnet_ids) > 0
-      error_message = "No VPC/subnets resolved for alb: pass vpc_id + subnet_ids, set the fleet defaults (ASGARD_DEFAULT_VPC_ID / ASGARD_DEFAULT_SUBNET_IDS), or ensure the target account has a default VPC."
+      error_message = "No VPC/subnets resolved for alb: pass vpc_id + subnet_ids, set the fleet defaults (FRONTKEEP_DEFAULT_VPC_ID / FRONTKEEP_DEFAULT_SUBNET_IDS), or ensure the target account has a default VPC."
     }
   }
 }

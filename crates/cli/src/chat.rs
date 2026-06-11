@@ -1,4 +1,4 @@
-//! `asgard chat` — real inference, which the control-plane MCP deliberately does
+//! `frontkeep chat` — real inference, which the control-plane MCP deliberately does
 //! not do (it only mints credentials). Mint, or reuse a cached, per-project
 //! gateway virtual key via the `gateway_credential` tool, then call the gateway's
 //! chat endpoint with it. The key is cached per profile+project and silently

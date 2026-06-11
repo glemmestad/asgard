@@ -1,5 +1,5 @@
 # Managed PostgreSQL (RDS). The master password is generated and surfaced as a
-# sensitive output, which the Asgard connector routes to the secret store —
+# sensitive output, which the Frontkeep connector routes to the secret store —
 # matching the manifest's `secret_outputs: [master_password, connection_url]`.
 # Live-apply is deferred (needs operator subnet group / security groups); the
 # module is validated, not yet live-proven.
@@ -48,7 +48,7 @@ variable "db_name" {
 
 variable "username" {
   type    = string
-  default = "asgard"
+  default = "frontkeep"
 }
 
 variable "subnet_group_name" {
@@ -71,7 +71,7 @@ resource "random_password" "master" {
 }
 
 resource "aws_db_instance" "this" {
-  identifier             = lower("${lookup(var.tags, "project", "asgard")}-${var.name}")
+  identifier             = lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}")
   engine                 = "postgres"
   engine_version         = var.engine_version
   instance_class         = var.instance_class
@@ -94,7 +94,7 @@ locals {
 # predecessor surfaced this under an inconsistent key name and consumers' ref
 # lookups missed it; here the ARN is just `secret_arn`, full stop.
 resource "aws_secretsmanager_secret" "connection" {
-  name = lower("${lookup(var.tags, "project", "asgard")}-${var.name}-connection")
+  name = lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}-connection")
   tags = var.tags
 }
 

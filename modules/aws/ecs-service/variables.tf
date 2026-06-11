@@ -13,8 +13,8 @@ variable "tags" {
   default = {}
 }
 
-# Existing network the service lands in. Asgard never creates a VPC. Leave blank to
-# fall back to a fleet default (ASGARD_DEFAULT_VPC_ID/SUBNET_IDS via the manifest) or,
+# Existing network the service lands in. Frontkeep never creates a VPC. Leave blank to
+# fall back to a fleet default (FRONTKEEP_DEFAULT_VPC_ID/SUBNET_IDS via the manifest) or,
 # failing that, the account's default VPC and its subnets — so an agent with no console
 # access can still deploy. See the vpc_id/subnet_ids locals in main.tf.
 variable "vpc_id" {
@@ -65,7 +65,7 @@ variable "container_port" {
 
 # ALB target-group health check path. Defaults to "/" so a generic web app works
 # out of the box, but "/" usually only proves the app serves *something* — set this
-# to a real readiness endpoint that fails when the backend is unhealthy (Asgard:
+# to a real readiness endpoint that fails when the backend is unhealthy (Frontkeep:
 # "/readyz", which checks the DB) so the ALB pulls broken tasks instead of routing
 # to them.
 variable "health_path" {
@@ -124,7 +124,7 @@ variable "internal" {
 }
 
 # ALB idle timeout (seconds). AWS defaults to 60, which severs long-lived
-# Streamable-HTTP / SSE connections mid-stream — an agent on Asgard's `/mcp` would
+# Streamable-HTTP / SSE connections mid-stream — an agent on Frontkeep's `/mcp` would
 # see a tool call cut off. Default to 300 so streaming works out of the box; raise
 # toward 900 for very long tool calls.
 variable "idle_timeout" {

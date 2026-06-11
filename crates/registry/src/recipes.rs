@@ -4,7 +4,7 @@
 //! a recipe, fills the inputs, and issues each `request_resource` itself — Frontkeep
 //! never executes the steps, so per-resource cost/approval/tiering still apply.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -124,7 +124,7 @@ pub async fn put(
     }
     let tags_s = tags.join(",");
     let spec_s = serde_json::to_string(spec).unwrap_or_else(|_| "{}".into());
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     let status = if published { "published" } else { "pending" };
     sqlx::query(&db.q(
         "INSERT INTO recipes (slug, name, summary, body, spec, tags, author, status, updated_at) \
@@ -171,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn put_get_preserves_spec() {
         let path =
-            std::env::temp_dir().join(format!("asgard-rec-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-rec-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -203,7 +203,7 @@ mod tests {
     #[tokio::test]
     async fn drafts_hidden_until_approved_and_search() {
         let path =
-            std::env::temp_dir().join(format!("asgard-rec-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-rec-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

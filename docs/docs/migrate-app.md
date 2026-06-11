@@ -61,10 +61,10 @@ Stop and ask a human for any you cannot derive.
 Registration gates everything downstream — no key, no provisioning.
 
 ```bash
-PID=$(curl -fsS -X POST "$ASGARD/api/projects" -H 'content-type: application/json' \
+PID=$(curl -fsS -X POST "$FRONTKEEP/api/projects" -H 'content-type: application/json' \
   -d '{"name":"Collab Editor","owner_email":"owner@corp.example","manager_email":"mgr@corp.example","group":"applications","classification":"poc","budget_usd":200}' \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["project_id"])')
-KEY=$(curl -fsS -X POST "$ASGARD/api/projects/$PID/keys" -H 'content-type: application/json' \
+KEY=$(curl -fsS -X POST "$FRONTKEEP/api/projects/$PID/keys" -H 'content-type: application/json' \
   -d '{"name":"migrate-agent"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["key"])')
 ```
 

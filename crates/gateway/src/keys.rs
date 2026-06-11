@@ -1,7 +1,7 @@
 //! Per-project virtual keys, project runtime state (budget/kill switch), and
 //! usage events. Keys are stored only as SHA-256 hashes plus a short prefix.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
@@ -82,7 +82,7 @@ impl GatewayRepo {
         .bind(project_id)
         .bind(budget_usd)
         .bind(data_class)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(())
@@ -108,7 +108,7 @@ impl GatewayRepo {
                 .q("UPDATE projects_runtime SET killed = ?, updated_at = ? WHERE project_id = ?"),
         )
         .bind(killed as i64)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;
@@ -127,7 +127,7 @@ impl GatewayRepo {
         ))
         .bind(display_name)
         .bind(description)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;
@@ -141,7 +141,7 @@ impl GatewayRepo {
             ),
         )
         .bind(budget_usd)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;
@@ -155,7 +155,7 @@ impl GatewayRepo {
              WHERE project_id = ? RETURNING spent_usd",
         ))
         .bind(amount)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .fetch_one(self.db.pool())
         .await?;
@@ -168,12 +168,12 @@ impl GatewayRepo {
         name: Option<&str>,
     ) -> Result<MintedKey, GatewayError> {
         let plaintext = format!(
-            "asg_{}{}",
+            "fk_{}{}",
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
         let prefix = plaintext[..12].to_string();
-        let id = asgard_storage::new_uid();
+        let id = frontkeep_storage::new_uid();
         sqlx::query(&self.db.q(
             "INSERT INTO virtual_keys (id, project_id, key_hash, key_prefix, name, active, created_at) \
              VALUES (?, ?, ?, ?, ?, 1, ?)",
@@ -183,7 +183,7 @@ impl GatewayRepo {
         .bind(sha256_hex(&plaintext))
         .bind(&prefix)
         .bind(name)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(MintedKey {
@@ -226,7 +226,7 @@ impl GatewayRepo {
                 .db
                 .q("UPDATE virtual_keys SET active = 0, revoked_at = ? WHERE id = ?"),
         )
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(key_id)
         .execute(self.db.pool())
         .await?;
@@ -240,8 +240,8 @@ impl GatewayRepo {
              owner, manager, cost_group, cost_center, classification) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
-        .bind(asgard_storage::new_uid())
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::new_uid())
+        .bind(frontkeep_storage::now())
         .bind(&ev.project_id)
         .bind(&ev.trace_id)
         .bind(&ev.model)
@@ -277,7 +277,7 @@ impl GatewayRepo {
         data_class: &str,
         budget_usd: f64,
     ) -> Result<(), GatewayError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         sqlx::query(&self.db.q("INSERT INTO projects_runtime \
              (project_id, budget_usd, spent_usd, killed, data_class, owner, manager, \
               cost_group, cost_center, classification, lifecycle, registered, \
@@ -321,7 +321,7 @@ impl GatewayRepo {
         ))
         .bind(owner)
         .bind(manager)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;
@@ -339,7 +339,7 @@ impl GatewayRepo {
             ),
         )
         .bind(lifecycle)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;
@@ -355,7 +355,7 @@ impl GatewayRepo {
             "UPDATE projects_runtime SET classification = ?, updated_at = ? WHERE project_id = ?",
         ))
         .bind(classification)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .execute(self.db.pool())
         .await?;

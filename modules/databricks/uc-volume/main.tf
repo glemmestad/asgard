@@ -31,13 +31,13 @@ variable "tags" {
 }
 
 locals {
-  schema = var.schema_name != "" ? var.schema_name : lookup(var.tags, "project", "asgard")
+  schema = var.schema_name != "" ? var.schema_name : lookup(var.tags, "project", "frontkeep")
 }
 
 resource "databricks_schema" "this" {
   catalog_name = var.catalog_name
   name         = local.schema
-  comment      = "Asgard project ${lookup(var.tags, "project", "")}"
+  comment      = "Frontkeep project ${lookup(var.tags, "project", "")}"
   properties   = var.tags
 }
 

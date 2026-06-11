@@ -45,7 +45,7 @@ variable "security_group_id" {
 }
 
 # Suspend lever: "stopped" halts compute charges (EBS still bills); "running"
-# resumes. Asgard's kill/un-kill re-applies with this overridden / at its default.
+# resumes. Frontkeep's kill/un-kill re-applies with this overridden / at its default.
 variable "instance_state" {
   type    = string
   default = "running"

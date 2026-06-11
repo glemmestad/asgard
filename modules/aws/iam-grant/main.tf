@@ -1,5 +1,5 @@
 # Bind a consumer's IAM role to a target resource: attaches an inline policy to
-# the role granting `actions` on the target (and its sub-resources). The Asgard
+# the role granting `actions` on the target (and its sub-resources). The Frontkeep
 # provision layer resolves principal_role_arn, target_arn, and actions from the
 # two resources' records + the target manifest's access_levels; it writes them
 # plus `name` and the project `tags` as tfvars. Extra spec keys

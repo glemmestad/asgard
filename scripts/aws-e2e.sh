@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LIVE AWS end-to-end: prove the terraform connector creates and destroys a real
-# resource through Asgard. Creates an S3 bucket, verifies it exists and is
+# resource through Frontkeep. Creates an S3 bucket, verifies it exists and is
 # project-tagged via the AWS CLI, then deprovisions it and confirms it's gone.
 #
 # OPT-IN ONLY. This is NOT part of scripts/e2e.sh and never runs in CI — it
@@ -21,7 +21,7 @@ export AWS_PROFILE="$PROFILE"
 export AWS_REGION="$REGION"
 WORK="$(mktemp -d)"
 TFWORK="$(mktemp -d)"
-DB_URL="sqlite://${WORK}/asgard.db"
+DB_URL="sqlite://${WORK}/frontkeep.db"
 BIN="${BIN:-$ROOT/target/debug/frontkeep}"
 PASS=0
 FAIL=0
@@ -33,7 +33,7 @@ jget() { python3 -c "import sys,json;d=json.load(open('$1'));print(eval(\"d$2\")
 
 cleanup() {
   [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
-  # Belt-and-suspenders: if Asgard teardown didn't remove the bucket, do it here.
+  # Belt-and-suspenders: if Frontkeep teardown didn't remove the bucket, do it here.
   if [[ -n "$BUCKET" ]] && aws s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
     echo "  cleanup: force-removing leftover bucket $BUCKET"
     aws s3 rb "s3://$BUCKET" --force >/dev/null 2>&1
@@ -42,7 +42,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "== Asgard LIVE AWS e2e =="
+echo "== Frontkeep LIVE AWS e2e =="
 echo "profile=$PROFILE region=$REGION"
 
 # Identity check: we must have live credentials.
@@ -52,10 +52,10 @@ ACCOUNT="$(aws sts get-caller-identity --query Account --output text 2>/dev/null
   echo "RESULT: FAIL"; exit 1
 }
 
-[[ -x "$BIN" ]] || { echo "building binary..."; (cd "$ROOT" && cargo build -p asgard >/dev/null 2>&1); }
+[[ -x "$BIN" ]] || { echo "building binary..."; (cd "$ROOT" && cargo build -p frontkeep >/dev/null 2>&1); }
 
 # Operator config arming the terraform connector against the live account.
-cat > "$WORK/asgard.yaml" <<YAML
+cat > "$WORK/frontkeep.yaml" <<YAML
 groups:
   - { key: platform, display_name: Platform, cost_center: CC-100 }
 provisioning:
@@ -74,7 +74,7 @@ provisioning:
     cost_explorer: false
 YAML
 
-ASGARD_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/asgard.yaml" \
+FRONTKEEP_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/frontkeep.yaml" \
   >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -93,7 +93,7 @@ curl -fsS -X POST "$BASE/api/projects" -H 'content-type: application/json' \
 PID=$(jget "$WORK/reg.json" "['project_id']")
 [[ "$PID" =~ ^proj-[0-9]{4}-[0-9]{4}$ ]] && ok "registered project ($PID)" || { bad "registration failed"; cat "$WORK/reg.json"; }
 
-# Provision a real S3 bucket through Asgard (terraform apply).
+# Provision a real S3 bucket through Frontkeep (terraform apply).
 NAME="e2e-$(date +%s)"
 echo "  provisioning s3-bucket '$NAME' (terraform apply — this takes a few seconds)..."
 curl -fsS -X POST "$BASE/api/projects/${PID}/resources" -H 'content-type: application/json' \
@@ -114,7 +114,7 @@ if [[ -n "$BUCKET" ]]; then
   grep -q "\"$PID\"" "$WORK/tags.json" && ok "bucket tagged project=$PID" || { bad "project tag missing"; cat "$WORK/tags.json"; }
 fi
 
-# Deprovision through Asgard (terraform destroy).
+# Deprovision through Frontkeep (terraform destroy).
 echo "  deprovisioning (terraform destroy)..."
 curl -fsS -X DELETE "$BASE/api/projects/${PID}/resources/${RID}" -o "$WORK/deprov.json"
 DS=$(jget "$WORK/deprov.json" "['state']")

@@ -1,6 +1,6 @@
 //! The promotion-reviewer seam: a pluggable panel that scrutinizes a promotion's
 //! evidence and returns *additional* exception signals. The concrete panel lives
-//! in `asgard-reviewer` (gateway-backed); `request_promotion` calls through this
+//! in `frontkeep-reviewer` (gateway-backed); `request_promotion` calls through this
 //! trait so the registry needn't depend on the gateway. Distinct from the
 //! recurring compliance-review window in `review.rs`.
 

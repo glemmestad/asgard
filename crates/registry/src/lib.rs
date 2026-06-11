@@ -41,10 +41,10 @@ pub use skills::{Skill, SkillInput};
 pub use standards::Standard;
 pub use versions::Version;
 
-use asgard_catalog::{CatalogRepo, Entity, Lifecycle, Manifest, Metadata, Origin};
-use asgard_gateway::GatewayRepo;
-use asgard_storage::Db;
-use asgard_workflow::{NewRequest, RequestFilter, State, WorkflowEngine, WorkflowRequest};
+use frontkeep_catalog::{CatalogRepo, Entity, Lifecycle, Manifest, Metadata, Origin};
+use frontkeep_gateway::GatewayRepo;
+use frontkeep_storage::Db;
+use frontkeep_workflow::{NewRequest, RequestFilter, State, WorkflowEngine, WorkflowRequest};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
@@ -83,11 +83,11 @@ pub enum RegistryError {
     #[error("project '{0}' is not active (it has been decommissioned)")]
     Inactive(String),
     #[error("gateway: {0}")]
-    Gateway(#[from] asgard_gateway::GatewayError),
+    Gateway(#[from] frontkeep_gateway::GatewayError),
     #[error("workflow: {0}")]
-    Workflow(#[from] asgard_workflow::WorkflowError),
+    Workflow(#[from] frontkeep_workflow::WorkflowError),
     #[error("catalog: {0}")]
-    Catalog(#[from] asgard_catalog::CatalogError),
+    Catalog(#[from] frontkeep_catalog::CatalogError),
     #[error("db: {0}")]
     Sqlx(#[from] sqlx::Error),
 }
@@ -171,7 +171,7 @@ impl GroupAllowlist {
 
 /// Operator-configured registration policy: which optional fields are required.
 /// Defaults preserve the original strict posture (manager + group required); an
-/// operator relaxes it in `asgard.yaml` so a solo founder can self-register.
+/// operator relaxes it in `frontkeep.yaml` so a solo founder can self-register.
 #[derive(Debug, Clone)]
 pub struct RegistrationPolicy {
     /// When false, `manager` may be blank and defaults to the owner (self-manage).
@@ -496,9 +496,9 @@ impl ProjectRegistry {
         )
         .await?;
 
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.registered")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.registered")
                 .entity(format!("project:{project_id}"))
                 .outcome("registered")
                 .data(serde_json::json!({
@@ -593,9 +593,9 @@ impl ProjectRegistry {
                 .set_lifecycle(&e.uid, Lifecycle::Decommissioned)
                 .await;
         }
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.decommissioned")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.decommissioned")
                 .entity(format!("project:{project_id}"))
                 .outcome("decommissioned")
                 .reason(reason),
@@ -620,9 +620,9 @@ impl ProjectRegistry {
         }
         evidence.validate()?;
         evidence::write(&self.db, project_id, &evidence).await?;
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.updated")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.updated")
                 .entity(format!("project:{project_id}"))
                 .outcome("updated"),
         )
@@ -670,9 +670,9 @@ impl ProjectRegistry {
                 &reg.lifecycle,
             )
             .await?;
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.updated")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.updated")
                     .entity(format!("project:{project_id}"))
                     .outcome("updated"),
             )
@@ -689,9 +689,9 @@ impl ProjectRegistry {
             }
             Some(req) if req <= reg.budget_usd || ceiling.is_some_and(|c| req <= c) => {
                 self.gateway.set_budget(project_id, req).await?;
-                let _ = asgard_storage::audit::append(
+                let _ = frontkeep_storage::audit::append(
                     &self.db,
-                    &asgard_storage::audit::AuditRecord::new(actor, "project.budget_set")
+                    &frontkeep_storage::audit::AuditRecord::new(actor, "project.budget_set")
                         .entity(format!("project:{project_id}"))
                         .outcome("applied")
                         .data(serde_json::json!({ "budget_usd": req })),
@@ -758,9 +758,9 @@ impl ProjectRegistry {
                 &cur.lifecycle,
             )
             .await?;
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.owner_changed")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.owner_changed")
                     .entity(format!("project:{project_id}"))
                     .outcome("updated")
                     .data(serde_json::json!({ "owner": owner, "manager": manager })),
@@ -807,9 +807,9 @@ impl ProjectRegistry {
             .ok_or_else(|| RegistryError::Validation("request has no requested_budget".into()))?;
         self.gateway.set_budget(project_id, amount).await?;
         let fulfilled = workflow.fulfill(request_id, actor).await?;
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.budget_set")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.budget_set")
                 .entity(format!("project:{project_id}"))
                 .outcome("applied")
                 .data(serde_json::json!({ "budget_usd": amount, "via": "review" })),
@@ -995,9 +995,9 @@ impl ProjectRegistry {
                 };
                 req = workflow.flag(&req.id, actor, &summary).await?;
             }
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.promotion_flagged")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.promotion_flagged")
                     .entity(format!("project:{project_id}"))
                     .outcome("flagged")
                     .reason(req.reason.clone().unwrap_or_default())
@@ -1223,7 +1223,7 @@ impl ProjectRegistry {
                 "INSERT INTO promotion_reviews (id, request_id, project_id, reviewer_id, kind, disposition, verdict_json, model, cost_usd, created_at) \
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             ))
-            .bind(asgard_storage::new_uid())
+            .bind(frontkeep_storage::new_uid())
             .bind(request_id)
             .bind(project_id)
             .bind(s("reviewer_id"))
@@ -1232,7 +1232,7 @@ impl ProjectRegistry {
             .bind(v.to_string())
             .bind(s("model"))
             .bind(cost)
-            .bind(asgard_storage::now())
+            .bind(frontkeep_storage::now())
             .execute(self.db.pool())
             .await;
             if let Err(e) = res {
@@ -1305,9 +1305,9 @@ impl ProjectRegistry {
         .await?;
 
         let fulfilled = workflow.fulfill(request_id, actor).await?;
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.promoted")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.promoted")
                 .entity(format!("project:{project_id}"))
                 .outcome("promoted")
                 .data(serde_json::json!({"from": from, "to": target, "lifecycle": lifecycle})),
@@ -1363,9 +1363,9 @@ impl ProjectRegistry {
             &reg.lifecycle,
         )
         .await?;
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             &self.db,
-            &asgard_storage::audit::AuditRecord::new(actor, "project.demoted")
+            &frontkeep_storage::audit::AuditRecord::new(actor, "project.demoted")
                 .entity(format!("project:{project_id}"))
                 .outcome("demoted")
                 .reason(reason)
@@ -1383,7 +1383,7 @@ impl ProjectRegistry {
     /// and surfaces stack exceptions with no future renewal date. Expiry is a
     /// flag — it blocks nothing; lifecycle stays active.
     pub async fn sweep(&self, actor: &str) -> Result<SweepSummary, RegistryError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let checked: i64 =
             sqlx::query_scalar(&self.db.q(
                 "SELECT COUNT(*) FROM projects_runtime WHERE registered = 1 AND review_date != ''",
@@ -1406,9 +1406,9 @@ impl ProjectRegistry {
             .bind(id)
             .execute(self.db.pool())
             .await?;
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.review_expired")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.review_expired")
                     .entity(format!("project:{id}"))
                     .outcome("expired"),
             )
@@ -1423,9 +1423,9 @@ impl ProjectRegistry {
             .fetch_all(self.db.pool())
             .await?;
         for id in &expired_exceptions {
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.exception_expired")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.exception_expired")
                     .entity(format!("project:{id}"))
                     .outcome("exception_expired"),
             )
@@ -1452,23 +1452,23 @@ impl ProjectRegistry {
         let rv = review::read(&self.db, project_id).await?;
         if rv.review_extensions < self.review.auto_extensions {
             let base = if rv.review_date.is_empty() {
-                asgard_storage::now()
+                frontkeep_storage::now()
             } else {
                 rv.review_date.clone()
             };
-            let new_date = asgard_storage::plus_days(&base, self.review.poc_window_days);
+            let new_date = frontkeep_storage::plus_days(&base, self.review.poc_window_days);
             sqlx::query(&self.db.q(
                 "UPDATE projects_runtime SET review_date = ?, review_extensions = review_extensions + 1, \
                  review_state = 'ok', updated_at = ? WHERE project_id = ?",
             ))
             .bind(&new_date)
-            .bind(asgard_storage::now())
+            .bind(frontkeep_storage::now())
             .bind(project_id)
             .execute(self.db.pool())
             .await?;
-            let _ = asgard_storage::audit::append(
+            let _ = frontkeep_storage::audit::append(
                 &self.db,
-                &asgard_storage::audit::AuditRecord::new(actor, "project.review_extended")
+                &frontkeep_storage::audit::AuditRecord::new(actor, "project.review_extended")
                     .entity(format!("project:{project_id}"))
                     .outcome("extended")
                     .data(serde_json::json!({"review_date": new_date})),
@@ -1522,7 +1522,7 @@ impl ProjectRegistry {
             &scoped,
             &samples,
             &self.governance,
-            &asgard_storage::now(),
+            &frontkeep_storage::now(),
         ))
     }
 
@@ -1563,7 +1563,7 @@ impl ProjectRegistry {
                 .unwrap_or_default();
             let created: String = row.get("created_at");
             let updated: String = row.get("updated_at");
-            if let Some(seconds) = asgard_storage::seconds_between(&created, &updated) {
+            if let Some(seconds) = frontkeep_storage::seconds_between(&created, &updated) {
                 out.push(PromotionSample {
                     project_id: pid.to_string(),
                     target,
@@ -1916,8 +1916,17 @@ impl ProjectRegistry {
         if guidance::count(&self.db).await? == 0 {
             for (title, summary, tags, body) in knowledge_seed::GUIDANCE {
                 let tags: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
-                self.guidance_put(None, title, summary, body, &tags, "asgard", true, "guide")
-                    .await?;
+                self.guidance_put(
+                    None,
+                    title,
+                    summary,
+                    body,
+                    &tags,
+                    "frontkeep",
+                    true,
+                    "guide",
+                )
+                .await?;
             }
         }
         if recipes::count(&self.db).await? == 0 {
@@ -1925,13 +1934,13 @@ impl ProjectRegistry {
                 let spec: serde_json::Value = serde_json::from_str(spec_json)
                     .map_err(|e| RegistryError::Validation(format!("seed recipe '{name}': {e}")))?;
                 let tags: Vec<String> = tags.iter().map(|s| s.to_string()).collect();
-                self.recipe_put(None, name, summary, body, &spec, &tags, "asgard", true)
+                self.recipe_put(None, name, summary, body, &spec, &tags, "frontkeep", true)
                     .await?;
             }
         }
         if standards::count(&self.db).await? == 0 {
-            for s in asgard_catalog::standards::STANDARDS {
-                self.standard_put(s.id, s.title, s.summary, s.body, "asgard")
+            for s in frontkeep_catalog::standards::STANDARDS {
+                self.standard_put(s.id, s.title, s.summary, s.body, "frontkeep")
                     .await?;
             }
         }
@@ -1947,15 +1956,15 @@ impl ProjectRegistry {
                     tags: tags.iter().map(|s| s.to_string()).collect(),
                     ..Default::default()
                 };
-                self.mcp_server_create("asgard", &input, true).await?;
+                self.mcp_server_create("frontkeep", &input, true).await?;
             }
         }
         if skills::count(&self.db).await? == 0 {
             for (name, summary, runtime, tags, files) in knowledge_seed::SKILLS {
-                let bundle = asgard_skills::SkillBundle {
+                let bundle = frontkeep_skills::SkillBundle {
                     files: files
                         .iter()
-                        .map(|(p, t)| asgard_skills::SkillFile::from_text(*p, t))
+                        .map(|(p, t)| frontkeep_skills::SkillFile::from_text(*p, t))
                         .collect(),
                 };
                 let input = SkillInput {
@@ -1966,7 +1975,7 @@ impl ProjectRegistry {
                     bundle,
                     ..Default::default()
                 };
-                self.skill_create("asgard", &input, true).await?;
+                self.skill_create("frontkeep", &input, true).await?;
             }
         }
         Ok(())
@@ -1976,7 +1985,7 @@ impl ProjectRegistry {
     /// even under concurrent registration — the predecessor's lowest-free-slot
     /// scheme was racy).
     async fn mint_project_id(&self) -> Result<String, RegistryError> {
-        let year = &asgard_storage::now()[..4];
+        let year = &frontkeep_storage::now()[..4];
         let scope = format!("project-{year}");
         let value: i64 = sqlx::query_scalar(
             &self
@@ -2026,7 +2035,7 @@ impl ProjectRegistry {
         lifecycle: &str,
     ) -> Result<(), RegistryError> {
         let manifest = Manifest {
-            api_version: Some(asgard_catalog::API_VERSION.into()),
+            api_version: Some(frontkeep_catalog::API_VERSION.into()),
             kind: "Project".into(),
             metadata: Metadata {
                 name: project_id.to_string(),
@@ -2084,7 +2093,7 @@ mod tests {
 
     async fn registry() -> ProjectRegistry {
         let path =
-            std::env::temp_dir().join(format!("asgard-reg-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-reg-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2283,7 +2292,7 @@ mod tests {
     #[tokio::test]
     async fn manager_omitted_defaults_to_owner_when_optional() {
         let path =
-            std::env::temp_dir().join(format!("asgard-reg-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-reg-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2324,7 +2333,7 @@ mod tests {
     #[tokio::test]
     async fn group_optional_stores_ungrouped() {
         let path =
-            std::env::temp_dir().join(format!("asgard-reg-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-reg-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2401,7 +2410,7 @@ mod tests {
     #[tokio::test]
     async fn open_allowlist_accepts_any_group() {
         let path =
-            std::env::temp_dir().join(format!("asgard-reg-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-reg-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2497,8 +2506,10 @@ mod tests {
     // --- WS2 promotion orchestration -------------------------------------
 
     async fn registry_and_workflow() -> (ProjectRegistry, WorkflowEngine) {
-        let path =
-            std::env::temp_dir().join(format!("asgard-prom-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-prom-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2518,7 +2529,7 @@ mod tests {
         );
         let wf = WorkflowEngine::new(
             db,
-            std::sync::Arc::new(asgard_policy::CedarEngine::new().unwrap()),
+            std::sync::Arc::new(frontkeep_policy::CedarEngine::new().unwrap()),
         );
         (reg, wf)
     }

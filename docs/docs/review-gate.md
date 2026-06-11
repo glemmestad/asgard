@@ -108,7 +108,7 @@ Depth scales with the target tier. The shipped defaults:
 | `wide-operational` | `coding`, `security` | deeper |
 | `critical-path` | `coding`, `security`, `workflow` | exhaustive |
 
-(POC is the floor — nothing promotes *to* POC.) Override any tier in `asgard.yaml`:
+(POC is the floor — nothing promotes *to* POC.) Override any tier in `frontkeep.yaml`:
 
 ```yaml
 review_depth:
@@ -146,7 +146,7 @@ Every verdict is persisted (`promotion_reviews`) and a flag is audited
 
 | Knob | Where | Default |
 | --- | --- | --- |
-| Worker poll cadence | `review.worker_secs` in `asgard.yaml` | 15s |
+| Worker poll cadence | `review.worker_secs` in `frontkeep.yaml` | 15s |
 | On-demand drain (ops/e2e) | `POST /api/reviews/run` | — |
 
 The on-demand endpoint runs the same idempotent pass the periodic loop does — handy

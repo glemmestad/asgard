@@ -3,7 +3,7 @@
 //! The `by` dimension is chosen from a closed enum (never interpolated from user
 //! input) so the column name can't be injected.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::Serialize;
 use sqlx::Row;
 

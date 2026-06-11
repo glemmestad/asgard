@@ -1,19 +1,19 @@
 [package]
-name = "asgard-api"
+name = "frontkeep-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-asgard-storage.workspace = true
-asgard-catalog.workspace = true
-asgard-gateway.workspace = true
-asgard-workflow.workspace = true
-asgard-registry.workspace = true
-asgard-provision.workspace = true
-asgard-identity.workspace = true
-asgard-skills.workspace = true
-asgard-reviewer.workspace = true
+frontkeep-storage.workspace = true
+frontkeep-catalog.workspace = true
+frontkeep-gateway.workspace = true
+frontkeep-workflow.workspace = true
+frontkeep-registry.workspace = true
+frontkeep-provision.workspace = true
+frontkeep-identity.workspace = true
+frontkeep-skills.workspace = true
+frontkeep-reviewer.workspace = true
 axum.workspace = true
 tower-http.workspace = true
 async-graphql.workspace = true

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::CatalogError;
 
-pub const API_VERSION: &str = "asgard.dev/v1";
+pub const API_VERSION: &str = "frontkeep.dev/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -124,9 +124,9 @@ pub struct Entity {
 impl Entity {
     pub fn from_manifest(m: Manifest, origin: Origin) -> Entity {
         let hash = content_hash(&m.kind, &m.metadata, &m.spec, &m.relations);
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         Entity {
-            uid: asgard_storage::new_uid(),
+            uid: frontkeep_storage::new_uid(),
             kind: m.kind,
             metadata: m.metadata,
             spec: m.spec,

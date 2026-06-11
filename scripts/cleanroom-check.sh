@@ -5,7 +5,7 @@
 # scripts/cleanroom-denylist.txt appears in the tracked working tree. With
 # --history it additionally scans the full git history.
 #
-# Asgard is generic OSS authored by an individual: no company names, internal
+# Frontkeep is generic OSS authored by an individual: no company names, internal
 # hostnames, account ids, or internal service names anywhere in the repo or its
 # history. This is wired into CI as a hard gate.
 set -euo pipefail

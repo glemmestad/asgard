@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/project.schema.json",
-  "title": "Asgard Project",
-  "description": "Canonical schema for an Asgard Project entity manifest. A Project groups related work, owns a budget, and is tracked through a lifecycle.",
+  "$id": "https://frontkeep.dev/schemas/project.schema.json",
+  "title": "Frontkeep Project",
+  "description": "Canonical schema for an Frontkeep Project entity manifest. A Project groups related work, owns a budget, and is tracked through a lifecycle.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,8 +13,8 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1",
-      "description": "Asgard API version for this manifest."
+      "const": "frontkeep.dev/v1",
+      "description": "Frontkeep API version for this manifest."
     },
     "kind": {
       "const": "Project",
@@ -26,7 +26,7 @@
       "required": [
         "name"
       ],
-      "description": "Identifying and descriptive information common to all Asgard entities.",
+      "description": "Identifying and descriptive information common to all Frontkeep entities.",
       "properties": {
         "name": {
           "type": "string",

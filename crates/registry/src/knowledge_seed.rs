@@ -81,7 +81,7 @@ pub const RECIPES: &[(&str, &str, &[&str], &str, &str)] = &[
 ];
 
 /// (name, summary, install-spec JSON, tags, README markdown). A few well-known
-/// MCP servers, seeded as the company-approved tier (owner `asgard`) so a fresh
+/// MCP servers, seeded as the company-approved tier (owner `frontkeep`) so a fresh
 /// deploy's MCP catalog isn't blank and shows both transports (stdio + remote).
 /// The structured install renders to per-client snippets (Claude Code/Codex/Cursor).
 pub const MCP_SERVERS: &[(&str, &str, &str, &[&str], &str)] = &[
@@ -103,8 +103,8 @@ pub const MCP_SERVERS: &[(&str, &str, &str, &[&str], &str)] = &[
         "Frontkeep control plane",
         "This hub's own MCP server — register projects, provision services, read cost, pull standards/guidance/recipes.",
         r#"{"transport":"remote","url":"https://frontkeep.example.com/mcp"}"#,
-        &["asgard", "governance", "remote"],
-        include_str!("../../../seed/knowledge/mcp_servers/asgard.md"),
+        &["frontkeep", "governance", "remote"],
+        include_str!("../../../seed/knowledge/mcp_servers/frontkeep.md"),
     ),
 ];
 

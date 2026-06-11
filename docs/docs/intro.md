@@ -24,7 +24,7 @@ your company.
    deletes propagate.
 2. **Gateway** — every model call routes through it: per-project virtual keys,
    budgets, model allowlists per data-classification, PII/secret/prompt-injection
-   guardrails, full audit with a propagated `x-asgard-trace-id`, and a kill switch.
+   guardrails, full audit with a propagated `x-frontkeep-trace-id`, and a kill switch.
 3. **Policy** — one Cedar engine queried by gateway, catalog, workflow, and
    runtime: *can this principal do this, against this data class, with this model,
    and does it need approval?*
@@ -49,6 +49,6 @@ recipes, served to humans in the UI and to agents over MCP.
 - **Open core with honest seams.** The governance core is OSS; enterprise
   features (SAML/SCIM, multi-tenant, SIEM streaming) sit behind clear trait seams.
 
-> The default SQLite filename is still `asgard.db` so an existing deploy's data
+> The default SQLite filename is still `frontkeep.db` so an existing deploy's data
 > survives an in-place upgrade. Legacy `ASGARD_*` env vars continue to work
 > transparently — set either name; the new one wins when both are set.

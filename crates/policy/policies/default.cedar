@@ -1,4 +1,4 @@
-// Asgard default policies (RFC-0002 Part A). Decision-relevant facts are carried
+// Frontkeep default policies (RFC-0002 Part A). Decision-relevant facts are carried
 // on the request `context` so the engine needs no preloaded entity store for the
 // common path; richer entity-attribute policies can be added later. Cedar is
 // default-deny, and `forbid` overrides any `permit`.

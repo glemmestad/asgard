@@ -3,12 +3,12 @@ kind: Service
 metadata:
   name: {{ .Release.Name }}
   labels:
-    app.kubernetes.io/name: asgard
+    app.kubernetes.io/name: frontkeep
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   type: {{ .Values.service.type }}
   selector:
-    app.kubernetes.io/name: asgard
+    app.kubernetes.io/name: frontkeep
     app.kubernetes.io/instance: {{ .Release.Name }}
   ports:
     - name: http

@@ -137,9 +137,9 @@ mod tests {
             authorize_endpoint: "https://idp.example.com/authorize".into(),
             token_endpoint: "https://idp.example.com/token".into(),
             userinfo_endpoint: "https://idp.example.com/userinfo".into(),
-            client_id: "asgard-app".into(),
+            client_id: "frontkeep-app".into(),
             client_secret: "shh".into(),
-            redirect_uri: "https://asgard.example.com/auth/callback".into(),
+            redirect_uri: "https://frontkeep.example.com/auth/callback".into(),
             scopes: vec!["openid".into(), "email".into(), "profile".into()],
         }
     }
@@ -171,10 +171,10 @@ mod tests {
     fn builds_authorization_url() {
         let url = cfg().authorization_url("st8", "nonce1");
         assert!(url.starts_with("https://idp.example.com/authorize?"));
-        assert!(url.contains("client_id=asgard-app"));
+        assert!(url.contains("client_id=frontkeep-app"));
         assert!(url.contains("response_type=code"));
         assert!(url.contains("state=st8"));
         assert!(url.contains("scope=openid%20email%20profile"));
-        assert!(url.contains("redirect_uri=https%3A%2F%2Fasgard.example.com%2Fauth%2Fcallback"));
+        assert!(url.contains("redirect_uri=https%3A%2F%2Ffrontkeep.example.com%2Fauth%2Fcallback"));
     }
 }

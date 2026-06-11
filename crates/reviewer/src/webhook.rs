@@ -100,7 +100,7 @@ impl Reviewer for WebhookReviewer {
 mod tests {
     use super::*;
     use crate::Disposition;
-    use asgard_registry::EvidenceVerdict;
+    use frontkeep_registry::EvidenceVerdict;
 
     fn req() -> ReviewRequest {
         ReviewRequest {

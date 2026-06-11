@@ -26,15 +26,15 @@ impl IntoResponse for ApiError {
     }
 }
 
-impl From<asgard_catalog::CatalogError> for ApiError {
-    fn from(e: asgard_catalog::CatalogError) -> Self {
+impl From<frontkeep_catalog::CatalogError> for ApiError {
+    fn from(e: frontkeep_catalog::CatalogError) -> Self {
         ApiError::Internal(format!("catalog: {e}"))
     }
 }
 
-impl From<asgard_gateway::GatewayError> for ApiError {
-    fn from(e: asgard_gateway::GatewayError) -> Self {
-        use asgard_gateway::GatewayError as G;
+impl From<frontkeep_gateway::GatewayError> for ApiError {
+    fn from(e: frontkeep_gateway::GatewayError) -> Self {
+        use frontkeep_gateway::GatewayError as G;
         match e {
             G::Unauthorized => ApiError::Unauthorized("invalid or revoked key".into()),
             G::ProjectKilled => ApiError::Forbidden("project is killed".into()),
@@ -51,9 +51,9 @@ impl From<asgard_gateway::GatewayError> for ApiError {
     }
 }
 
-impl From<asgard_workflow::WorkflowError> for ApiError {
-    fn from(e: asgard_workflow::WorkflowError) -> Self {
-        use asgard_workflow::WorkflowError as W;
+impl From<frontkeep_workflow::WorkflowError> for ApiError {
+    fn from(e: frontkeep_workflow::WorkflowError) -> Self {
+        use frontkeep_workflow::WorkflowError as W;
         match e {
             W::NotFound(id) => ApiError::NotFound(format!("request {id}")),
             W::InvalidTransition { from, to } => {
@@ -64,9 +64,9 @@ impl From<asgard_workflow::WorkflowError> for ApiError {
     }
 }
 
-impl From<asgard_registry::RegistryError> for ApiError {
-    fn from(e: asgard_registry::RegistryError) -> Self {
-        use asgard_registry::RegistryError as R;
+impl From<frontkeep_registry::RegistryError> for ApiError {
+    fn from(e: frontkeep_registry::RegistryError) -> Self {
+        use frontkeep_registry::RegistryError as R;
         match e {
             R::Validation(m) => ApiError::BadRequest(m),
             R::NotRegistered(_) => ApiError::Forbidden(e.to_string()),
@@ -76,9 +76,9 @@ impl From<asgard_registry::RegistryError> for ApiError {
     }
 }
 
-impl From<asgard_provision::ProvisionError> for ApiError {
-    fn from(e: asgard_provision::ProvisionError) -> Self {
-        use asgard_provision::ProvisionError as P;
+impl From<frontkeep_provision::ProvisionError> for ApiError {
+    fn from(e: frontkeep_provision::ProvisionError) -> Self {
+        use frontkeep_provision::ProvisionError as P;
         match e {
             P::Unsupported(m) => ApiError::BadRequest(format!("unsupported resource: {m}")),
             P::InvalidSpec(m) => ApiError::BadRequest(m),
@@ -90,9 +90,9 @@ impl From<asgard_provision::ProvisionError> for ApiError {
     }
 }
 
-impl From<asgard_identity::IdentityError> for ApiError {
-    fn from(e: asgard_identity::IdentityError) -> Self {
-        use asgard_identity::IdentityError as I;
+impl From<frontkeep_identity::IdentityError> for ApiError {
+    fn from(e: frontkeep_identity::IdentityError) -> Self {
+        use frontkeep_identity::IdentityError as I;
         match e {
             I::InvalidCredentials => ApiError::Unauthorized("invalid credentials".into()),
             I::InvalidSession => ApiError::Unauthorized("invalid session".into()),

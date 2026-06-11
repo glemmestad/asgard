@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Eval
 metadata:
   name: code-review-quality

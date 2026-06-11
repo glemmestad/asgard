@@ -25,12 +25,12 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: asgard
+          POSTGRES_DB: frontkeep
         ports:
           - 5432:5432
         options: --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      ASGARD_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/asgard
+      FRONTKEEP_TEST_POSTGRES_URL: postgres://postgres:postgres@localhost:5432/frontkeep
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -38,15 +38,15 @@ jobs:
       - run: cargo test --workspace
 
   # Fails if the CLI and the MCP tool surface drift out of lock-step: every MCP
-  # tool must have a first-class typed `asgard …` subcommand, and every CLI tool
-  # reference must hit a real MCP tool. See crates/asgard/tests/cli_mcp_parity.rs.
+  # tool must have a first-class typed `frontkeep …` subcommand, and every CLI tool
+  # reference must hit a real MCP tool. See crates/frontkeep/tests/cli_mcp_parity.rs.
   cli-mcp-parity:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p asgard --test cli_mcp_parity
+      - run: cargo test -p frontkeep --test cli_mcp_parity
 
   cleanroom:
     runs-on: ubuntu-latest

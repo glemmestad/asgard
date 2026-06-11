@@ -2,10 +2,10 @@
 //! must conform to. Moved from embedded `include_str!` constants into the DB so an
 //! admin can edit them and every edit is versioned — but, unlike guidance/recipes,
 //! there is no draft queue: standards are normative, so rows are always published
-//! and edits are admin-only. The embedded `asgard_catalog::standards::STANDARDS`
+//! and edits are admin-only. The embedded `frontkeep_catalog::standards::STANDARDS`
 //! const remains the single seed source into an empty table.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -81,7 +81,7 @@ pub async fn put(
     if id.is_empty() {
         return Err(RegistryError::Validation("standard needs an id".into()));
     }
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     sqlx::query(&db.q(
         "INSERT INTO standards (id, title, summary, body, author, status, updated_at) \
          VALUES (?, ?, ?, ?, ?, 'published', ?) \
@@ -121,7 +121,7 @@ mod tests {
 
     async fn db() -> Db {
         let path =
-            std::env::temp_dir().join(format!("asgard-std-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-std-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -138,7 +138,7 @@ mod tests {
             "Engineering Standards",
             "code + tests",
             "Use conventional commits.",
-            "asgard",
+            "frontkeep",
         )
         .await
         .unwrap();
@@ -148,7 +148,7 @@ mod tests {
             "Security",
             "secrets + least privilege",
             "No shadow AI.",
-            "asgard",
+            "frontkeep",
         )
         .await
         .unwrap();

@@ -12,8 +12,8 @@
 //! `name`/`summary`/`manifest`/`portability` are derived from the bundle's `SKILL.md`
 //! at write time so the catalog is searchable without unpacking it.
 
-use asgard_skills::SkillBundle;
-use asgard_storage::Db;
+use frontkeep_skills::SkillBundle;
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -52,7 +52,7 @@ pub struct Skill {
     #[serde(default)]
     pub tags: Vec<String>,
     /// The submitter's identity (email when known) — the contact point. Seeded
-    /// company entries use `asgard`.
+    /// company entries use `frontkeep`.
     #[serde(default)]
     pub owner: String,
     /// Trust tier: `community` (user-submitted) | `approved` (company-sanctioned).
@@ -149,16 +149,16 @@ fn prepare(input: &SkillInput) -> Result<Prepared, RegistryError> {
     } else {
         input.runtime.trim().to_string()
     };
-    if !asgard_skills::RUNTIMES.contains(&runtime.as_str()) {
+    if !frontkeep_skills::RUNTIMES.contains(&runtime.as_str()) {
         return Err(RegistryError::Validation(format!(
             "runtime must be one of: {}",
-            asgard_skills::RUNTIMES.join(", ")
+            frontkeep_skills::RUNTIMES.join(", ")
         )));
     }
-    let stored = asgard_skills::store(&input.bundle)
+    let stored = frontkeep_skills::store(&input.bundle)
         .map_err(|e| RegistryError::Validation(e.to_string()))?;
     let skill_md = input.bundle.skill_md().unwrap_or_default();
-    let manifest = asgard_skills::frontmatter_json(&skill_md);
+    let manifest = frontkeep_skills::frontmatter_json(&skill_md);
     let fm_name = manifest.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let fm_desc = manifest
         .get("description")
@@ -179,7 +179,7 @@ fn prepare(input: &SkillInput) -> Result<Prepared, RegistryError> {
     } else {
         input.summary.clone()
     };
-    let portability = asgard_skills::lint_portability(&input.bundle)
+    let portability = frontkeep_skills::lint_portability(&input.bundle)
         .portability
         .as_str()
         .to_string();
@@ -239,7 +239,7 @@ pub async fn get(db: &Db, id: &str) -> Result<Option<Skill>, RegistryError> {
     Ok(row.as_ref().map(row_to_skill))
 }
 
-/// The stored bundle JSON for `id` (parse with `asgard_skills::from_json`). Fetched
+/// The stored bundle JSON for `id` (parse with `frontkeep_skills::from_json`). Fetched
 /// only for download/export so the blob never rides along with list/get.
 pub async fn get_bundle(db: &Db, id: &str) -> Result<Option<String>, RegistryError> {
     let row = sqlx::query(&db.q("SELECT bundle FROM skills WHERE id = ?"))
@@ -265,8 +265,8 @@ pub async fn create(
     approved: bool,
 ) -> Result<Skill, RegistryError> {
     let p = prepare(input)?;
-    let id = asgard_storage::new_uid();
-    let now = asgard_storage::now();
+    let id = frontkeep_storage::new_uid();
+    let now = frontkeep_storage::now();
     let status = if approved { "approved" } else { "community" };
     let approved_at = approved.then(|| now.clone());
     let approved_by = approved.then(|| owner.to_string());
@@ -310,7 +310,7 @@ pub async fn update(db: &Db, id: &str, input: &SkillInput) -> Result<Option<Skil
         return Ok(None);
     }
     let p = prepare(input)?;
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     let tags_s = input.tags.join(",");
     sqlx::query(&db.q(
         "UPDATE skills SET name = ?, summary = ?, readme = ?, runtime = ?, manifest = ?, \
@@ -345,7 +345,7 @@ pub async fn set_status(
     status: &str,
     approver: Option<&str>,
 ) -> Result<(), RegistryError> {
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     if status == "approved" {
         sqlx::query(&db.q(
             "UPDATE skills SET status = 'approved', approved_at = ?, approved_by = ?, \
@@ -379,7 +379,7 @@ pub async fn set_state(db: &Db, id: &str, state: &str) -> Result<(), RegistryErr
             STATES.join(", ")
         )));
     }
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     sqlx::query(&db.q("UPDATE skills SET state = ?, updated_at = ? WHERE id = ?"))
         .bind(state)
         .bind(&now)
@@ -396,7 +396,7 @@ pub async fn set_review(
     id: &str,
     verdict: &serde_json::Value,
 ) -> Result<(), RegistryError> {
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     let s = serde_json::to_string(verdict).unwrap_or_else(|_| "null".into());
     sqlx::query(&db.q("UPDATE skills SET review_json = ?, reviewed_at = ? WHERE id = ?"))
         .bind(&s)
@@ -418,11 +418,13 @@ pub async fn delete(db: &Db, id: &str) -> Result<(), RegistryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_skills::SkillFile;
+    use frontkeep_skills::SkillFile;
 
     async fn db() -> Db {
-        let path =
-            std::env::temp_dir().join(format!("asgard-skills-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-skills-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -461,7 +463,7 @@ mod tests {
         assert_eq!(got.name, "Changelog");
         assert_eq!(got.tags, vec!["test"]);
         let blob = get_bundle(&db, &s.id).await.unwrap().unwrap();
-        let bundle = asgard_skills::from_json(&blob).unwrap();
+        let bundle = frontkeep_skills::from_json(&blob).unwrap();
         assert!(bundle.get("scripts/run.sh").is_some());
         assert_eq!(list(&db, None, None, None).await.unwrap().len(), 1);
     }
@@ -489,7 +491,7 @@ mod tests {
         create(&db, "u", &input("community-one"), false)
             .await
             .unwrap();
-        create(&db, "asgard", &input("approved-one"), true)
+        create(&db, "frontkeep", &input("approved-one"), true)
             .await
             .unwrap();
         assert_eq!(list(&db, None, None, None).await.unwrap().len(), 2);

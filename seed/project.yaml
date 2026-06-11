@@ -5,7 +5,7 @@
 # `group` must be one of the cost-centers the deployer allows
 # (ask via the `list_groups` MCP tool or `GET /api/groups`). Owner and manager
 # are emails (self-entered, unverified) and must be two different people.
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Project
 metadata:
   name: CHANGE_ME          # replaced by the minted proj-YYYY-NNNN after registration

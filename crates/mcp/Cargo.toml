@@ -1,17 +1,17 @@
 [package]
-name = "asgard-mcp"
+name = "frontkeep-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-asgard-catalog.workspace = true
-asgard-gateway.workspace = true
-asgard-identity.workspace = true
-asgard-registry = { workspace = true, features = ["schemars"] }
-asgard-skills = { workspace = true, features = ["schemars"] }
-asgard-provision.workspace = true
-asgard-workflow.workspace = true
+frontkeep-catalog.workspace = true
+frontkeep-gateway.workspace = true
+frontkeep-identity.workspace = true
+frontkeep-registry = { workspace = true, features = ["schemars"] }
+frontkeep-skills = { workspace = true, features = ["schemars"] }
+frontkeep-provision.workspace = true
+frontkeep-workflow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -27,6 +27,6 @@ schemars = "1"
 http = "1"
 
 [dev-dependencies]
-asgard-storage.workspace = true
-asgard-policy.workspace = true
+frontkeep-storage.workspace = true
+frontkeep-policy.workspace = true
 tokio.workspace = true

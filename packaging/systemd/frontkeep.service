@@ -1,21 +1,21 @@
 [Unit]
-Description=Asgard control plane for AI/agent development
-Documentation=https://github.com/asgard/asgard
+Description=Frontkeep control plane for AI/agent development
+Documentation=https://github.com/glemmestad/frontkeep
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/asgard serve
+ExecStart=/usr/local/bin/frontkeep serve
 Restart=on-failure
 RestartSec=2
 # SQLite default — zero external services. Switch to a postgres:// URL to scale out.
-Environment=ASGARD_DATABASE_URL=sqlite:////var/lib/asgard/asgard.db
-Environment=ASGARD_BIND=0.0.0.0:8080
+Environment=FRONTKEEP_DATABASE_URL=sqlite:////var/lib/glemmestad/frontkeep.db
+Environment=FRONTKEEP_BIND=0.0.0.0:8080
 # Provide a Git token (and any provider keys) via an override or EnvironmentFile.
-# EnvironmentFile=/etc/asgard/asgard.env
+# EnvironmentFile=/etc/glemmestad/frontkeep.env
 DynamicUser=yes
-StateDirectory=asgard
+StateDirectory=frontkeep
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

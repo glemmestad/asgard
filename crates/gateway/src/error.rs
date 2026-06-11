@@ -19,7 +19,7 @@ pub enum GatewayError {
     #[error("provider error: {0}")]
     Provider(String),
     #[error("storage: {0}")]
-    Storage(#[from] asgard_storage::StorageError),
+    Storage(#[from] frontkeep_storage::StorageError),
     #[error("db: {0}")]
     Sqlx(#[from] sqlx::Error),
 }

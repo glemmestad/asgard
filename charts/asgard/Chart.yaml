@@ -1,9 +1,0 @@
-apiVersion: v2
-name: asgard
-description: Asgard — open-source control plane for AI/agent development
-type: application
-version: 0.1.0
-appVersion: "0.1.0"
-home: https://github.com/asgard/asgard
-sources:
-  - https://github.com/asgard/asgard

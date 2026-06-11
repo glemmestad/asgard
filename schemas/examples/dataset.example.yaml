@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Dataset
 metadata:
   name: wikipedia-en-corpus
@@ -9,7 +9,7 @@ metadata:
     domain: encyclopedia
     language: en
   annotations:
-    asgard.dev/source-pipeline: corpus-ingest
+    frontkeep.dev/source-pipeline: corpus-ingest
   tags:
     - text
     - knowledge-base

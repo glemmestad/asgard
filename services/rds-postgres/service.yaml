@@ -17,8 +17,8 @@ provisioner:
     # it. Unset vars are dropped and the module falls back to the default VPC.
     # (Region is AWS-wide — set AWS_DEFAULT_REGION, not a per-service var.)
     defaults:
-      subnet_group_name: "${ASGARD_RDS_SUBNET_GROUP}"
-      vpc_security_group_ids: "${ASGARD_RDS_SECURITY_GROUP_IDS:csv}"
+      subnet_group_name: "${FRONTKEEP_RDS_SUBNET_GROUP}"
+      vpc_security_group_ids: "${FRONTKEEP_RDS_SECURITY_GROUP_IDS:csv}"
 secret_outputs: [master_password, connection_url]
 cost:
   model: usage

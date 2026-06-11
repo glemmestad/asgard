@@ -3,13 +3,13 @@
 //! Frontkeep is "agents first, humans second": every capability is an MCP tool, and
 //! the CLI is a thin typed client over those same tools. The two surfaces must
 //! stay in step — a tool that an agent can call over `/mcp` but a human can't
-//! reach with a first-class `asgard …` subcommand (or vice-versa) is a silent
+//! reach with a first-class `frontkeep …` subcommand (or vice-versa) is a silent
 //! divergence. This test fails the build the moment that happens.
 //!
-//! - MCP truth: the live tool router (`AsgardMcp::tool_names()`) — exactly what
+//! - MCP truth: the live tool router (`FrontkeepMcp::tool_names()`) — exactly what
 //!   `tools/list` serves to agents, so a renamed/added/removed tool shows up here.
 //! - CLI truth: every tool name a typed subcommand dispatches in `main.rs`, read
-//!   from source. The generic `asgard call <tool>` escape hatch passes a runtime
+//!   from source. The generic `frontkeep call <tool>` escape hatch passes a runtime
 //!   value (no string literal) and is deliberately not counted — parity means a
 //!   *typed* command, not just reachability through the catch-all.
 //!
@@ -51,7 +51,9 @@ fn cli_tools() -> BTreeSet<String> {
 
 #[test]
 fn cli_and_mcp_are_in_lockstep() {
-    let mcp: BTreeSet<String> = asgard_mcp::AsgardMcp::tool_names().into_iter().collect();
+    let mcp: BTreeSet<String> = frontkeep_mcp::FrontkeepMcp::tool_names()
+        .into_iter()
+        .collect();
     let exempt: BTreeSet<String> = EXEMPT.iter().map(|s| s.to_string()).collect();
     let cli = cli_tools();
 

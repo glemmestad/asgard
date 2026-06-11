@@ -14,7 +14,7 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY . .
 COPY --from=docs /docs/build ./docs/build
-RUN cargo build --release -p asgard
+RUN cargo build --release -p frontkeep
 
 # Minimal runtime. SQLite default works with no extra setup; Postgres + the
 # terraform connector (armed provisioning) work too — terraform is on PATH and
@@ -39,12 +39,12 @@ COPY --from=build /src/target/release/frontkeep /usr/local/bin/frontkeep
 # Bundled terraform modules (the connector resolves manifest `module` paths
 # against modules_dir). Shipped in the image so a deploy needs no mounted tree.
 COPY --from=build /src/modules /modules
-RUN useradd --system --create-home asgard \
+RUN useradd --system --create-home frontkeep \
     && mkdir -p /data \
-    && chown asgard:asgard /data
-USER asgard
+    && chown frontkeep:frontkeep /data
+USER frontkeep
 VOLUME /data
-ENV FRONTKEEP_DATABASE_URL=sqlite:///data/asgard.db
+ENV FRONTKEEP_DATABASE_URL=sqlite:///data/frontkeep.db
 ENV FRONTKEEP_BIND=0.0.0.0:8080
 EXPOSE 8080
 # Readiness: confirms the process is up and the database is reachable.

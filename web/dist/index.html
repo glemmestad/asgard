@@ -595,7 +595,7 @@
     function connectStep(token) {
       const base = location.origin + '/mcp';
       const minted = !!token;
-      const pat = token || 'asg_pat_your_user_token';
+      const pat = token || 'fk_pat_your_user_token';
       const exportLine = `export FRONTKEEP_PAT=${pat}`;
       // Claude Code bakes the header at add-time — the shell expands $FRONTKEEP_PAT
       // right then, so an unset var silently stores an empty bearer and every call
@@ -2485,9 +2485,9 @@
       const debugLocal = new URLSearchParams(location.search).has('local');
       let bounced = false;
       if (cfg.oidc && !localOn && !debugLocal) {
-        const last = Number(sessionStorage.getItem('asg_sso_ts') || 0);
+        const last = Number(sessionStorage.getItem('fk_sso_ts') || 0);
         if (Date.now() - last > 10000) {
-          sessionStorage.setItem('asg_sso_ts', String(Date.now()));
+          sessionStorage.setItem('fk_sso_ts', String(Date.now()));
           location.href = '/api/auth/oidc/login';
           return;
         }
@@ -2515,7 +2515,7 @@
       applyBranding(cfg.system_name);
       if (bounced) document.getElementById('loginerr').textContent = "Sign-in didn't complete — try again.";
       if (cfg.oidc) document.getElementById('sso').onclick = () => {
-        sessionStorage.setItem('asg_sso_ts', String(Date.now()));
+        sessionStorage.setItem('fk_sso_ts', String(Date.now()));
         location.href = '/api/auth/oidc/login';
       };
       const lf = document.getElementById('loginf');
@@ -2543,7 +2543,7 @@
       let me;
       try { me = await api('/api/auth/me'); }
       catch { return showLogin(); }
-      sessionStorage.removeItem('asg_sso_ts');
+      sessionStorage.removeItem('fk_sso_ts');
       currentRole = (me && me.role) || 'member';
       meEmail = (me && me.email) || '';
       active = 'start';

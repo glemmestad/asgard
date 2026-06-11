@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use serde_json::Value;
 
-use asgard_gateway::{run_tool_loop, Gateway};
+use frontkeep_gateway::{run_tool_loop, Gateway};
 
 use crate::code_review::{CodeReviewTools, FAIL_MARKER};
 use crate::repo::RepoReader;
@@ -185,7 +185,7 @@ mod tests {
         assert!(clean.findings[0].contains("clean"));
 
         let flagged = stub(
-            &reader(Some((".asgard-review-fail", b""))),
+            &reader(Some((".frontkeep-review-fail", b""))),
             "model:default/mock",
         )
         .await;

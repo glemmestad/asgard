@@ -47,7 +47,7 @@ provider "aws" {
 }
 
 locals {
-  family = "${lookup(var.tags, "project", "asgard")}-${var.name}"
+  family = "${lookup(var.tags, "project", "frontkeep")}-${var.name}"
 }
 
 resource "aws_ecs_cluster" "this" {

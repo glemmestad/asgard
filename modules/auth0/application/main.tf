@@ -1,6 +1,6 @@
 # An Auth0 application (client) in an existing tenant. The auth0/auth0 provider
 # reads AUTH0_DOMAIN / AUTH0_CLIENT_ID / AUTH0_CLIENT_SECRET from the inherited
-# process env (Asgard loads them from .env). The project `tags` map is stamped
+# process env (Frontkeep loads them from .env). The project `tags` map is stamped
 # onto the client's metadata so `project=<id>` attribution lands downstream.
 
 terraform {
@@ -15,7 +15,7 @@ locals {
   # Qualify the user-supplied name with the project id so apps from different
   # projects don't collide (every AWS module does the same inline). Auth0 names
   # are display strings with no charset/length limit, so no lowercasing.
-  qualified_name = "${lookup(var.tags, "project", "asgard")}-${var.name}"
+  qualified_name = "${lookup(var.tags, "project", "frontkeep")}-${var.name}"
 
   audience = var.resource_server_template == "" ? "" : replace(
     var.resource_server_template, "{project}", lookup(var.tags, "project", "")

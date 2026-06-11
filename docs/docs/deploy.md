@@ -64,7 +64,7 @@ curl -s -X POST "$BASE/api/auth/tokens" -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' -d '{"name":"bootstrap"}' | jq -r .token
 ```
 
-Either way the result is a user PAT (`asg_pat_…`) — point an MCP client at
+Either way the result is a user PAT (`fk_pat_…`) — point an MCP client at
 `/mcp` with it ([Connect an agent](connect-agent.md)) and the governed loop is
 open. Both paths are idempotent and audited.
 
@@ -76,7 +76,7 @@ Official images publish to **GitHub Container Registry** on every released
 version:
 
 ```
-ghcr.io/glemmestad/asgard:<tag>
+ghcr.io/glemmestad/frontkeep:<tag>
 ```
 
 Tags, set by the release pipeline (`.github/workflows/release.yml`):
@@ -140,8 +140,8 @@ upgrade is needed (MCP uses Streamable HTTP, i.e. plain POST + SSE responses), b
 Caddy makes this automatic:
 
 ```caddy
-asgard.example.com {
-    reverse_proxy asgard:8080
+frontkeep.example.com {
+    reverse_proxy frontkeep:8080
     # Caddy terminates TLS and sets X-Forwarded-Proto / X-Forwarded-For for you.
 }
 ```
@@ -151,10 +151,10 @@ nginx:
 ```nginx
 server {
     listen 443 ssl;
-    server_name asgard.example.com;
+    server_name frontkeep.example.com;
     # ssl_certificate / ssl_certificate_key ...
     location / {
-        proxy_pass http://asgard:8080;
+        proxy_pass http://frontkeep:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;       # must be https
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -169,9 +169,9 @@ SQLite (the default) needs nothing. For a real pilot, run Postgres and point
 Frontkeep at it.
 
 ```bash
-docker run -d --name asgard-pg \
+docker run -d --name frontkeep-pg \
   -e POSTGRES_PASSWORD=change-me -e POSTGRES_DB=frontkeep \
-  -p 5432:5432 -v asgard-pg:/var/lib/postgresql/data \
+  -p 5432:5432 -v frontkeep-pg:/var/lib/postgresql/data \
   postgres:16-alpine
 ```
 
@@ -184,21 +184,21 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: change-me
-      POSTGRES_DB: asgard
-    volumes: [ "asgard-pg:/var/lib/postgresql/data" ]
-  asgard:
-    build: .            # or image: your-registry/asgard:tag
+      POSTGRES_DB: frontkeep
+    volumes: [ "frontkeep-pg:/var/lib/postgresql/data" ]
+  frontkeep:
+    build: .            # or image: your-registry/frontkeep:tag
     depends_on: [ db ]
     ports: [ "8080:8080" ]
     environment:
-      FRONTKEEP_DATABASE_URL: postgres://postgres:change-me@db:5432/asgard
+      FRONTKEEP_DATABASE_URL: postgres://postgres:change-me@db:5432/frontkeep
       FRONTKEEP_BIND: 0.0.0.0:8080
       FRONTKEEP_SECRET_KEY: ${FRONTKEEP_SECRET_KEY}        # 64 hex chars from your KMS
       FRONTKEEP_ADMIN_PASSWORD: ${FRONTKEEP_ADMIN_PASSWORD} # optional; else auto-generated + logged
     volumes:
-      - ./asgard.yaml:/asgard.yaml:ro
-    command: [ "serve", "--config", "/asgard.yaml" ]
-volumes: { asgard-pg: {} }
+      - ./frontkeep.yaml:/frontkeep.yaml:ro
+    command: [ "serve", "--config", "/frontkeep.yaml" ]
+volumes: { frontkeep-pg: {} }
 ```
 
 Frontkeep runs its own migrations on boot against whatever `FRONTKEEP_DATABASE_URL`
@@ -213,7 +213,7 @@ points to; the same schema works on SQLite and Postgres.
 > 5-person-shop / single-binary case, **no cloud required**. The moment compute is
 > cattle, point `FRONTKEEP_DATABASE_URL` at any Postgres (managed or self-run); that's
 > the documented pilot path and what the
-> [self-deploy runbook](./deploy-agent.md#appendix--dogfood-self-deploy-asgard-on-ecs)
+> [self-deploy runbook](./deploy-agent.md#appendix--dogfood-self-deploy-frontkeep-on-ecs)
 > uses. The database is the single system of record: back it up and you've backed up
 > everything — projects, keys, cost, and the encrypted secret store.
 
@@ -237,7 +237,7 @@ Source it from your KMS and inject it as **64 hex characters**:
 export FRONTKEEP_SECRET_KEY=$(openssl rand -hex 32)   # or fetch from your KMS
 ```
 
-It can also be set as `provisioning.secrets.master_key_hex` in `asgard.yaml`, but
+It can also be set as `provisioning.secrets.master_key_hex` in `frontkeep.yaml`, but
 the env var wins and is preferred so the key never lands in a config file. If
 unset, a built-in dev key is used — **fine for a smoke test, not for a pilot.**
 
@@ -250,7 +250,7 @@ unset, a built-in dev key is used — **fine for a smoke test, not for a pilot.*
 > in the DB, see below), so a key you can't recover means state you can't decrypt —
 > one more reason to source it from your KMS and keep it stable.
 
-## Step 3 — `asgard.yaml`
+## Step 3 — `frontkeep.yaml`
 
 Provisioning, the group/cost-center allowlist, and catalog sources come from a
 small config file mounted at a path you pass with `--config`. A minimal POC file:
@@ -299,7 +299,7 @@ provisioning" below.)
 ```bash
 FRONTKEEP_DATABASE_URL=postgres://postgres:change-me@localhost:5432/frontkeep \
 FRONTKEEP_SECRET_KEY=$FRONTKEEP_SECRET_KEY \
-frontkeep serve --bind 0.0.0.0:8080 --config ./asgard.yaml
+frontkeep serve --bind 0.0.0.0:8080 --config ./frontkeep.yaml
 ```
 
 On first boot with no `FRONTKEEP_ADMIN_PASSWORD`, the log prints a generated admin
@@ -451,7 +451,7 @@ the `terraform` connector registers on boot:
 
 ```bash
 FRONTKEEP_TF_MODULES_DIR=/modules                       # bundled in the official image
-FRONTKEEP_TF_WORK_DIR=/data/asgard-tf                   # scratch only; can be ephemeral
+FRONTKEEP_TF_WORK_DIR=/data/frontkeep-tf                   # scratch only; can be ephemeral
 # FRONTKEEP_TF_ALLOWED=aws:1234567890                   # OPTIONAL multi-account guardrail
 
 # AWS provisioning context (region + account are AWS-wide; subnet/SG are RDS-only):
@@ -478,7 +478,7 @@ unset and it provisions into the ambient account. Set it (`aws:<account-id>`,
 `auth0:<tenant>`) only to constrain which accounts Frontkeep may target when it can
 assume into several; the first entry is the default target.
 
-This is the recommended path for a container deploy — no `asgard.yaml` needed for
+This is the recommended path for a container deploy — no `frontkeep.yaml` needed for
 the headline feature. (You still set the provider creds below, e.g. `AUTH0_*`.)
 
 #### Bring your own services (operator overlay)
@@ -494,11 +494,11 @@ other connectors still load).
 How the files get to that directory is your call — three patterns, lightest first:
 
 1. **Derived image** (keeps the single-versioned-artifact property): build `FROM
-   asgard:<tag>`, `COPY` your `service.yaml`s and TF modules in, and set the two
+   frontkeep:<tag>`, `COPY` your `service.yaml`s and TF modules in, and set the two
    env vars. The catalog is versioned with the image. Best when the catalog changes
    at deploy cadence.
    ```dockerfile
-   FROM asgard:0.7
+   FROM frontkeep:0.7
    COPY my-services/ /srv/services/
    COPY my-modules/  /srv/modules/
    ENV FRONTKEEP_SERVICES_DIR=/srv/services
@@ -525,10 +525,10 @@ it.** Frontkeep doesn't care which delivery you choose.
 > no extra dependency. (Each apply takes a per-resource lease and a version check on
 > the stored state, so multiple replicas can't corrupt it; see "Scaling".)
 
-**Config file (full control).** Or arm it from `asgard.yaml` when you want the other
+**Config file (full control).** Or arm it from `frontkeep.yaml` when you want the other
 provisioning knobs (auto-approve, services overlay, AWS cost sources) in one place:
 
-1. Add a `terraform` block to `asgard.yaml` pointing at the bundled modules. The
+1. Add a `terraform` block to `frontkeep.yaml` pointing at the bundled modules. The
    official container ships `terraform` on `PATH` and the modules at `/modules`,
    so no mount is needed — just point `modules_dir` there:
 
@@ -536,7 +536,7 @@ provisioning knobs (auto-approve, services overlay, AWS cost sources) in one pla
    provisioning:
      terraform:
        modules_dir: /modules         # bundled in the image (or your own mounted tree)
-       work_dir: /data/asgard-tf     # scratch only; state is kept in the DB
+       work_dir: /data/frontkeep-tf     # scratch only; state is kept in the DB
      # Allow only the targets you intend to provision into:
      allowed:
        - { cloud: auth0, account: your-tenant }
@@ -575,7 +575,7 @@ plaintext, or the audit log.
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `FRONTKEEP_DATABASE_URL` | `sqlite://…` or `postgres://…`. Migrations run on boot. | `sqlite://asgard.db` |
+| `FRONTKEEP_DATABASE_URL` | `sqlite://…` or `postgres://…`. Migrations run on boot. | `sqlite://frontkeep.db` |
 | `FRONTKEEP_BIND` | Listen address. | `0.0.0.0:8080` |
 | `FRONTKEEP_SECRET_KEY` | 64 hex chars (32 bytes) for the secret store. From your KMS. **Load-bearing and one-way — changing it orphans every stored secret** (see Step 2). | dev key (insecure) |
 | `FRONTKEEP_SYSTEM_NAME` | Display name the dashboard rebrands to (see "Rebranding" below). | `Frontkeep` |
@@ -592,7 +592,7 @@ plaintext, or the audit log.
 | `FRONTKEEP_FORCE_HTTPS` | `1`/`true` forces `Secure` on auth cookies regardless of detected scheme — "HTTPS is required." Set this when TLS is mandatory everywhere. | off (adaptive) |
 | `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` / `AUTH0_CLIENT_SECRET` | M2M creds passed through to the Terraform Auth0 provider when provisioning is armed. | — |
 | `FRONTKEEP_TF_MODULES_DIR` | Arms the `terraform` connector **without a config file** — point it at the bundled modules (`/modules`). Presence is what registers the connector. | (off) |
-| `FRONTKEEP_SERVICES_DIR` | Operator overlay dir of your own `service.yaml` files (added/overridden by `id` on top of the embedded catalog). Lets a deployed image add services without a recompile or an `asgard.yaml`; arms the overlay even without Terraform. See *Bring your own services*. | (off) |
+| `FRONTKEEP_SERVICES_DIR` | Operator overlay dir of your own `service.yaml` files (added/overridden by `id` on top of the embedded catalog). Lets a deployed image add services without a recompile or an `frontkeep.yaml`; arms the overlay even without Terraform. See *Bring your own services*. | (off) |
 | `FRONTKEEP_TF_WORK_DIR` | Scratch dir for Terraform working dirs. **State itself is kept (encrypted) in the DB**, so this may be ephemeral. | system temp |
 | `FRONTKEEP_TF_ALLOWED` | **Optional** `cloud:account` allowlist (e.g. `aws:1234567890,auth0:your-tenant`) — a multi-account *hardening* guardrail, not a per-resource list. The real boundary on a single-account deploy is the IAM role Frontkeep runs under; leave this unset and it provisions into the ambient account. Set it to constrain which cloud accounts Frontkeep may target when it can assume into several. First entry is the default target. | — |
 | `AWS_DEFAULT_REGION` / `AWS_REGION` | **Standard AWS env**, read by the Terraform AWS provider for *every* AWS module — the one place to set the region all AWS resources deploy into. Frontkeep adds no region var of its own; a request may still override per-resource via `spec.region`. | (provider default) |
@@ -619,7 +619,7 @@ Set **`FRONTKEEP_SYSTEM_NAME`** (e.g. `Acme Control Plane`) to rebrand the deplo
 - the logo glyph (the first letter of the name),
 
 served via `GET /api/auth/config` so the change is live on next page load. It does
-**not** rename anything functional: the MCP server still identifies as `asgard` in
+**not** rename anything functional: the MCP server still identifies as `frontkeep` in
 the `initialize` handshake, project ids keep the `proj-YYYY-NNNN` shape, env var
 names stay `FRONTKEEP_*`, and log lines / API paths are unchanged. Set it once on the
 process; there's nothing else to configure.

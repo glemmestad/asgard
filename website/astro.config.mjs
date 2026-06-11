@@ -32,7 +32,7 @@ function remarkAdmonitions() {
 }
 
 export default defineConfig({
-  site: 'https://asgard.build',
+  site: 'https://frontkeep.build',
   output: 'static',
   devToolbar: { enabled: false },
   markdown: {

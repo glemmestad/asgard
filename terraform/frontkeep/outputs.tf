@@ -1,5 +1,5 @@
 output "container_name" {
-  value = docker_container.asgard.name
+  value = docker_container.frontkeep.name
 }
 
 output "endpoint" {

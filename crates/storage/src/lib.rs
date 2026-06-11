@@ -41,7 +41,7 @@ pub enum Backend {
 }
 
 impl Db {
-    /// Connect to `database_url` (e.g. `sqlite://asgard.db`, `sqlite::memory:`,
+    /// Connect to `database_url` (e.g. `sqlite://frontkeep.db`, `sqlite::memory:`,
     /// or `postgres://user:pass@host/db`) and ready the pool.
     pub async fn connect(database_url: &str) -> Result<Db, StorageError> {
         INSTALL_DRIVERS.call_once(sqlx::any::install_default_drivers);
@@ -164,7 +164,7 @@ mod tests {
     use crate::audit::{self, AuditQuery, AuditRecord};
 
     async fn fresh_sqlite() -> Db {
-        let path = std::env::temp_dir().join(format!("asgard-st-{}.db", new_uid()));
+        let path = std::env::temp_dir().join(format!("frontkeep-st-{}.db", new_uid()));
         let url = format!("sqlite://{}", path.display());
         let db = Db::connect(&url).await.unwrap();
         db.migrate().await.unwrap();

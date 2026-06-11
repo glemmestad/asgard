@@ -35,7 +35,7 @@ provider "aws" {
 }
 
 resource "aws_dynamodb_table" "this" {
-  name         = "${lookup(var.tags, "project", "asgard")}-${var.name}"
+  name         = "${lookup(var.tags, "project", "frontkeep")}-${var.name}"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = var.pk_name
 

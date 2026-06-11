@@ -1,17 +1,17 @@
 //! MCP server (brief §4 surface 2): the agent-era equivalent of the Backstage
 //! UI. Built on the official Rust SDK (`rmcp`), exposed over two transports:
-//! Streamable HTTP (mounted at `/mcp` in `serve()`) and stdio (`asgard mcp`).
-//! One [`AsgardMcp`] `ServerHandler` backs both; tool bodies call the same domain
+//! Streamable HTTP (mounted at `/mcp` in `serve()`) and stdio (`frontkeep mcp`).
+//! One [`FrontkeepMcp`] `ServerHandler` backs both; tool bodies call the same domain
 //! services the REST surface does — no business logic lives here.
 //!
 //! ## Authentication & scoping
 //! Over HTTP, [`http_router`] gates `/mcp` with an auth middleware that resolves
 //! the `Authorization: Bearer <token>` into an [`McpAuth`] principal: a user PAT
-//! (`asg_pat_…`) → a `User` (acts across every project they own/manage; can
+//! (`fk_pat_…`) → a `User` (acts across every project they own/manage; can
 //! register), anything else → a `Project` via [`GatewayRepo::verify_key`]. The
 //! Streamable-HTTP transport hands the `http::request::Parts` (carrying that
 //! extension) to each tool, so project-scoped tools (`request_resource`,
-//! `get_secret`, …) authorize the target project per [`AsgardMcp::resolve_project`]
+//! `get_secret`, …) authorize the target project per [`FrontkeepMcp::resolve_project`]
 //! — a project id is never a spoofable argument. Over stdio there is no token; the
 //! project comes from `FRONTKEEP_PROJECT` (local trust), passed as `default_project`.
 
@@ -21,12 +21,12 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use asgard_catalog::{seed, CatalogRepo, ListFilter};
-use asgard_gateway::{Gateway, GatewayRepo};
-use asgard_identity::{IdentityService, Role, PAT_PREFIX};
-use asgard_provision::{ProvisionService, RollupDim};
-use asgard_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput, SkillInput};
-use asgard_workflow::WorkflowEngine;
+use frontkeep_catalog::{seed, CatalogRepo, ListFilter};
+use frontkeep_gateway::{Gateway, GatewayRepo};
+use frontkeep_identity::{IdentityService, Role, PAT_PREFIX};
+use frontkeep_provision::{ProvisionService, RollupDim};
+use frontkeep_registry::{CostDim, McpServerInput, ProjectRegistry, RegisterInput, SkillInput};
+use frontkeep_workflow::WorkflowEngine;
 
 use rmcp::handler::server::router::prompt::PromptRouter;
 use rmcp::handler::server::tool::ToolRouter;
@@ -46,7 +46,7 @@ use rmcp::{
 /// A project virtual key authenticates as exactly one project (today's path); a
 /// user PAT authenticates as a person who can act on every project they own or
 /// manage (and register new ones). The control-plane tools resolve the target
-/// project differently per variant — see [`AsgardMcp::resolve_project`].
+/// project differently per variant — see [`FrontkeepMcp::resolve_project`].
 #[derive(Debug, Clone)]
 pub enum McpAuth {
     Project { project_id: String },
@@ -54,7 +54,7 @@ pub enum McpAuth {
 }
 
 #[derive(Clone)]
-pub struct AsgardMcp {
+pub struct FrontkeepMcp {
     catalog: CatalogRepo,
     gateway: Arc<Gateway>,
     registry: ProjectRegistry,
@@ -118,7 +118,7 @@ pub struct RegisterProjectArgs {
     #[serde(default)]
     pub provisional: bool,
     #[serde(flatten)]
-    pub evidence: asgard_registry::Evidence,
+    pub evidence: frontkeep_registry::Evidence,
 }
 
 /// Project id plus mutable fields. `name`/`description`/`budget_usd` patch the
@@ -140,7 +140,7 @@ pub struct UpdateProjectArgs {
     /// Reassign the project's manager.
     pub manager_email: Option<String>,
     #[serde(flatten)]
-    pub evidence: asgard_registry::Evidence,
+    pub evidence: frontkeep_registry::Evidence,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -233,7 +233,7 @@ pub struct SkillsCatalogPublishArgs {
     #[serde(default)]
     pub tags: Vec<String>,
     /// The skill's file tree: `[{ path, content_b64 }]`. Must include a `SKILL.md`.
-    pub bundle: Vec<asgard_skills::SkillFile>,
+    pub bundle: Vec<frontkeep_skills::SkillFile>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -478,7 +478,7 @@ pub struct SeedPlanArgs {
 
 const DEFAULT_REQUESTER: &str = "agent:default/unknown";
 
-impl AsgardMcp {
+impl FrontkeepMcp {
     pub fn new(
         catalog: CatalogRepo,
         gateway: Arc<Gateway>,
@@ -487,7 +487,7 @@ impl AsgardMcp {
         provision: ProvisionService,
         default_project: Option<String>,
     ) -> Self {
-        AsgardMcp {
+        FrontkeepMcp {
             catalog,
             gateway,
             registry,
@@ -560,7 +560,7 @@ impl AsgardMcp {
 
     /// Authorize a user principal for a project (owner/manager, or see-all role).
     async fn authorize_user(&self, email: &str, role: &str, pid: &str) -> Result<(), String> {
-        let see_all = Role::parse(role).can(asgard_identity::Capability::ViewAllCost);
+        let see_all = Role::parse(role).can(frontkeep_identity::Capability::ViewAllCost);
         match self.registry.is_authority(pid, email, see_all).await {
             Ok(true) => Ok(()),
             Ok(false) => Err(format!(
@@ -676,7 +676,7 @@ impl AsgardMcp {
     ) -> Result<String, String> {
         // Evidence is PUT — but only when supplied, so a name/budget-only update
         // doesn't clear it.
-        if a.evidence != asgard_registry::Evidence::default() {
+        if a.evidence != frontkeep_registry::Evidence::default() {
             self.registry
                 .update_evidence(pid, a.evidence, actor)
                 .await
@@ -691,7 +691,7 @@ impl AsgardMcp {
             .update_project(
                 &self.workflow,
                 pid,
-                asgard_registry::ProjectUpdate {
+                frontkeep_registry::ProjectUpdate {
                     name: a.name,
                     description: a.description,
                     budget_usd: a.budget_usd,
@@ -704,7 +704,7 @@ impl AsgardMcp {
             .await
             .map_err(|e| e.to_string())?;
         let pending = match budget {
-            asgard_registry::BudgetOutcome::PendingReview(req) => Some(req),
+            frontkeep_registry::BudgetOutcome::PendingReview(req) => Some(req),
             _ => None,
         };
         Ok(serde_json::to_string(&serde_json::json!({
@@ -748,7 +748,7 @@ impl AsgardMcp {
                 projects.retain(|p| p.project_id == project_id)
             }
             Some(McpAuth::User { email, role }) => {
-                if !Role::parse(&role).can(asgard_identity::Capability::ViewAllCost) {
+                if !Role::parse(&role).can(frontkeep_identity::Capability::ViewAllCost) {
                     projects.retain(|p| p.owner == email || p.manager == email);
                 }
             }
@@ -794,7 +794,7 @@ impl AsgardMcp {
         &self,
         a: RegistrationRequirementsArgs,
     ) -> Result<String, String> {
-        use asgard_registry::{CLASSIFICATIONS, DATA_CLASSES};
+        use frontkeep_registry::{CLASSIFICATIONS, DATA_CLASSES};
         let tiers: Vec<&str> = match a.classification.as_deref() {
             Some(c) => match CLASSIFICATIONS.iter().find(|t| **t == c) {
                 Some(t) => vec![*t],
@@ -984,7 +984,7 @@ impl AsgardMcp {
         role: &str,
         a: McpCatalogPublishArgs,
     ) -> Result<String, String> {
-        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let admin = Role::parse(role).can(frontkeep_identity::Capability::ManageUsers);
         let input = McpServerInput {
             name: a.name,
             summary: a.summary,
@@ -1027,7 +1027,7 @@ impl AsgardMcp {
         role: &str,
         a: McpCatalogStateArgs,
     ) -> Result<String, String> {
-        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let admin = Role::parse(role).can(frontkeep_identity::Capability::ManageUsers);
         let existing = self
             .registry
             .mcp_server_get(&a.id)
@@ -1081,7 +1081,7 @@ impl AsgardMcp {
         role: &str,
         a: SkillsCatalogPublishArgs,
     ) -> Result<String, String> {
-        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let admin = Role::parse(role).can(frontkeep_identity::Capability::ManageUsers);
         let input = SkillInput {
             name: a.name,
             summary: a.summary,
@@ -1091,7 +1091,7 @@ impl AsgardMcp {
             homepage: a.homepage,
             version: a.version,
             tags: a.tags,
-            bundle: asgard_skills::SkillBundle { files: a.bundle },
+            bundle: frontkeep_skills::SkillBundle { files: a.bundle },
         };
         let s = match a.id.filter(|s| !s.is_empty()) {
             Some(id) => {
@@ -1125,7 +1125,7 @@ impl AsgardMcp {
         role: &str,
         a: SkillsCatalogStateArgs,
     ) -> Result<String, String> {
-        let admin = Role::parse(role).can(asgard_identity::Capability::ManageUsers);
+        let admin = Role::parse(role).can(frontkeep_identity::Capability::ManageUsers);
         let existing = self
             .registry
             .skill_get(&a.id)
@@ -1161,14 +1161,14 @@ impl AsgardMcp {
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("unknown skill '{}'", a.id))?;
-        let bundle = asgard_skills::from_json(&blob).map_err(|e| e.to_string())?;
-        let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+        let bundle = frontkeep_skills::from_json(&blob).map_err(|e| e.to_string())?;
+        let from = frontkeep_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
         let target = match a.runtime.as_deref() {
-            Some(s) => asgard_skills::Runtime::parse(s)
+            Some(s) => frontkeep_skills::Runtime::parse(s)
                 .ok_or_else(|| format!("unknown runtime '{s}' (expected claude-code or codex)"))?,
             None => from,
         };
-        let res = asgard_skills::translate(&bundle, from, target).map_err(|e| e.to_string())?;
+        let res = frontkeep_skills::translate(&bundle, from, target).map_err(|e| e.to_string())?;
         serde_json::to_string(&serde_json::json!({
             "id": a.id,
             "name": skill.name,
@@ -1196,14 +1196,14 @@ impl AsgardMcp {
             .await
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("unknown skill '{}'", a.id))?;
-        let bundle = asgard_skills::from_json(&blob).map_err(|e| e.to_string())?;
+        let bundle = frontkeep_skills::from_json(&blob).map_err(|e| e.to_string())?;
         let dest_key = a.dest.as_deref().unwrap_or(&skill.runtime);
-        let dest = asgard_skills::destination(dest_key).ok_or_else(|| {
+        let dest = frontkeep_skills::destination(dest_key).ok_or_else(|| {
             format!("unknown dest '{dest_key}' (expected claude-code, codex, or cursor)")
         })?;
-        let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+        let from = frontkeep_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
         let res =
-            asgard_skills::translate(&bundle, from, dest.runtime).map_err(|e| e.to_string())?;
+            frontkeep_skills::translate(&bundle, from, dest.runtime).map_err(|e| e.to_string())?;
         let decoded = res.bundle.decoded().map_err(|e| e.to_string())?;
         let b64: std::collections::HashMap<&str, &str> = res
             .bundle
@@ -1226,7 +1226,7 @@ impl AsgardMcp {
                 }),
             })
             .collect();
-        let dir = format!("{}/{}", dest.dir, asgard_skills::slug(&skill.name));
+        let dir = format!("{}/{}", dest.dir, frontkeep_skills::slug(&skill.name));
         serde_json::to_string(&serde_json::json!({
             "id": a.id,
             "name": skill.name,
@@ -1260,8 +1260,8 @@ impl AsgardMcp {
             .map_err(|e| e.to_string())?
             .ok_or_else(|| format!("project not registered: {pid}"))?;
         let window = match (a.start, a.end) {
-            (Some(s), Some(e)) => asgard_provision::CostWindow { start: s, end: e },
-            _ => asgard_provision::CostWindow::current_month(),
+            (Some(s), Some(e)) => frontkeep_provision::CostWindow { start: s, end: e },
+            _ => frontkeep_provision::CostWindow::current_month(),
         };
         let infra = self
             .provision
@@ -1281,7 +1281,7 @@ impl AsgardMcp {
     }
 
     async fn do_cost_series(&self, a: CostSeriesArgs) -> Result<String, String> {
-        let today = asgard_provision::today();
+        let today = frontkeep_provision::today();
         let from = a.from.unwrap_or_else(|| month_start(&today));
         let until = a.until.unwrap_or(today);
         let rows = self
@@ -1297,7 +1297,7 @@ impl AsgardMcp {
         let dim = RollupDim::parse(a.by.as_deref().unwrap_or("project")).ok_or_else(|| {
             "by must be one of: project, owner, manager, group, cost_center, classification, service".to_string()
         })?;
-        let today = asgard_provision::today();
+        let today = frontkeep_provision::today();
         let from = a.from.unwrap_or_else(|| month_start(&today));
         let until = a.until.unwrap_or(today);
         let rows = self
@@ -1330,7 +1330,7 @@ impl AsgardMcp {
     }
 
     async fn do_cost_tree(&self, a: AsOfArgs) -> Result<String, String> {
-        let as_of = a.as_of.unwrap_or_else(asgard_provision::today);
+        let as_of = a.as_of.unwrap_or_else(frontkeep_provision::today);
         let tree = self
             .provision
             .cost_tree(&self.registry, &as_of, None)
@@ -1340,7 +1340,7 @@ impl AsgardMcp {
     }
 
     async fn do_cost_movers(&self, a: CostMoversArgs) -> Result<String, String> {
-        let as_of = a.as_of.unwrap_or_else(asgard_provision::today);
+        let as_of = a.as_of.unwrap_or_else(frontkeep_provision::today);
         let movers = self
             .provision
             .cost_movers(&as_of, a.top.unwrap_or(5) as usize, None)
@@ -1474,8 +1474,8 @@ impl AsgardMcp {
         // A request's project lives in its payload (provision/budget) or a `project:`
         // subject (promotion) — not in the workflow `subject` column — so scope in code
         // via WorkflowRequest::project_id rather than a SQL subject filter.
-        let filter = asgard_workflow::RequestFilter {
-            state: Some(asgard_workflow::State::Requested),
+        let filter = frontkeep_workflow::RequestFilter {
+            state: Some(frontkeep_workflow::State::Requested),
             ..Default::default()
         };
         let mut reqs = self
@@ -1491,7 +1491,7 @@ impl AsgardMcp {
                 reqs.retain(|r| r.project_id() == Some(project_id.as_str()));
             }
             Some(McpAuth::User { email, role }) => {
-                let see_all = Role::parse(&role).can(asgard_identity::Capability::ViewAllCost);
+                let see_all = Role::parse(&role).can(frontkeep_identity::Capability::ViewAllCost);
                 if !see_all {
                     let projects = self.registry.list().await.map_err(|e| e.to_string())?;
                     let mine: std::collections::HashSet<String> = projects
@@ -1509,7 +1509,7 @@ impl AsgardMcp {
 
     /// Approve (`approve=true`) or deny a pending request. The approver must be a user
     /// principal who is the subject project's manager or holds `ApproveRequests` — never
-    /// the owner alone, never a project key (see `asgard_identity::may_approve_request`).
+    /// the owner alone, never a project key (see `frontkeep_identity::may_approve_request`).
     /// On approval of a provisioning request, enqueue the apply (mirrors the REST path).
     async fn do_decide_request(
         &self,
@@ -1521,7 +1521,7 @@ impl AsgardMcp {
         let (email, role) = match auth {
             Some(McpAuth::User { email, role }) => (email, role),
             _ => {
-                return Err("approving a request requires a user token (asg_pat_…); a project key cannot approve its own requests".into())
+                return Err("approving a request requires a user token (fk_pat_…); a project key cannot approve its own requests".into())
             }
         };
         let req = self
@@ -1540,7 +1540,7 @@ impl AsgardMcp {
                 .unwrap_or_default(),
             None => String::new(),
         };
-        if !asgard_identity::may_approve_request(Role::parse(&role), &email, &manager) {
+        if !frontkeep_identity::may_approve_request(Role::parse(&role), &email, &manager) {
             return Err(format!(
                 "not authorized to decide request {id} (its project's manager or an approver role only)"
             ));
@@ -1560,7 +1560,7 @@ impl AsgardMcp {
             .await
             .map_err(|e| e.to_string())?;
         if approved.kind.starts_with("provision:")
-            && approved.state == asgard_workflow::State::Approved
+            && approved.state == frontkeep_workflow::State::Approved
         {
             let outcome = self
                 .provision
@@ -1752,7 +1752,7 @@ fn deny(e: String) -> Result<CallToolResult, McpError> {
 }
 
 #[tool_router]
-impl AsgardMcp {
+impl FrontkeepMcp {
     #[tool(description = "Search the entity catalog by kind and/or query.")]
     async fn catalog_search(
         &self,
@@ -1984,7 +1984,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Publish an MCP server to the catalog so others can discover and install it (or update one you own by passing its id). install = { transport: stdio|remote, command, args, env, url }. Requires a user token (asg_pat_…) — the entry is owned by you as the contact point; a project key cannot publish. Your submission is listed as user-submitted until an admin promotes it to company-approved."
+        description = "Publish an MCP server to the catalog so others can discover and install it (or update one you own by passing its id). install = { transport: stdio|remote, command, args, env, url }. Requires a user token (fk_pat_…) — the entry is owned by you as the contact point; a project key cannot publish. Your submission is listed as user-submitted until an admin promotes it to company-approved."
     )]
     async fn mcp_catalog_publish(
         &self,
@@ -1995,7 +1995,7 @@ impl AsgardMcp {
             Some(McpAuth::User { email, role }) => (email, role),
             _ => {
                 return deny(
-                    "publishing to the MCP catalog requires a user token (asg_pat_…); a project key has no owner identity".into(),
+                    "publishing to the MCP catalog requires a user token (fk_pat_…); a project key has no owner identity".into(),
                 )
             }
         };
@@ -2014,7 +2014,7 @@ impl AsgardMcp {
             Some(McpAuth::User { email, role }) => (email, role),
             _ => {
                 return deny(
-                    "changing a catalog entry's state requires a user token (asg_pat_…)".into(),
+                    "changing a catalog entry's state requires a user token (fk_pat_…)".into(),
                 )
             }
         };
@@ -2039,7 +2039,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Publish an agent skill to the catalog so others can discover and install it (or update one you own by passing its id). bundle is the skill's file tree [{ path, content_b64 }] and must include a SKILL.md; name/summary default to the SKILL.md frontmatter. Requires a user token (asg_pat_…) — a project key has no owner identity. Your submission is listed as user-submitted until an admin promotes it to company-approved."
+        description = "Publish an agent skill to the catalog so others can discover and install it (or update one you own by passing its id). bundle is the skill's file tree [{ path, content_b64 }] and must include a SKILL.md; name/summary default to the SKILL.md frontmatter. Requires a user token (fk_pat_…) — a project key has no owner identity. Your submission is listed as user-submitted until an admin promotes it to company-approved."
     )]
     async fn skills_catalog_publish(
         &self,
@@ -2050,7 +2050,7 @@ impl AsgardMcp {
             Some(McpAuth::User { email, role }) => (email, role),
             _ => {
                 return deny(
-                    "publishing to the Skills catalog requires a user token (asg_pat_…); a project key has no owner identity".into(),
+                    "publishing to the Skills catalog requires a user token (fk_pat_…); a project key has no owner identity".into(),
                 )
             }
         };
@@ -2067,7 +2067,7 @@ impl AsgardMcp {
     ) -> Result<CallToolResult, McpError> {
         let (email, role) = match Self::auth(&ctx) {
             Some(McpAuth::User { email, role }) => (email, role),
-            _ => return deny("changing a skill's state requires a user token (asg_pat_…)".into()),
+            _ => return deny("changing a skill's state requires a user token (fk_pat_…)".into()),
         };
         wrap(self.do_skills_catalog_set_state(&email, &role, a).await)
     }
@@ -2283,7 +2283,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Approve a pending request (see list_pending_approvals); for a provisioning request the apply is enqueued immediately. Requires a user token (asg_pat_…): the project's manager or an admin may approve — the project owner cannot self-approve their own over-budget request, and a project key cannot approve at all. Returns the post-approval request (Fulfilled if it completed inline, else Approved while the apply runs in the background)."
+        description = "Approve a pending request (see list_pending_approvals); for a provisioning request the apply is enqueued immediately. Requires a user token (fk_pat_…): the project's manager or an admin may approve — the project owner cannot self-approve their own over-budget request, and a project key cannot approve at all. Returns the post-approval request (Fulfilled if it completed inline, else Approved while the apply runs in the background)."
     )]
     async fn approve_request(
         &self,
@@ -2297,7 +2297,7 @@ impl AsgardMcp {
     }
 
     #[tool(
-        description = "Deny a pending request (see list_pending_approvals). Requires a user token (asg_pat_…): the project's manager or an admin only. Records the reason and moves the request to rejected."
+        description = "Deny a pending request (see list_pending_approvals). Requires a user token (fk_pat_…): the project's manager or an admin only. Records the reason and moves the request to rejected."
     )]
     async fn deny_request(
         &self,
@@ -2357,14 +2357,15 @@ impl AsgardMcp {
     ) -> Result<CallToolResult, McpError> {
         // Audit surface: a user token with ViewAudit (admin/finance) only, then
         // the usual per-project authority check on the resolved record.
-        let (email, role) = match Self::auth(&ctx) {
-            Some(McpAuth::User { email, role }) => (email, role),
-            _ => return deny(
-                "reading a resource run-log requires a user token (asg_pat_…) with audit access"
-                    .into(),
-            ),
-        };
-        if !Role::parse(&role).can(asgard_identity::Capability::ViewAudit) {
+        let (email, role) =
+            match Self::auth(&ctx) {
+                Some(McpAuth::User { email, role }) => (email, role),
+                _ => return deny(
+                    "reading a resource run-log requires a user token (fk_pat_…) with audit access"
+                        .into(),
+                ),
+            };
+        if !Role::parse(&role).can(frontkeep_identity::Capability::ViewAudit) {
             return deny(format!(
                 "role '{role}' is not permitted to read resource run-logs (requires ViewAudit)"
             ));
@@ -2623,9 +2624,9 @@ impl AsgardMcp {
 }
 
 #[prompt_router]
-impl AsgardMcp {
+impl FrontkeepMcp {
     /// Surfaced as a slash command by MCP clients (e.g. Claude Code's
-    /// `/mcp__asgard__bootstrap`): a one-line shortcut that tells the agent to run
+    /// `/mcp__frontkeep__bootstrap`): a one-line shortcut that tells the agent to run
     /// the seed → register loop. No arguments, so it expands without prompting.
     #[prompt(
         name = "bootstrap",
@@ -2651,7 +2652,7 @@ impl AsgardMcp {
 
 #[tool_handler(router = self.tool_router)]
 #[prompt_handler(router = self.prompt_router)]
-impl ServerHandler for AsgardMcp {
+impl ServerHandler for FrontkeepMcp {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::LATEST;
@@ -2689,17 +2690,17 @@ use rmcp::transport::streamable_http_server::session::local::LocalSessionManager
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::ServiceExt;
 
-/// Serve the MCP handler over stdio (for `asgard mcp` / local clients). Blocks
+/// Serve the MCP handler over stdio (for `frontkeep mcp` / local clients). Blocks
 /// until the peer disconnects.
 pub async fn serve_stdio(
-    server: AsgardMcp,
+    server: FrontkeepMcp,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let service = server.serve(rmcp::transport::io::stdio()).await?;
     service.waiting().await?;
     Ok(())
 }
 
-/// State for the `/mcp` auth middleware: a PAT (`asg_pat_…`) resolves to a user
+/// State for the `/mcp` auth middleware: a PAT (`fk_pat_…`) resolves to a user
 /// principal via [`IdentityService`]; any other bearer is a project virtual key
 /// resolved via [`GatewayRepo`].
 #[derive(Clone)]
@@ -2709,7 +2710,7 @@ struct McpAuthState {
 }
 
 /// Build the axum router that serves the MCP endpoint at `/mcp` over Streamable
-/// HTTP, gated by a bearer credential. A fresh [`AsgardMcp`] is built per
+/// HTTP, gated by a bearer credential. A fresh [`FrontkeepMcp`] is built per
 /// session; the authenticated principal arrives per-request via the middleware.
 #[allow(clippy::too_many_arguments)]
 pub fn http_router(
@@ -2722,7 +2723,7 @@ pub fn http_router(
     identity: IdentityService,
 ) -> Router {
     let factory = move || {
-        Ok(AsgardMcp::new(
+        Ok(FrontkeepMcp::new(
             catalog.clone(),
             gateway.clone(),
             registry.clone(),
@@ -2748,7 +2749,7 @@ pub fn http_router(
 /// The placeholder PAT the Getting-Started snippets show before a token is minted;
 /// a request carrying it verbatim is the classic "forgot to swap the token" setup
 /// mistake, worth a dedicated hint rather than a generic "invalid token".
-const PLACEHOLDER_PAT: &str = "asg_pat_your_user_token";
+const PLACEHOLDER_PAT: &str = "fk_pat_your_user_token";
 
 /// Best-effort `scheme://host` for the running deployment, derived from request
 /// headers, so first-run auth errors can point the operator at a real Get-Started
@@ -2758,7 +2759,7 @@ fn self_origin(req: &Request) -> String {
         .headers()
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("<your-asgard-host>");
+        .unwrap_or("<your-frontkeep-host>");
     let scheme = req
         .headers()
         .get("x-forwarded-proto")
@@ -2811,7 +2812,7 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
     }
     // A user PAT is prefix-distinct from a project key; resolve it to a user
     // principal. Anything else is treated as a project virtual key.
-    if token.starts_with(PAT_PREFIX) {
+    if frontkeep_identity::is_pat(&token) {
         return match st.identity.validate_pat(&token).await {
             Ok(user) => {
                 req.extensions_mut().insert(McpAuth::User {
@@ -2850,8 +2851,8 @@ async fn mcp_auth(State(st): State<McpAuthState>, mut req: Request, next: Next) 
 }
 
 #[cfg(test)]
-impl AsgardMcp {
-    /// Test shim mirroring [`AsgardMcp::resolve_project`] without a live HTTP
+impl FrontkeepMcp {
+    /// Test shim mirroring [`FrontkeepMcp::resolve_project`] without a live HTTP
     /// request context: `auth` is the authenticated principal (if any), `arg` the
     /// tool's project_id argument.
     async fn resolve_principal_for_test(
@@ -2886,16 +2887,16 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    use asgard_catalog::{Entity, Manifest, Metadata, Origin};
-    use asgard_gateway::{MockProvider, Mode, ModelInfo, ModelRegistry, Provider};
-    use asgard_policy::{CedarEngine, PolicyEngine};
-    use asgard_provision::{ProvisionRepo, ProvisionService};
-    use asgard_registry::{GroupAllowlist, GroupEntry, RegistrationPolicy};
-    use asgard_storage::Db;
+    use frontkeep_catalog::{Entity, Manifest, Metadata, Origin};
+    use frontkeep_gateway::{MockProvider, Mode, ModelInfo, ModelRegistry, Provider};
+    use frontkeep_policy::{CedarEngine, PolicyEngine};
+    use frontkeep_provision::{ProvisionRepo, ProvisionService};
+    use frontkeep_registry::{GroupAllowlist, GroupEntry, RegistrationPolicy};
+    use frontkeep_storage::Db;
 
-    async fn server(default_project: Option<String>) -> AsgardMcp {
+    async fn server(default_project: Option<String>) -> FrontkeepMcp {
         let path =
-            std::env::temp_dir().join(format!("asgard-mcp-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-mcp-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2903,7 +2904,7 @@ mod tests {
 
         let catalog = CatalogRepo::new(db.clone());
         let m = Manifest {
-            api_version: Some("asgard.dev/v1".into()),
+            api_version: Some("frontkeep.dev/v1".into()),
             kind: "Agent".into(),
             metadata: Metadata {
                 name: "code-reviewer".into(),
@@ -2955,10 +2956,10 @@ mod tests {
         let workflow = Arc::new(WorkflowEngine::new(db.clone(), policy));
         let mut provision = ProvisionService::new(ProvisionRepo::new(db));
         provision.set_workflow(workflow.clone());
-        AsgardMcp::new(catalog, gw, registry, workflow, provision, default_project)
+        FrontkeepMcp::new(catalog, gw, registry, workflow, provision, default_project)
     }
 
-    async fn register(s: &AsgardMcp) -> String {
+    async fn register(s: &FrontkeepMcp) -> String {
         let out = s
             .do_register_project(
                 RegisterProjectArgs {
@@ -3109,7 +3110,7 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string();
-        assert!(key.starts_with("asg_"));
+        assert!(key.starts_with("fk_"));
     }
 
     #[tokio::test]

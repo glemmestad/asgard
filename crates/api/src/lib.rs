@@ -1,5 +1,5 @@
 //! REST + GraphQL HTTP surface, wiring catalog, gateway, workflow, eval, policy,
-//! and identity. An `x-asgard-trace-id` is ensured on every response (brief §4).
+//! and identity. An `x-frontkeep-trace-id` is ensured on every response (brief §4).
 
 pub mod error;
 pub mod graphql;
@@ -15,18 +15,18 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use tower_http::trace::TraceLayer;
 
-use asgard_catalog::{CatalogRepo, Entity, ListFilter, SchemaRegistry};
-use asgard_gateway::{ChatMessage, ChatRequest, Gateway, TRACE_HEADER};
-use asgard_identity::oidc::OidcConfig;
-use asgard_identity::{IdentityService, OidcRoleConfig};
-use asgard_provision::{ProvisionService, RollupDim};
-use asgard_registry::{CostDim, ProjectRegistry, RegisterInput};
-use asgard_storage::audit::{self, AuditQuery};
-use asgard_storage::Db;
-use asgard_workflow::{NewRequest, RequestFilter, State as WfState, WorkflowEngine};
+use frontkeep_catalog::{CatalogRepo, Entity, ListFilter, SchemaRegistry};
+use frontkeep_gateway::{ChatMessage, ChatRequest, Gateway, TRACE_HEADER};
+use frontkeep_identity::oidc::OidcConfig;
+use frontkeep_identity::{IdentityService, OidcRoleConfig};
+use frontkeep_provision::{ProvisionService, RollupDim};
+use frontkeep_registry::{CostDim, ProjectRegistry, RegisterInput};
+use frontkeep_storage::audit::{self, AuditQuery};
+use frontkeep_storage::Db;
+use frontkeep_workflow::{NewRequest, RequestFilter, State as WfState, WorkflowEngine};
 
 use crate::error::ApiError;
-use crate::graphql::{build_schema, AsgardSchema};
+use crate::graphql::{build_schema, FrontkeepSchema};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,7 +38,7 @@ pub struct AppState {
     pub registry: ProjectRegistry,
     pub provision: ProvisionService,
     pub identity: IdentityService,
-    pub gql: AsgardSchema,
+    pub gql: FrontkeepSchema,
     /// Display name for this deployment, shown as the wordmark/title in the UI.
     /// Defaults to `Frontkeep`; operators rebrand via `FRONTKEEP_SYSTEM_NAME`.
     pub system_name: String,
@@ -323,11 +323,11 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-const SESSION_COOKIE: &str = "asgard_session";
+const SESSION_COOKIE: &str = "frontkeep_session";
 const OIDC_STATE_COOKIE: &str = "oidc_state";
 
 /// Read a session token from either the `Authorization: Bearer` header (API
-/// clients) or the `asgard_session` cookie (browser, set by login/OIDC).
+/// clients) or the `frontkeep_session` cookie (browser, set by login/OIDC).
 fn session_token(headers: &HeaderMap) -> Option<String> {
     if let Some(b) = bearer(headers) {
         return Some(b);
@@ -345,7 +345,7 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 /// Session-enforcement middleware for the human/admin surface. The dev escape
 /// hatch (loopback-only, set by the binary) short-circuits it; otherwise a valid
-/// session (Bearer token or `asgard_session` cookie) is required.
+/// session (Bearer token or `frontkeep_session` cookie) is required.
 async fn require_session(State(st): State<AppState>, req: Request, next: Next) -> Response {
     if st.dev_insecure {
         return next.run(req).await;
@@ -362,8 +362,8 @@ async fn require_session(State(st): State<AppState>, req: Request, next: Next) -
 }
 
 /// The synthetic admin returned on the loopback dev hatch — never persisted.
-fn dev_admin_user() -> asgard_identity::User {
-    asgard_identity::User {
+fn dev_admin_user() -> frontkeep_identity::User {
+    frontkeep_identity::User {
         id: "dev-insecure".into(),
         username: "admin".into(),
         email: None,
@@ -381,7 +381,7 @@ fn dev_admin_user() -> asgard_identity::User {
 async fn current_user(
     st: &AppState,
     headers: &HeaderMap,
-) -> Result<asgard_identity::User, ApiError> {
+) -> Result<frontkeep_identity::User, ApiError> {
     if let Some(token) = session_token(headers) {
         if let Ok(user) = st.identity.validate_session(&token).await {
             return Ok(user);
@@ -397,8 +397,8 @@ async fn current_user(
 async fn require_cap(
     st: &AppState,
     headers: &HeaderMap,
-    cap: asgard_identity::Capability,
-) -> Result<asgard_identity::User, ApiError> {
+    cap: frontkeep_identity::Capability,
+) -> Result<frontkeep_identity::User, ApiError> {
     let user = current_user(st, headers).await?;
     if user.can(cap) {
         Ok(user)
@@ -418,7 +418,7 @@ async fn require_project_authority(
     st: &AppState,
     headers: &HeaderMap,
     project_id: &str,
-) -> Result<asgard_identity::User, ApiError> {
+) -> Result<frontkeep_identity::User, ApiError> {
     let user = current_user(st, headers).await?;
     let see_all = scope_for(&user).is_none();
     let email = user.email.clone().unwrap_or_default();
@@ -442,8 +442,8 @@ async fn require_project_authority(
 async fn require_request_approver(
     st: &AppState,
     headers: &HeaderMap,
-    req: &asgard_workflow::WorkflowRequest,
-) -> Result<asgard_identity::User, ApiError> {
+    req: &frontkeep_workflow::WorkflowRequest,
+) -> Result<frontkeep_identity::User, ApiError> {
     let user = current_user(st, headers).await?;
     let permitted = match req.project_id() {
         Some(pid) => {
@@ -453,13 +453,13 @@ async fn require_request_approver(
                 .await?
                 .map(|r| r.manager)
                 .unwrap_or_default();
-            asgard_identity::may_approve_request(
+            frontkeep_identity::may_approve_request(
                 user.role(),
                 user.email.as_deref().unwrap_or(""),
                 &manager,
             )
         }
-        None => user.can(asgard_identity::Capability::ApproveRequests),
+        None => user.can(frontkeep_identity::Capability::ApproveRequests),
     };
     if permitted {
         Ok(user)
@@ -475,8 +475,8 @@ async fn require_request_approver(
 /// (Admin/Finance, via the ViewAllCost capability); otherwise the caller's email,
 /// which scopes reads to the projects they own or manage. A user with no email
 /// who isn't see-all scopes to `""`, matching nothing — fail closed.
-fn scope_for(user: &asgard_identity::User) -> Option<String> {
-    if user.can(asgard_identity::Capability::ViewAllCost) {
+fn scope_for(user: &frontkeep_identity::User) -> Option<String> {
+    if user.can(frontkeep_identity::Capability::ViewAllCost) {
         None
     } else {
         Some(user.email.clone().unwrap_or_default())
@@ -484,14 +484,14 @@ fn scope_for(user: &asgard_identity::User) -> Option<String> {
 }
 
 /// The audit actor string for a user (email local-part, namespaced).
-fn actor_for(user: &asgard_identity::User) -> String {
+fn actor_for(user: &frontkeep_identity::User) -> String {
     let email = user.email.clone().unwrap_or_default();
     format!("user:default/{}", email.split('@').next().unwrap_or("api"))
 }
 
 pub async fn serve(state: AppState, bind: &str) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!("asgard api listening on {bind}");
+    tracing::info!("frontkeep api listening on {bind}");
     axum::serve(listener, router(state)).await
 }
 
@@ -501,7 +501,7 @@ async fn trace_mw(req: Request, next: Next) -> Response {
     let key = HeaderName::from_static(TRACE_HEADER);
     if !resp.headers().contains_key(&key) {
         let hv = incoming.unwrap_or_else(|| {
-            HeaderValue::from_str(&format!("tr_{}", asgard_storage::new_uid()))
+            HeaderValue::from_str(&format!("tr_{}", frontkeep_storage::new_uid()))
                 .unwrap_or(HeaderValue::from_static("tr_unknown"))
         });
         resp.headers_mut().insert(key, hv);
@@ -719,7 +719,7 @@ async fn project_usage(
 async fn register_project(
     State(st): State<AppState>,
     Json(input): Json<RegisterInput>,
-) -> Result<Json<asgard_registry::Registration>, ApiError> {
+) -> Result<Json<frontkeep_registry::Registration>, ApiError> {
     let actor = format!(
         "user:default/{}",
         input.owner_email.split('@').next().unwrap_or("api")
@@ -730,7 +730,7 @@ async fn register_project(
 async fn list_projects(
     State(st): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<asgard_registry::Registration>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Registration>>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
     let mut projects = st.registry.list().await?;
     // Same relationship rule as cost: a scoped caller sees only the projects they
@@ -744,7 +744,7 @@ async fn list_projects(
 async fn get_project(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
-) -> Result<Json<asgard_registry::Registration>, ApiError> {
+) -> Result<Json<frontkeep_registry::Registration>, ApiError> {
     st.registry
         .get(&project_id)
         .await?
@@ -761,7 +761,7 @@ struct UpdateProjectBody {
     #[serde(default)]
     budget_usd: Option<f64>,
     #[serde(flatten)]
-    evidence: asgard_registry::Evidence,
+    evidence: frontkeep_registry::Evidence,
 }
 
 async fn update_project(
@@ -774,7 +774,7 @@ async fn update_project(
     let email = user.email.unwrap_or_default();
     let actor = format!("user:default/{}", email.split('@').next().unwrap_or("api"));
     // Evidence is PUT, but only when supplied — a name/budget-only edit keeps it.
-    if b.evidence != asgard_registry::Evidence::default() {
+    if b.evidence != frontkeep_registry::Evidence::default() {
         st.registry
             .update_evidence(&project_id, b.evidence, &actor)
             .await?;
@@ -789,7 +789,7 @@ async fn update_project(
         .update_project(
             &st.workflow,
             &project_id,
-            asgard_registry::ProjectUpdate {
+            frontkeep_registry::ProjectUpdate {
                 name: b.name,
                 description: b.description,
                 budget_usd: b.budget_usd,
@@ -800,7 +800,7 @@ async fn update_project(
         )
         .await?;
     let budget_review = match budget {
-        asgard_registry::BudgetOutcome::PendingReview(req) => Some(req),
+        frontkeep_registry::BudgetOutcome::PendingReview(req) => Some(req),
         _ => None,
     };
     Ok(Json(
@@ -848,7 +848,7 @@ async fn promotion_checklist(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<asgard_registry::PromotionChecklist>, ApiError> {
+) -> Result<Json<frontkeep_registry::PromotionChecklist>, ApiError> {
     require_project_authority(&st, &headers, &project_id).await?;
     Ok(Json(st.registry.promotion_checklist(&project_id).await?))
 }
@@ -863,7 +863,7 @@ async fn request_promotion(
     Path(project_id): Path<String>,
     headers: HeaderMap,
     Json(b): Json<PromotionBody>,
-) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+) -> Result<Json<frontkeep_workflow::WorkflowRequest>, ApiError> {
     let user = require_project_authority(&st, &headers, &project_id).await?;
     let email = user.email.unwrap_or_default();
     let actor = format!("user:default/{}", email.split('@').next().unwrap_or("api"));
@@ -886,7 +886,7 @@ async fn demote_project(
     Path(project_id): Path<String>,
     headers: HeaderMap,
     Json(b): Json<DemoteBody>,
-) -> Result<Json<asgard_registry::Registration>, ApiError> {
+) -> Result<Json<frontkeep_registry::Registration>, ApiError> {
     let user = require_project_authority(&st, &headers, &project_id).await?;
     let email = user.email.unwrap_or_default();
     let actor = format!("user:default/{}", email.split('@').next().unwrap_or("api"));
@@ -902,7 +902,7 @@ async fn extend_review(
     State(st): State<AppState>,
     Path(project_id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<asgard_registry::ExtendOutcome>, ApiError> {
+) -> Result<Json<frontkeep_registry::ExtendOutcome>, ApiError> {
     let user = require_project_authority(&st, &headers, &project_id).await?;
     let email = user.email.unwrap_or_default();
     let actor = format!("user:default/{}", email.split('@').next().unwrap_or("api"));
@@ -924,7 +924,7 @@ async fn cost_report(
     State(st): State<AppState>,
     headers: HeaderMap,
     Query(q): Query<CostQuery>,
-) -> Result<Json<asgard_registry::CostReport>, ApiError> {
+) -> Result<Json<frontkeep_registry::CostReport>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
     let by = CostDim::parse(q.by.as_deref().unwrap_or("project")).ok_or_else(|| {
         ApiError::BadRequest(
@@ -962,7 +962,7 @@ async fn cost_series(
     let project = q
         .project
         .ok_or_else(|| ApiError::BadRequest("project is required".into()))?;
-    let today = asgard_provision::today();
+    let today = frontkeep_provision::today();
     let from = q.from.unwrap_or_else(|| month_start(&today));
     let until = q.until.unwrap_or(today);
     let rows = st
@@ -981,7 +981,7 @@ async fn cost_project_series(
     Query(q): Query<SeriesQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
-    let today = asgard_provision::today();
+    let today = frontkeep_provision::today();
     let from = q.from.unwrap_or_else(|| month_start(&today));
     let until = q.until.unwrap_or(today);
     let repo = st.provision.rollup_repo().scoped(scope);
@@ -1011,7 +1011,7 @@ async fn cost_by(
                 .into(),
         )
     })?;
-    let today = asgard_provision::today();
+    let today = frontkeep_provision::today();
     let from = q.from.unwrap_or_else(|| month_start(&today));
     let until = q.until.unwrap_or(today);
     let rows = st
@@ -1074,7 +1074,7 @@ async fn cost_tree(
     Query(q): Query<AsOfQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
-    let as_of = q.as_of.unwrap_or_else(asgard_provision::today);
+    let as_of = q.as_of.unwrap_or_else(frontkeep_provision::today);
     let tree = st
         .provision
         .cost_tree(&st.registry, &as_of, scope.as_deref())
@@ -1088,7 +1088,7 @@ async fn cost_movers(
     Query(q): Query<AsOfQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
-    let as_of = q.as_of.unwrap_or_else(asgard_provision::today);
+    let as_of = q.as_of.unwrap_or_else(frontkeep_provision::today);
     let movers = st
         .provision
         .cost_movers(&as_of, q.top.unwrap_or(5), scope.as_deref())
@@ -1102,7 +1102,7 @@ async fn cost_tagged(
     Query(q): Query<AsOfQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
-    let as_of = q.as_of.unwrap_or_else(asgard_provision::today);
+    let as_of = q.as_of.unwrap_or_else(frontkeep_provision::today);
     let tagged = st.provision.cost_tagged(&as_of, scope.as_deref()).await?;
     Ok(Json(serde_json::to_value(tagged).unwrap_or_default()))
 }
@@ -1121,12 +1121,12 @@ async fn cost_ask(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // The AI answer is grounded in the whole rollup, so it's a see-everything
     // feature for now (Admin/Finance); scoped Q&A is a later refinement.
-    require_cap(&st, &headers, asgard_identity::Capability::ViewAllCost).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ViewAllCost).await?;
     let key = bearer(&headers)
         .or_else(|| st.system_cost_key.clone())
         .ok_or_else(|| ApiError::Unauthorized("missing bearer virtual key".into()))?;
     let model = b.model.unwrap_or_else(|| st.cost_qa_model.clone());
-    let as_of = asgard_provision::today();
+    let as_of = frontkeep_provision::today();
     let budgets = st
         .registry
         .list()
@@ -1161,7 +1161,7 @@ async fn cost_rollup(
     State(st): State<AppState>,
     Json(b): Json<RollupBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let day = b.day.unwrap_or_else(asgard_provision::today);
+    let day = b.day.unwrap_or_else(frontkeep_provision::today);
     let summary = st.provision.roll_up_costs(&st.registry, &day).await?;
     Ok(Json(serde_json::to_value(summary).unwrap_or_default()))
 }
@@ -1171,7 +1171,7 @@ async fn cost_rollup(
 async fn governance_metrics(
     State(st): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<asgard_registry::GovernanceMetrics>, ApiError> {
+) -> Result<Json<frontkeep_registry::GovernanceMetrics>, ApiError> {
     let scope = scope_for(&current_user(&st, &headers).await?);
     Ok(Json(
         st.registry.governance_metrics(scope.as_deref()).await?,
@@ -1183,7 +1183,7 @@ async fn governance_metrics(
 /// runs the same routine on a schedule.
 async fn registry_sweep(
     State(st): State<AppState>,
-) -> Result<Json<asgard_registry::SweepSummary>, ApiError> {
+) -> Result<Json<frontkeep_registry::SweepSummary>, ApiError> {
     Ok(Json(st.registry.sweep("system").await?))
 }
 
@@ -1221,11 +1221,11 @@ async fn list_guidance(
     State(st): State<AppState>,
     headers: HeaderMap,
     Query(ql): Query<KnowledgeListQ>,
-) -> Result<Json<Vec<asgard_registry::Guidance>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Guidance>>, ApiError> {
     // Admins see the pending-approval queue too; everyone else, published only.
     let include_pending = current_user(&st, &headers)
         .await
-        .map(|u| u.can(asgard_identity::Capability::ManageUsers))
+        .map(|u| u.can(frontkeep_identity::Capability::ManageUsers))
         .unwrap_or(false);
     Ok(Json(
         st.registry
@@ -1239,7 +1239,7 @@ async fn approve_guidance(
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry.guidance_approve(&slug).await?;
     Ok(Json(
         serde_json::json!({ "ok": true, "slug": slug, "status": "published" }),
@@ -1249,7 +1249,7 @@ async fn approve_guidance(
 async fn get_guidance(
     State(st): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<asgard_registry::Guidance>, ApiError> {
+) -> Result<Json<frontkeep_registry::Guidance>, ApiError> {
     st.registry
         .guidance_get(&slug)
         .await?
@@ -1276,11 +1276,11 @@ async fn put_guidance(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<GuidanceBody>,
-) -> Result<Json<asgard_registry::Guidance>, ApiError> {
+) -> Result<Json<frontkeep_registry::Guidance>, ApiError> {
     let user = current_user(&st, &headers).await?;
     // An admin's own write publishes directly (they hold approval authority); a
     // non-admin submission is a draft until an admin approves it.
-    let published = user.can(asgard_identity::Capability::ManageUsers);
+    let published = user.can(frontkeep_identity::Capability::ManageUsers);
     let g = st
         .registry
         .guidance_put(
@@ -1300,7 +1300,7 @@ async fn put_guidance(
 async fn guidance_history(
     State(st): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Version>>, ApiError> {
     Ok(Json(
         st.registry.knowledge_history("guidance", &slug).await?,
     ))
@@ -1310,11 +1310,11 @@ async fn list_recipes(
     State(st): State<AppState>,
     headers: HeaderMap,
     Query(ql): Query<KnowledgeListQ>,
-) -> Result<Json<Vec<asgard_registry::Recipe>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Recipe>>, ApiError> {
     // Admins see the pending-approval queue too; everyone else, published only.
     let include_pending = current_user(&st, &headers)
         .await
-        .map(|u| u.can(asgard_identity::Capability::ManageUsers))
+        .map(|u| u.can(frontkeep_identity::Capability::ManageUsers))
         .unwrap_or(false);
     Ok(Json(
         st.registry
@@ -1326,7 +1326,7 @@ async fn list_recipes(
 async fn get_recipe(
     State(st): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<asgard_registry::Recipe>, ApiError> {
+) -> Result<Json<frontkeep_registry::Recipe>, ApiError> {
     st.registry
         .recipe_get(&slug)
         .await?
@@ -1353,10 +1353,10 @@ async fn put_recipe(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<RecipeBody>,
-) -> Result<Json<asgard_registry::Recipe>, ApiError> {
+) -> Result<Json<frontkeep_registry::Recipe>, ApiError> {
     let user = current_user(&st, &headers).await?;
     // An admin's own write publishes directly; a non-admin submission is a draft.
-    let published = user.can(asgard_identity::Capability::ManageUsers);
+    let published = user.can(frontkeep_identity::Capability::ManageUsers);
     let r = st
         .registry
         .recipe_put(
@@ -1378,7 +1378,7 @@ async fn approve_recipe(
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry.recipe_approve(&slug).await?;
     Ok(Json(
         serde_json::json!({ "ok": true, "slug": slug, "status": "published" }),
@@ -1388,7 +1388,7 @@ async fn approve_recipe(
 async fn recipe_history(
     State(st): State<AppState>,
     Path(slug): Path<String>,
-) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Version>>, ApiError> {
     Ok(Json(st.registry.knowledge_history("recipes", &slug).await?))
 }
 
@@ -1425,9 +1425,9 @@ struct McpServerBody {
     tags: Vec<String>,
 }
 
-impl From<McpServerBody> for asgard_registry::McpServerInput {
+impl From<McpServerBody> for frontkeep_registry::McpServerInput {
     fn from(b: McpServerBody) -> Self {
-        asgard_registry::McpServerInput {
+        frontkeep_registry::McpServerInput {
             name: b.name,
             summary: b.summary,
             readme: b.readme,
@@ -1442,20 +1442,20 @@ impl From<McpServerBody> for asgard_registry::McpServerInput {
 
 /// The contact identity recorded as an entry's owner: the caller's email, or
 /// their username when no email is on the account (e.g. the dev-insecure admin).
-fn owner_id(user: &asgard_identity::User) -> String {
+fn owner_id(user: &frontkeep_identity::User) -> String {
     user.email.clone().unwrap_or_else(|| user.username.clone())
 }
 
 /// Owner-or-admin: the entry's owner, or a caller holding `ManageUsers`.
-fn owns_or_admin(user: &asgard_identity::User, entry: &asgard_registry::McpServer) -> bool {
-    user.can(asgard_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
+fn owns_or_admin(user: &frontkeep_identity::User, entry: &frontkeep_registry::McpServer) -> bool {
+    user.can(frontkeep_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
 }
 
 async fn list_mcp_servers(
     State(st): State<AppState>,
     headers: HeaderMap,
     Query(ql): Query<McpListQ>,
-) -> Result<Json<Vec<asgard_registry::McpServer>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::McpServer>>, ApiError> {
     let user = current_user(&st, &headers).await?;
     let state = ql.state.as_deref().unwrap_or("active");
     let mut list = st
@@ -1464,7 +1464,7 @@ async fn list_mcp_servers(
         .await?;
     // The active catalog is public; the disabled/archived management views are
     // scoped to the caller's own entries unless they can see everything.
-    if state != "active" && !user.can(asgard_identity::Capability::ManageUsers) {
+    if state != "active" && !user.can(frontkeep_identity::Capability::ManageUsers) {
         let me = owner_id(&user);
         list.retain(|m| m.owner == me);
     }
@@ -1475,11 +1475,11 @@ async fn create_mcp_server(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<McpServerBody>,
-) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+) -> Result<Json<frontkeep_registry::McpServer>, ApiError> {
     let user = current_user(&st, &headers).await?;
     // An admin's own publish lands as the company-approved tier; everyone else's
     // is listed immediately as user-submitted (community) with them as contact.
-    let approved = user.can(asgard_identity::Capability::ManageUsers);
+    let approved = user.can(frontkeep_identity::Capability::ManageUsers);
     let m = st
         .registry
         .mcp_server_create(&owner_id(&user), &b.into(), approved)
@@ -1490,7 +1490,7 @@ async fn create_mcp_server(
 async fn get_mcp_server(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+) -> Result<Json<frontkeep_registry::McpServer>, ApiError> {
     st.registry
         .mcp_server_get(&id)
         .await?
@@ -1503,7 +1503,7 @@ async fn update_mcp_server(
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(b): Json<McpServerBody>,
-) -> Result<Json<asgard_registry::McpServer>, ApiError> {
+) -> Result<Json<frontkeep_registry::McpServer>, ApiError> {
     let user = current_user(&st, &headers).await?;
     let existing = st
         .registry
@@ -1548,7 +1548,7 @@ async fn approve_mcp_server(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    let user = require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry
         .mcp_server_approve(&id, &owner_id(&user))
         .await?;
@@ -1562,7 +1562,7 @@ async fn unapprove_mcp_server(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    let user = require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry
         .mcp_server_unapprove(&id, &owner_id(&user))
         .await?;
@@ -1634,7 +1634,7 @@ async fn unarchive_mcp_server(
 async fn mcp_server_history(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Version>>, ApiError> {
     Ok(Json(
         st.registry.knowledge_history("mcp_server", &id).await?,
     ))
@@ -1662,12 +1662,12 @@ struct SkillBody {
     tags: Vec<String>,
     /// The skill's file tree: `[{ path, content_b64 }]`. `SKILL.md` is required.
     #[serde(default)]
-    bundle: Vec<asgard_skills::SkillFile>,
+    bundle: Vec<frontkeep_skills::SkillFile>,
 }
 
-impl From<SkillBody> for asgard_registry::SkillInput {
+impl From<SkillBody> for frontkeep_registry::SkillInput {
     fn from(b: SkillBody) -> Self {
-        asgard_registry::SkillInput {
+        frontkeep_registry::SkillInput {
             name: b.name,
             summary: b.summary,
             readme: b.readme,
@@ -1676,7 +1676,7 @@ impl From<SkillBody> for asgard_registry::SkillInput {
             homepage: b.homepage,
             version: b.version,
             tags: b.tags,
-            bundle: asgard_skills::SkillBundle { files: b.bundle },
+            bundle: frontkeep_skills::SkillBundle { files: b.bundle },
         }
     }
 }
@@ -1688,22 +1688,22 @@ struct SkillExportQ {
     runtime: Option<String>,
 }
 
-fn skill_owns_or_admin(user: &asgard_identity::User, entry: &asgard_registry::Skill) -> bool {
-    user.can(asgard_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
+fn skill_owns_or_admin(user: &frontkeep_identity::User, entry: &frontkeep_registry::Skill) -> bool {
+    user.can(frontkeep_identity::Capability::ManageUsers) || owner_id(user) == entry.owner
 }
 
 async fn list_skills(
     State(st): State<AppState>,
     headers: HeaderMap,
     Query(ql): Query<McpListQ>,
-) -> Result<Json<Vec<asgard_registry::Skill>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Skill>>, ApiError> {
     let user = current_user(&st, &headers).await?;
     let state = ql.state.as_deref().unwrap_or("active");
     let mut list = st
         .registry
         .skill_list(ql.q.as_deref(), ql.status.as_deref(), Some(state))
         .await?;
-    if state != "active" && !user.can(asgard_identity::Capability::ManageUsers) {
+    if state != "active" && !user.can(frontkeep_identity::Capability::ManageUsers) {
         let me = owner_id(&user);
         list.retain(|s| s.owner == me);
     }
@@ -1714,9 +1714,9 @@ async fn create_skill(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<SkillBody>,
-) -> Result<Json<asgard_registry::Skill>, ApiError> {
+) -> Result<Json<frontkeep_registry::Skill>, ApiError> {
     let user = current_user(&st, &headers).await?;
-    let approved = user.can(asgard_identity::Capability::ManageUsers);
+    let approved = user.can(frontkeep_identity::Capability::ManageUsers);
     let s = st
         .registry
         .skill_create(&owner_id(&user), &b.into(), approved)
@@ -1727,7 +1727,7 @@ async fn create_skill(
 async fn get_skill(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<asgard_registry::Skill>, ApiError> {
+) -> Result<Json<frontkeep_registry::Skill>, ApiError> {
     st.registry
         .skill_get(&id)
         .await?
@@ -1740,7 +1740,7 @@ async fn update_skill(
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(b): Json<SkillBody>,
-) -> Result<Json<asgard_registry::Skill>, ApiError> {
+) -> Result<Json<frontkeep_registry::Skill>, ApiError> {
     let user = current_user(&st, &headers).await?;
     let existing = st
         .registry
@@ -1785,7 +1785,7 @@ async fn approve_skill(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    let user = require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry.skill_approve(&id, &owner_id(&user)).await?;
     Ok(Json(
         serde_json::json!({ "ok": true, "id": id, "status": "approved" }),
@@ -1797,7 +1797,7 @@ async fn unapprove_skill(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let user = require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    let user = require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.registry.skill_unapprove(&id, &owner_id(&user)).await?;
     Ok(Json(
         serde_json::json!({ "ok": true, "id": id, "status": "community" }),
@@ -1865,7 +1865,7 @@ async fn unarchive_skill(
 async fn skill_history(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Version>>, ApiError> {
     Ok(Json(st.registry.knowledge_history("skill", &id).await?))
 }
 
@@ -1887,19 +1887,19 @@ async fn export_skill(
         .skill_get_bundle(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
-    let bundle =
-        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
-    let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+    let bundle = frontkeep_skills::from_json(&blob)
+        .map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+    let from = frontkeep_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
     let target = match q.runtime.as_deref() {
-        Some(s) => asgard_skills::Runtime::parse(s).ok_or_else(|| {
+        Some(s) => frontkeep_skills::Runtime::parse(s).ok_or_else(|| {
             ApiError::BadRequest(format!(
                 "unknown runtime '{s}' (expected one of: {})",
-                asgard_skills::RUNTIMES.join(", ")
+                frontkeep_skills::RUNTIMES.join(", ")
             ))
         })?,
         None => from,
     };
-    let res = asgard_skills::translate(&bundle, from, target)
+    let res = frontkeep_skills::translate(&bundle, from, target)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     Ok(Json(serde_json::json!({
         "id": id,
@@ -1921,7 +1921,7 @@ struct SkillInstallQ {
 
 /// Read-or-deny for the install endpoints. Unlike the human surface (`require_session`,
 /// session-only), a terminal `curl` install authenticates with the same user PAT
-/// (`asg_pat_…`) used to connect MCP. Allows a browser cookie, a session bearer, a user
+/// (`fk_pat_…`) used to connect MCP. Allows a browser cookie, a session bearer, a user
 /// PAT, or the loopback dev hatch — never anonymous on an enforcing deployment.
 async fn session_or_pat(st: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
     if st.dev_insecure {
@@ -1935,7 +1935,7 @@ async fn session_or_pat(st: &AppState, headers: &HeaderMap) -> Result<(), ApiErr
         }
     }
     Err(ApiError::Unauthorized(
-        "authentication required: present a session token or a user PAT (asg_pat_…)".into(),
+        "authentication required: present a session token or a user PAT (fk_pat_…)".into(),
     ))
 }
 
@@ -1985,15 +1985,15 @@ async fn skill_raw_file(
         .skill_get_bundle(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
-    let bundle =
-        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
-    let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+    let bundle = frontkeep_skills::from_json(&blob)
+        .map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+    let from = frontkeep_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
     let target = match q.runtime.as_deref() {
-        Some(s) => asgard_skills::Runtime::parse(s)
+        Some(s) => frontkeep_skills::Runtime::parse(s)
             .ok_or_else(|| ApiError::BadRequest(format!("unknown runtime '{s}'")))?,
         None => from,
     };
-    let res = asgard_skills::translate(&bundle, from, target)
+    let res = frontkeep_skills::translate(&bundle, from, target)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let files = res
         .bundle
@@ -2020,9 +2020,9 @@ fn comment_safe(s: &str) -> String {
 fn render_install_sh(
     base: &str,
     id: &str,
-    dest: &asgard_skills::Destination,
+    dest: &frontkeep_skills::Destination,
     slug: &str,
-    bundle: &asgard_skills::SkillBundle,
+    bundle: &frontkeep_skills::SkillBundle,
     name: &str,
 ) -> String {
     let runtime = dest.runtime.as_str();
@@ -2031,7 +2031,7 @@ fn render_install_sh(
         .files
         .iter()
         .map(|f| f.path.as_str())
-        .filter(|p| asgard_skills::safe_path(p))
+        .filter(|p| frontkeep_skills::safe_path(p))
         .collect();
     paths.sort_unstable();
     let mut subdirs: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
@@ -2057,7 +2057,7 @@ fn render_install_sh(
     // Promote it into FRONTKEEP_PAT silently before requiring the new name.
     s.push_str(": \"${FRONTKEEP_PAT:=${ASGARD_PAT:-}}\"\n");
     s.push_str(
-        ": \"${FRONTKEEP_PAT:?set FRONTKEEP_PAT to your Frontkeep user token (asg_pat_...)}\"\n",
+        ": \"${FRONTKEEP_PAT:?set FRONTKEEP_PAT to your Frontkeep user token (fk_pat_...)}\"\n",
     );
     s.push_str(&format!("dir=\"${{1:-{default_dir}}}\"\n"));
     s.push_str("mkdir -p \"$dir\"\n");
@@ -2096,19 +2096,19 @@ async fn skill_install_sh(
         .skill_get_bundle(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
-    let bundle =
-        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+    let bundle = frontkeep_skills::from_json(&blob)
+        .map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
     let dest_key = q.dest.as_deref().unwrap_or(&skill.runtime);
-    let dest = asgard_skills::destination(dest_key).ok_or_else(|| {
+    let dest = frontkeep_skills::destination(dest_key).ok_or_else(|| {
         ApiError::BadRequest(format!(
             "unknown dest '{dest_key}' (expected claude-code, codex, or cursor)"
         ))
     })?;
-    let from = asgard_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
-    let res = asgard_skills::translate(&bundle, from, dest.runtime)
+    let from = frontkeep_skills::Runtime::parse(&skill.runtime).unwrap_or_default();
+    let res = frontkeep_skills::translate(&bundle, from, dest.runtime)
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     let base = request_base_url(&headers);
-    let slug = asgard_skills::slug(&skill.name);
+    let slug = frontkeep_skills::slug(&skill.name);
     let script = render_install_sh(&base, &id, dest, &slug, &res.bundle, &skill.name);
     Ok((
         [(header::CONTENT_TYPE, "text/x-shellscript; charset=utf-8")],
@@ -2126,7 +2126,7 @@ async fn review_skill(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     let _skill = st
         .registry
         .skill_get(&id)
@@ -2137,8 +2137,8 @@ async fn review_skill(
         .skill_get_bundle(&id)
         .await?
         .ok_or_else(|| ApiError::NotFound(format!("skill {id}")))?;
-    let bundle =
-        asgard_skills::from_json(&blob).map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
+    let bundle = frontkeep_skills::from_json(&blob)
+        .map_err(|e| ApiError::Internal(format!("bundle: {e}")))?;
 
     let model = st.cost_qa_model.clone();
     let allow_mock = std::env::var("FRONTKEEP_REVIEW_ALLOW_MOCK")
@@ -2160,7 +2160,7 @@ async fn review_skill(
             standards.push_str(&format!("\n## {}\n{}\n", s.title, s.body));
         }
     }
-    let verdict = asgard_reviewer::review_skill_bundle(
+    let verdict = frontkeep_reviewer::review_skill_bundle(
         &st.gateway,
         st.system_cost_key.as_deref(),
         &model,
@@ -2177,14 +2177,14 @@ async fn review_skill(
 async fn list_standards(
     State(st): State<AppState>,
     Query(ql): Query<KnowledgeListQ>,
-) -> Result<Json<Vec<asgard_registry::Standard>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Standard>>, ApiError> {
     Ok(Json(st.registry.standard_list(ql.q.as_deref()).await?))
 }
 
 async fn get_standard(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<asgard_registry::Standard>, ApiError> {
+) -> Result<Json<frontkeep_registry::Standard>, ApiError> {
     st.registry
         .standard_get(&id)
         .await?
@@ -2206,9 +2206,9 @@ async fn put_standard(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<StandardBody>,
-) -> Result<Json<asgard_registry::Standard>, ApiError> {
+) -> Result<Json<frontkeep_registry::Standard>, ApiError> {
     // Standards are normative: admin-only, always published, but versioned.
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     let user = current_user(&st, &headers).await?;
     let s = st
         .registry
@@ -2220,14 +2220,14 @@ async fn put_standard(
 async fn standard_history(
     State(st): State<AppState>,
     Path(id): Path<String>,
-) -> Result<Json<Vec<asgard_registry::Version>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_registry::Version>>, ApiError> {
     Ok(Json(st.registry.knowledge_history("standards", &id).await?))
 }
 
 // The agent-seed, surfaced read-only so a human can audit exactly what an agent
 // is told (the same layered content `seed_plan`/`seed_get` serve over MCP).
 async fn list_seed() -> Json<serde_json::Value> {
-    let list: Vec<serde_json::Value> = asgard_catalog::seed::all()
+    let list: Vec<serde_json::Value> = frontkeep_catalog::seed::all()
         .iter()
         .map(|m| {
             serde_json::json!({
@@ -2241,7 +2241,7 @@ async fn list_seed() -> Json<serde_json::Value> {
 }
 
 async fn get_seed(Path(id): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
-    asgard_catalog::seed::get(&id)
+    frontkeep_catalog::seed::get(&id)
         .map(|m| {
             Json(serde_json::json!({
                 "id": m.id, "title": m.title, "kind": m.kind.as_str(),
@@ -2353,7 +2353,7 @@ async fn resource_runs(
     Path((project_id, rid)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ViewAudit).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ViewAudit).await?;
     let rec = st
         .provision
         .repo()
@@ -2482,7 +2482,7 @@ struct SubmitBody {
 async fn submit_request(
     State(st): State<AppState>,
     Json(body): Json<SubmitBody>,
-) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+) -> Result<Json<frontkeep_workflow::WorkflowRequest>, ApiError> {
     let r = st
         .workflow
         .submit(NewRequest {
@@ -2506,7 +2506,7 @@ struct ReqQuery {
 async fn list_requests(
     State(st): State<AppState>,
     Query(q): Query<ReqQuery>,
-) -> Result<Json<Vec<asgard_workflow::WorkflowRequest>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_workflow::WorkflowRequest>>, ApiError> {
     let filter = RequestFilter {
         state: q.state.as_deref().map(WfState::parse),
         requester: q.requester,
@@ -2528,7 +2528,7 @@ async fn approve_request(
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(b): Json<ActionBody>,
-) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+) -> Result<Json<frontkeep_workflow::WorkflowRequest>, ApiError> {
     let req = st
         .workflow
         .get(&id)
@@ -2558,7 +2558,7 @@ async fn reject_request(
     Path(id): Path<String>,
     headers: HeaderMap,
     Json(b): Json<ActionBody>,
-) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+) -> Result<Json<frontkeep_workflow::WorkflowRequest>, ApiError> {
     let req = st
         .workflow
         .get(&id)
@@ -2579,7 +2579,7 @@ async fn escalate_request(
     State(st): State<AppState>,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<asgard_workflow::WorkflowRequest>, ApiError> {
+) -> Result<Json<frontkeep_workflow::WorkflowRequest>, ApiError> {
     let req = st
         .workflow
         .get(&id)
@@ -2591,8 +2591,12 @@ async fn escalate_request(
             actor_for(&user)
         }
         None => {
-            let user =
-                require_cap(&st, &headers, asgard_identity::Capability::ApproveRequests).await?;
+            let user = require_cap(
+                &st,
+                &headers,
+                frontkeep_identity::Capability::ApproveRequests,
+            )
+            .await?;
             actor_for(&user)
         }
     };
@@ -2616,7 +2620,12 @@ async fn request_reviews(
             require_project_authority(&st, &headers, pid).await?;
         }
         None => {
-            require_cap(&st, &headers, asgard_identity::Capability::ApproveRequests).await?;
+            require_cap(
+                &st,
+                &headers,
+                frontkeep_identity::Capability::ApproveRequests,
+            )
+            .await?;
         }
     }
     Ok(Json(st.registry.promotion_reviews(&id).await?))
@@ -2859,7 +2868,7 @@ async fn logout(State(st): State<AppState>, headers: HeaderMap) -> Result<Respon
 async fn me(
     State(st): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<asgard_identity::User>, ApiError> {
+) -> Result<Json<frontkeep_identity::User>, ApiError> {
     // A valid session, or — on the loopback dev hatch — a synthetic admin, so the
     // embedded UI is browsable locally with no login. 401 otherwise.
     Ok(Json(current_user(&st, &headers).await?))
@@ -2890,8 +2899,8 @@ struct ActiveBody {
 async fn list_users_route(
     State(st): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<asgard_identity::User>>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+) -> Result<Json<Vec<frontkeep_identity::User>>, ApiError> {
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     Ok(Json(st.identity.list_users().await?))
 }
 
@@ -2899,9 +2908,9 @@ async fn create_user_route(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<CreateUserBody>,
-) -> Result<Json<asgard_identity::User>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
-    let role = asgard_identity::Role::parse(b.role.as_deref().unwrap_or("member"));
+) -> Result<Json<frontkeep_identity::User>, ApiError> {
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
+    let role = frontkeep_identity::Role::parse(b.role.as_deref().unwrap_or("member"));
     let u = st
         .identity
         .create_local_user(
@@ -2921,7 +2930,7 @@ async fn set_user_role_route(
     headers: HeaderMap,
     Json(b): Json<RoleBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     if st.oidc_roles.as_ref().is_some_and(|r| r.authoritative()) {
         let target = st.identity.get_user(&id).await?;
         if target.is_some_and(|u| u.provider == "oidc") {
@@ -2931,7 +2940,7 @@ async fn set_user_role_route(
         }
     }
     st.identity
-        .set_role(&id, asgard_identity::Role::parse(&b.role))
+        .set_role(&id, frontkeep_identity::Role::parse(&b.role))
         .await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -2942,7 +2951,7 @@ async fn set_user_active_route(
     headers: HeaderMap,
     Json(b): Json<ActiveBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    require_cap(&st, &headers, asgard_identity::Capability::ManageUsers).await?;
+    require_cap(&st, &headers, frontkeep_identity::Capability::ManageUsers).await?;
     st.identity.set_active(&id, b.active).await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -2963,7 +2972,7 @@ async fn create_token(
     State(st): State<AppState>,
     headers: HeaderMap,
     Json(b): Json<CreateTokenBody>,
-) -> Result<Json<asgard_identity::Pat>, ApiError> {
+) -> Result<Json<frontkeep_identity::Pat>, ApiError> {
     let user = current_user(&st, &headers).await?;
     let name = if b.name.trim().is_empty() {
         "agent".to_string()
@@ -2977,7 +2986,7 @@ async fn create_token(
 async fn list_tokens(
     State(st): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<asgard_identity::Pat>>, ApiError> {
+) -> Result<Json<Vec<frontkeep_identity::Pat>>, ApiError> {
     let user = current_user(&st, &headers).await?;
     Ok(Json(st.identity.list_pats(&user.id).await?))
 }
@@ -3015,8 +3024,8 @@ async fn oidc_login(State(st): State<AppState>, headers: HeaderMap) -> Response 
     let Some(oidc) = st.oidc.as_ref() else {
         return (StatusCode::NOT_FOUND, "OIDC not configured").into_response();
     };
-    let state = asgard_storage::new_uid();
-    let nonce = asgard_storage::new_uid();
+    let state = frontkeep_storage::new_uid();
+    let nonce = frontkeep_storage::new_uid();
     let url = oidc.authorization_url(&state, &nonce);
     // Short-lived state cookie binds the callback to this request (CSRF guard).
     let cookie = format!(
@@ -3164,12 +3173,12 @@ pub fn emit_catalog_info(e: &Entity) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_catalog::{Manifest, Metadata, Origin};
+    use frontkeep_catalog::{Manifest, Metadata, Origin};
 
     #[test]
     fn catalog_info_is_backstage_shaped_yaml() {
         let m = Manifest {
-            api_version: Some("asgard.dev/v1".into()),
+            api_version: Some("frontkeep.dev/v1".into()),
             kind: "Agent".into(),
             metadata: Metadata {
                 name: "code-reviewer".into(),

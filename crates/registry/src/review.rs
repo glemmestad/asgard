@@ -9,7 +9,7 @@
 //! the policy doc), not frozen constants.
 
 use crate::RegistryError;
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::Serialize;
 use sqlx::Row;
 
@@ -58,7 +58,7 @@ pub enum ExtendOutcome {
         review: ReviewState,
     },
     Pending {
-        request: Box<asgard_workflow::WorkflowRequest>,
+        request: Box<frontkeep_workflow::WorkflowRequest>,
     },
 }
 
@@ -92,7 +92,7 @@ pub(crate) async fn set_initial(
     window_days: i64,
 ) -> Result<(), RegistryError> {
     let review_date = if classification == "poc" {
-        asgard_storage::plus_days(created_at, window_days)
+        frontkeep_storage::plus_days(created_at, window_days)
     } else if !recurring_review_date.trim().is_empty() {
         recurring_review_date.trim().to_string()
     } else {

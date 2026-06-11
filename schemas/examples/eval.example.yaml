@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Eval
 metadata:
   name: checkout-recommender-quality
@@ -11,7 +11,7 @@ metadata:
     domain: recommendations
     team: ml-platform
   annotations:
-    asgard.dev/managed-by: data-quality-bot
+    frontkeep.dev/managed-by: data-quality-bot
   tags:
     - eval
     - recommendations

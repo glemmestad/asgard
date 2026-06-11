@@ -3,7 +3,7 @@
 //! version for its `(doc_type, slug)` key. History is a passthrough; the diff is
 //! computed UI-side over snapshot bodies, so this layer stays doc-type agnostic.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::Row;
@@ -41,14 +41,14 @@ pub async fn append(
     sqlx::query(&db.q("INSERT INTO knowledge_versions \
          (id, doc_type, slug, version, action, author, snapshot, changed_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)"))
-    .bind(asgard_storage::new_uid())
+    .bind(frontkeep_storage::new_uid())
     .bind(doc_type)
     .bind(slug)
     .bind(version)
     .bind(action)
     .bind(author)
     .bind(serde_json::to_string(snapshot).unwrap_or_else(|_| "{}".into()))
-    .bind(asgard_storage::now())
+    .bind(frontkeep_storage::now())
     .execute(db.pool())
     .await?;
     Ok(version)
@@ -85,7 +85,7 @@ mod tests {
 
     async fn db() -> Db {
         let path =
-            std::env::temp_dir().join(format!("asgard-ver-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-ver-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

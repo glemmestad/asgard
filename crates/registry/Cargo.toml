@@ -1,5 +1,5 @@
 [package]
-name = "asgard-registry"
+name = "frontkeep-registry"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,11 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-asgard-storage.workspace = true
-asgard-catalog.workspace = true
-asgard-gateway.workspace = true
-asgard-workflow.workspace = true
-asgard-skills.workspace = true
+frontkeep-storage.workspace = true
+frontkeep-catalog.workspace = true
+frontkeep-gateway.workspace = true
+frontkeep-workflow.workspace = true
+frontkeep-skills.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
@@ -26,4 +26,4 @@ schemars = ["dep:schemars"]
 
 [dev-dependencies]
 tokio.workspace = true
-asgard-policy.workspace = true
+frontkeep-policy.workspace = true

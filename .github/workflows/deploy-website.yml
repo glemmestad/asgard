@@ -1,6 +1,6 @@
 name: Deploy marketing site
 
-# Auto-deploys asgard.build whenever the site OR the docs it serves change.
+# Auto-deploys frontkeep.build whenever the site OR the docs it serves change.
 # Docs live in docs/docs/**; the site's prebuild (website/scripts/sync-docs.mjs)
 # copies them in, so a docs edit redeploys with the fresh content. No humans.
 on:

@@ -122,7 +122,7 @@ impl RepoReader {
         let rb = self
             .client
             .get(&url)
-            .header("User-Agent", "asgard-reviewer");
+            .header("User-Agent", "frontkeep-reviewer");
         let t: Tree = send_json(gh_auth(rb, token)).await?;
         Ok(t.tree
             .into_iter()
@@ -146,7 +146,7 @@ impl RepoReader {
         let rb = self
             .client
             .get(&url)
-            .header("User-Agent", "asgard-reviewer")
+            .header("User-Agent", "frontkeep-reviewer")
             .header("Accept", "application/vnd.github.raw");
         send_text(gh_auth(rb, token)).await
     }
@@ -372,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_backend_lists_and_reads_filtering_noise() {
-        let dir = std::env::temp_dir().join(format!("asgard-repo-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("frontkeep-repo-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::create_dir_all(dir.join("target")).unwrap();
         std::fs::write(dir.join("src/main.rs"), b"fn main() {}\n").unwrap();

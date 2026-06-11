@@ -1,14 +1,14 @@
 #!/bin/sh
 # Install the `frontkeep` binary (server + CLI) on macOS or Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/glemmestad/frontkeep/main/scripts/install.sh | sh
 #
 # Downloads the matching tarball from the latest GitHub release, verifies its
 # checksum, and installs to ~/.local/bin (override with FRONTKEEP_BIN_DIR). The
 # Linux builds are static (musl), so no system libraries are required.
 set -eu
 
-REPO="glemmestad/asgard"
+REPO="glemmestad/frontkeep"
 # Back-compat: honor the previously documented var if FRONTKEEP_BIN_DIR is unset.
 BIN_DIR="${FRONTKEEP_BIN_DIR:-${ASGARD_BIN_DIR:-$HOME/.local/bin}}"
 

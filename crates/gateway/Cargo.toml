@@ -1,13 +1,13 @@
 [package]
-name = "asgard-gateway"
+name = "frontkeep-gateway"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-asgard-storage.workspace = true
-asgard-policy.workspace = true
-asgard-catalog.workspace = true
+frontkeep-storage.workspace = true
+frontkeep-policy.workspace = true
+frontkeep-catalog.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

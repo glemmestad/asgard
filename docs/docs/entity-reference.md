@@ -6,10 +6,10 @@ title: Entity reference
 # Entity reference
 
 Every manifest shares one envelope and is validated against a JSON Schema in
-[`schemas/`](https://github.com/asgard/asgard/tree/main/schemas).
+[`schemas/`](https://github.com/glemmestad/frontkeep/tree/main/schemas).
 
 ```yaml
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Agent                 # one of the kinds below
 metadata:
   name: code-reviewer       # unique within (kind, namespace)
@@ -48,5 +48,5 @@ via the policy engine.
 retain audit + cost history.
 
 See the golden-path template under
-[`templates/code-review/`](https://github.com/asgard/asgard/tree/main/templates/code-review)
+[`templates/code-review/`](https://github.com/glemmestad/frontkeep/tree/main/templates/code-review)
 for a complete, valid example produced by `frontkeep agent new --template code-review`.

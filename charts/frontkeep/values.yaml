@@ -4,14 +4,14 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/asgard/asgard
+  repository: ghcr.io/glemmestad/frontkeep
   tag: latest
   pullPolicy: IfNotPresent
 
 # SQLite (single replica) by default. For replicaCount > 1, set a postgres:// DSN.
-databaseUrl: "sqlite:///data/asgard.db"
+databaseUrl: "sqlite:///data/frontkeep.db"
 
-# Name of a Secret holding ASGARD_GIT_TOKEN and any provider keys.
+# Name of a Secret holding FRONTKEEP_GIT_TOKEN and any provider keys.
 envSecretName: ""
 
 service:

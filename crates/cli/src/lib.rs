@@ -2,11 +2,11 @@
 //! over `/mcp` (`mcp`), with profile config (`config`), output rendering
 //! (`render`), and the inference path (`chat`). The offline helpers below
 //! (config scaffold, template scaffold, manifest validation) need no server.
-//! The `asgard` binary owns the clap tree and dispatches into these.
+//! The `frontkeep` binary owns the clap tree and dispatches into these.
 
 use std::path::{Path, PathBuf};
 
-use asgard_catalog::{Manifest, SchemaRegistry};
+use frontkeep_catalog::{Manifest, SchemaRegistry};
 
 pub mod chat;
 pub mod config;
@@ -50,11 +50,11 @@ impl CliError {
     }
 }
 
-/// Write a starter `asgard.yaml` config into `dir`.
+/// Write a starter `frontkeep.yaml` config into `dir`.
 pub fn init_config(dir: &Path) -> Result<PathBuf, CliError> {
-    let path = dir.join("asgard.yaml");
+    let path = dir.join("frontkeep.yaml");
     let body = "# Frontkeep configuration.\n\
-                database_url: sqlite://asgard.db\n\
+                database_url: sqlite://frontkeep.db\n\
                 bind: 0.0.0.0:8080\n\
                 # Catalog source repos to reconcile (needs a Git token in FRONTKEEP_GIT_TOKEN).\n\
                 sources: []\n\
@@ -85,8 +85,8 @@ pub fn init_config(dir: &Path) -> Result<PathBuf, CliError> {
                 #   # process's env (AWS_PROFILE/AWS_REGION, AUTH0_* from .env).\n\
                 #   terraform:\n\
                 #     bin: terraform\n\
-                #     modules_dir: /path/to/asgard/modules-root\n\
-                #     work_dir: /tmp/asgard-tf\n\
+                #     modules_dir: /path/to/frontkeep/modules-root\n\
+                #     work_dir: /tmp/frontkeep-tf\n\
                 #   aws:                         # AWS *cost* reads (provisioning is terraform)\n\
                 #     region: us-west-2\n\
                 #     profile: my-aws-profile\n\
@@ -139,7 +139,7 @@ pub fn validate_manifest(path: &Path) -> Result<String, CliError> {
     let content = std::fs::read_to_string(path).map_err(|e| CliError::Io(e.to_string()))?;
     let registry = SchemaRegistry::embedded().map_err(|e| CliError::Yaml(e.to_string()))?;
     let manifests: Vec<Manifest> =
-        asgard_catalog::parse_manifests(&content).map_err(|e| CliError::Yaml(e.to_string()))?;
+        frontkeep_catalog::parse_manifests(&content).map_err(|e| CliError::Yaml(e.to_string()))?;
     for m in &manifests {
         if registry.known_kind(&m.kind) {
             if let Err(errs) = registry.validate(&m.kind, &m.as_value()) {
@@ -156,7 +156,8 @@ mod tests {
 
     #[test]
     fn scaffolds_and_validates_template() {
-        let dir = std::env::temp_dir().join(format!("asgard-cli-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-cli-{}", frontkeep_storage::new_uid()));
         let written = agent_new("code-review", &dir).unwrap();
         assert!(written.iter().any(|p| p.ends_with("agent.yaml")));
         // The scaffolded agent manifest validates against the schema.
@@ -167,7 +168,7 @@ mod tests {
 
     #[test]
     fn unknown_template_errors() {
-        let dir = std::env::temp_dir().join("asgard-cli-x");
+        let dir = std::env::temp_dir().join("frontkeep-cli-x");
         assert!(matches!(
             agent_new("nope", &dir),
             Err(CliError::UnknownTemplate(_))
@@ -176,8 +177,10 @@ mod tests {
 
     #[test]
     fn init_writes_config() {
-        let dir =
-            std::env::temp_dir().join(format!("asgard-cli-init-{}", asgard_storage::new_uid()));
+        let dir = std::env::temp_dir().join(format!(
+            "frontkeep-cli-init-{}",
+            frontkeep_storage::new_uid()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let p = init_config(&dir).unwrap();
         assert!(p.exists());

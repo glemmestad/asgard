@@ -4,8 +4,8 @@ kind: code-review
 enabled: true
 dimensions: [code-quality, standards-conformance]
 # `auto` = the real model the operator wired (resolved at runtime). Async: this
-# reviewer reads the project's repository (no clone — over Asgard's GitHub/GitLab
+# reviewer reads the project's repository (no clone — over Frontkeep's GitHub/GitLab
 # token) and judges it against the org's coding standards in a background job, with
-# depth scaled per target tier (see `review_depth` in asgard.yaml). The whole gate
+# depth scaled per target tier (see `review_depth` in frontkeep.yaml). The whole gate
 # is off unless a real LLM is reachable.
 model: auto

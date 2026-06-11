@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/eval.schema.json",
-  "title": "Asgard Eval",
-  "description": "Schema for an Asgard Eval entity: a quality/regression evaluation suite with pass thresholds and a gating tier that governs how strongly its results gate the target it evaluates.",
+  "$id": "https://frontkeep.dev/schemas/eval.schema.json",
+  "title": "Frontkeep Eval",
+  "description": "Schema for an Frontkeep Eval entity: a quality/regression evaluation suite with pass thresholds and a gating tier that governs how strongly its results gate the target it evaluates.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,8 +13,8 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1",
-      "description": "API version for all Asgard manifests."
+      "const": "frontkeep.dev/v1",
+      "description": "API version for all Frontkeep manifests."
     },
     "kind": {
       "const": "Eval",
@@ -26,7 +26,7 @@
       "required": [
         "name"
       ],
-      "description": "Common entity metadata shared by all Asgard kinds.",
+      "description": "Common entity metadata shared by all Frontkeep kinds.",
       "properties": {
         "name": {
           "type": "string",

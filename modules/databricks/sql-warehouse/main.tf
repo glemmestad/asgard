@@ -1,6 +1,6 @@
 # A Databricks SQL warehouse. The databricks provider reads DATABRICKS_HOST /
-# DATABRICKS_TOKEN from the inherited process env (Asgard loads them from .env).
-# The Asgard terraform connector writes `name` + every spec field + the immutable
+# DATABRICKS_TOKEN from the inherited process env (Frontkeep loads them from .env).
+# The Frontkeep terraform connector writes `name` + every spec field + the immutable
 # project `tags` map as tfvars; the project tag is stamped as a warehouse
 # custom_tag so system.billing.usage attributes spend per project.
 

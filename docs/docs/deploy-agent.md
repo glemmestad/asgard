@@ -21,7 +21,7 @@ Collect these before starting. Stop and ask a human for any you cannot derive.
 - `HOST` — the public hostname Frontkeep will be reached at (behind your TLS ingress).
 - `FRONTKEEP_SECRET_KEY` — 64 hex chars (32 bytes), from the org KMS. Generate with
   `openssl rand -hex 32` only for a throwaway trial.
-- `DB` — `postgres://USER:PASS@HOST:5432/asgard` for a pilot; `sqlite:///data/asgard.db` for a box trial.
+- `DB` — `postgres://USER:PASS@HOST:5432/frontkeep` for a pilot; `sqlite:///data/frontkeep.db` for a box trial.
 - `FRONTKEEP_ADMIN_PASSWORD` — optional; if omitted, capture the generated one from the boot log.
 - `FRONTKEEP_SYSTEM_NAME` — optional; UI display name to rebrand the dashboard to (e.g. `Acme Control Plane`). Cosmetic only; defaults to `Frontkeep`.
 - `[ENTERPRISE]` OIDC web-app: `FRONTKEEP_OIDC_DOMAIN`, `FRONTKEEP_OIDC_CLIENT_ID`, `FRONTKEEP_OIDC_CLIENT_SECRET`, and the callback URL `https://HOST/api/auth/oidc/callback` registered in the IdP.
@@ -33,22 +33,22 @@ POC (SQLite): nothing to do; the binary creates and migrates it.
 
 Pilot (Postgres):
 ```bash
-docker run -d --name asgard-pg \
+docker run -d --name frontkeep-pg \
   -e POSTGRES_PASSWORD="$PGPASS" -e POSTGRES_DB=frontkeep \
-  -p 5432:5432 -v asgard-pg:/var/lib/postgresql/data postgres:16-alpine
+  -p 5432:5432 -v frontkeep-pg:/var/lib/postgresql/data postgres:16-alpine
 ```
-**Verify:** `docker exec asgard-pg pg_isready -U postgres` prints `accepting connections`.
+**Verify:** `docker exec frontkeep-pg pg_isready -U postgres` prints `accepting connections`.
 
 ## Step 2 — Config file
 
-Write `asgard.yaml` with at least the group allowlist:
+Write `frontkeep.yaml` with at least the group allowlist:
 ```yaml
 groups:
   - { key: platform, display_name: Platform, cost_center: CC-100 }
 ```
-**Verify:** `test -f asgard.yaml`. (Governance-model tuning — promotion evidence
+**Verify:** `test -f frontkeep.yaml`. (Governance-model tuning — promotion evidence
 requirements, review windows, the `maintainer_min` metric threshold — is optional
-with policy-doc defaults; see the operator guide's `asgard.yaml` reference.)
+with policy-doc defaults; see the operator guide's `frontkeep.yaml` reference.)
 
 ## Step 3 — Boot
 
@@ -56,7 +56,7 @@ with policy-doc defaults; see the operator guide's `asgard.yaml` reference.)
 FRONTKEEP_DATABASE_URL="$DB" \
 FRONTKEEP_SECRET_KEY="$FRONTKEEP_SECRET_KEY" \
 FRONTKEEP_ADMIN_PASSWORD="${FRONTKEEP_ADMIN_PASSWORD:-}" \
-frontkeep serve --bind 0.0.0.0:8080 --config ./asgard.yaml
+frontkeep serve --bind 0.0.0.0:8080 --config ./frontkeep.yaml
 ```
 On **Postgres**, `desired_count > 1` is safe — the background loops are leader-leased
 and Terraform applies take per-resource locks (failover bounded by `lease_ttl_secs`,
@@ -101,10 +101,10 @@ ACC='accept: application/json, text/event-stream'
 test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8080/mcp -H 'content-type: application/json' -H "$ACC" -d "$INIT")" = 401
 # With the key it must negotiate:
 curl -s -X POST http://localhost:8080/mcp -H "authorization: Bearer $KEY" \
-  -H 'content-type: application/json' -H "$ACC" -d "$INIT" | grep -q '"name":"asgard"'
+  -H 'content-type: application/json' -H "$ACC" -d "$INIT" | grep -q '"name":"frontkeep"'
 ```
 **Verify:** the unauthenticated call is `401` and the authenticated call contains
-`"name":"asgard"`.
+`"name":"frontkeep"`.
 
 ## Step 7 — `[ENTERPRISE]` Enable OIDC
 
@@ -112,7 +112,7 @@ Restart the process with the OIDC env set:
 ```bash
 FRONTKEEP_OIDC_DOMAIN=... FRONTKEEP_OIDC_CLIENT_ID=... FRONTKEEP_OIDC_CLIENT_SECRET=... \
 FRONTKEEP_OIDC_REDIRECT_URI=https://$HOST/api/auth/oidc/callback \
-frontkeep serve --bind 0.0.0.0:8080 --config ./asgard.yaml
+frontkeep serve --bind 0.0.0.0:8080 --config ./frontkeep.yaml
 ```
 **Verify:** `curl -s https://$HOST/api/auth/config` returns `"oidc":true`, and a
 browser round-trip `GET /api/auth/oidc/login` → IdP → callback lands on `/` with a
@@ -125,7 +125,7 @@ Container-first (no config file) — set on the Frontkeep process (the image bun
 `terraform` on `PATH` and the modules at `/modules`):
 ```bash
 FRONTKEEP_TF_MODULES_DIR=/modules
-FRONTKEEP_TF_WORK_DIR=/data/asgard-tf      # scratch only; can be ephemeral
+FRONTKEEP_TF_WORK_DIR=/data/frontkeep-tf      # scratch only; can be ephemeral
 FRONTKEEP_TF_ALLOWED=auth0:your-tenant     # OPTIONAL multi-account guardrail
 
 # AWS resources (region + account are AWS-wide; subnet/SG are RDS placement):
@@ -137,11 +137,11 @@ AUTH0_DOMAIN=... AUTH0_CLIENT_ID=... AUTH0_CLIENT_SECRET=...   # M2M provider cr
 ```
 Region and account are **AWS-wide** (every AWS module uses them); `FRONTKEEP_RDS_*`
 are RDS-only network placement. AWS provider creds come from the IAM role/instance
-profile Frontkeep runs under. Or via `asgard.yaml` when you want the other
+profile Frontkeep runs under. Or via `frontkeep.yaml` when you want the other
 provisioning knobs in one place:
 ```yaml
 provisioning:
-  terraform: { modules_dir: /modules, work_dir: /data/asgard-tf }
+  terraform: { modules_dir: /modules, work_dir: /data/frontkeep-tf }
   allowed:
     - { cloud: auth0, account: your-tenant }
 ```
@@ -178,7 +178,7 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
 
 2. **Image → ECR.** Request the repo, then build and push by content:
    ```json
-   request_resource ecr-repository { "name": "asgard" }
+   request_resource ecr-repository { "name": "frontkeep" }
    ```
    ```bash
    docker build -t "$ECR_URI:sha-$(git rev-parse --short HEAD)" .
@@ -191,8 +191,8 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
 3. **Database + secret key.** Provision (or point at) Postgres and create the
    32-byte signing key in Secrets Manager so the task can read it:
    ```json
-   request_resource rds-postgres { "name": "asgard-db", "engine_version": "16" }
-   request_resource secretsmanager-secret { "name": "asgard-key", "byte_length": 32 }
+   request_resource rds-postgres { "name": "frontkeep-db", "engine_version": "16" }
+   request_resource secretsmanager-secret { "name": "frontkeep-key", "byte_length": 32 }
    ```
    Record `DB_SECRET_ARN`, `KEY_SECRET_ARN`, and the wrapping `KMS_ARN` (Step 6 of
    the [app migration runbook](./migrate-app.md)).
@@ -200,7 +200,7 @@ real load-balanced service. Inputs: `VPC_ID`, `SUBNET_IDS` (≥2 AZs), `CERT_ARN
 4. **Deploy the service.** One `ecs-service` request runs Frontkeep behind HTTPS:
    ```json
    request_resource ecs-service {
-     "name": "asgard",
+     "name": "frontkeep",
      "image": "<IMAGE>",
      "vpc_id": "<VPC_ID>", "subnet_ids": ["<a>", "<b>"],
      "cpu": "512", "memory": "1024",

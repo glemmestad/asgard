@@ -1,7 +1,7 @@
 # A random secret stored in AWS Secrets Manager, so a sibling ecs-service can
 # inject it by ARN (`secrets:`) or read it at runtime (`grants.secrets_read`).
 # This is the AWS-backed counterpart to the `random-secret` stub, which keeps
-# material in Asgard's own store: use that for app-layer secrets, this when the
+# material in Frontkeep's own store: use that for app-layer secrets, this when the
 # value must live in Secrets Manager for a task role to reach it.
 
 terraform {
@@ -42,7 +42,7 @@ resource "random_id" "material" {
 }
 
 resource "aws_secretsmanager_secret" "this" {
-  name = lower("${lookup(var.tags, "project", "asgard")}-${var.name}")
+  name = lower("${lookup(var.tags, "project", "frontkeep")}-${var.name}")
   tags = var.tags
 }
 

@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum CatalogError {
     #[error("storage: {0}")]
-    Storage(#[from] asgard_storage::StorageError),
+    Storage(#[from] frontkeep_storage::StorageError),
     #[error("db: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("yaml: {0}")]

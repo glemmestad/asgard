@@ -171,7 +171,7 @@ impl GitHubProvider {
     }
 
     fn auth(&self, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        let rb = rb.header("User-Agent", "asgard-catalog");
+        let rb = rb.header("User-Agent", "frontkeep-catalog");
         match &self.token {
             Some(t) => rb.header("Authorization", format!("Bearer {t}")),
             None => rb,
@@ -354,7 +354,7 @@ mod tests {
 
     #[test]
     fn parses_multi_doc() {
-        let yaml = "apiVersion: asgard.dev/v1\nkind: Agent\nmetadata:\n  name: a\nspec:\n  owner: group:default/p\n  model: model:default/m\n---\napiVersion: asgard.dev/v1\nkind: Prompt\nmetadata:\n  name: b\nspec:\n  owner: group:default/p\n  template: hi\n";
+        let yaml = "apiVersion: frontkeep.dev/v1\nkind: Agent\nmetadata:\n  name: a\nspec:\n  owner: group:default/p\n  model: model:default/m\n---\napiVersion: frontkeep.dev/v1\nkind: Prompt\nmetadata:\n  name: b\nspec:\n  owner: group:default/p\n  template: hi\n";
         let ms = parse_manifests(yaml).unwrap();
         assert_eq!(ms.len(), 2);
         assert_eq!(ms[0].kind, "Agent");

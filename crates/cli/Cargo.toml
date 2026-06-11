@@ -1,13 +1,13 @@
 [package]
-name = "asgard-cli"
+name = "frontkeep-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-asgard-catalog.workspace = true
-asgard-skills.workspace = true
-asgard-storage.workspace = true
+frontkeep-catalog.workspace = true
+frontkeep-skills.workspace = true
+frontkeep-storage.workspace = true
 base64.workspace = true
 reqwest.workspace = true
 serde = { workspace = true, features = ["derive"] }

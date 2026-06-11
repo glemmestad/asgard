@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn disabled_overlay_drops_the_reviewer_from_the_panel() {
-        let dir = std::env::temp_dir().join(format!("asgard-rev-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("frontkeep-rev-{}", std::process::id()));
         let sub = dir.join("llm-judge");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(

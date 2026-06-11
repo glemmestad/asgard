@@ -11,7 +11,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use async_trait::async_trait;
 use sqlx::Row;
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 
 use super::{SecretInfo, SecretRef, SecretStore};
 use crate::ProvisionError;
@@ -69,14 +69,14 @@ impl BuiltinSecretStore {
             "INSERT INTO secrets (id, project_id, name, version, ciphertext, nonce, meta, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         ))
-        .bind(asgard_storage::new_uid())
+        .bind(frontkeep_storage::new_uid())
         .bind(project_id)
         .bind(name)
         .bind(version)
         .bind(to_hex(&ct))
         .bind(to_hex(nonce.as_slice()))
         .bind(meta.to_string())
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .execute(self.db.pool())
         .await?;
         Ok(SecretRef {
@@ -170,7 +170,7 @@ impl SecretStore for BuiltinSecretStore {
         sqlx::query(&self.db.q(
             "UPDATE secrets SET rotated_at = ? WHERE project_id = ? AND name = ? AND version = ?",
         ))
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(project_id)
         .bind(name)
         .bind(new_ref.version)
@@ -293,7 +293,7 @@ mod tests {
 
     async fn store() -> BuiltinSecretStore {
         let path =
-            std::env::temp_dir().join(format!("asgard-sec-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-sec-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -352,7 +352,7 @@ mod tests {
         // interval 0 days → immediately due; no interval → never due.
         s.put("p", "rotates", "v", Some(0)).await.unwrap();
         s.put("p", "static", "v", None).await.unwrap();
-        let due = s.due_for_rotation(&asgard_storage::now()).await.unwrap();
+        let due = s.due_for_rotation(&frontkeep_storage::now()).await.unwrap();
         let paths: Vec<String> = due.into_iter().map(|r| r.path).collect();
         assert!(paths.contains(&"p/rotates".to_string()));
         assert!(!paths.contains(&"p/static".to_string()));

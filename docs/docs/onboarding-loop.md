@@ -43,7 +43,7 @@ frontkeep project register \
 
 ### Operator-configured cost-centers
 
-The deployer pre-specifies the valid groups in `asgard.yaml`. An empty list means "open mode" (any group accepted, recorded as-is).
+The deployer pre-specifies the valid groups in `frontkeep.yaml`. An empty list means "open mode" (any group accepted, recorded as-is).
 
 ```yaml
 groups:

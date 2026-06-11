@@ -1,5 +1,5 @@
 [package]
-name = "asgard"
+name = "frontkeep"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,19 +10,19 @@ name = "frontkeep"
 path = "src/main.rs"
 
 [dependencies]
-asgard-storage.workspace = true
-asgard-catalog.workspace = true
-asgard-policy.workspace = true
-asgard-gateway.workspace = true
-asgard-workflow.workspace = true
-asgard-registry.workspace = true
-asgard-reviewer.workspace = true
-asgard-provision.workspace = true
-asgard-eval.workspace = true
-asgard-identity.workspace = true
-asgard-api.workspace = true
-asgard-cli.workspace = true
-asgard-mcp.workspace = true
+frontkeep-storage.workspace = true
+frontkeep-catalog.workspace = true
+frontkeep-policy.workspace = true
+frontkeep-gateway.workspace = true
+frontkeep-workflow.workspace = true
+frontkeep-registry.workspace = true
+frontkeep-reviewer.workspace = true
+frontkeep-provision.workspace = true
+frontkeep-eval.workspace = true
+frontkeep-identity.workspace = true
+frontkeep-api.workspace = true
+frontkeep-cli.workspace = true
+frontkeep-mcp.workspace = true
 axum.workspace = true
 clap.workspace = true
 clap_complete = "4"

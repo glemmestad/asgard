@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Agent
 metadata:
   name: incident-triage-bot
@@ -9,7 +9,7 @@ metadata:
     lifecycle: production
     team: sre
   annotations:
-    asgard.dev/source-location: url:https://github.com/example-org/incident-triage-bot
+    frontkeep.dev/source-location: url:https://github.com/example-org/incident-triage-bot
   tags:
     - observability
     - on-call

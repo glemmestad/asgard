@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: MCPServer
 metadata:
   name: filesystem-mcp
@@ -9,7 +9,7 @@ metadata:
     team: platform
     tier: internal
   annotations:
-    asgard.dev/source-repo: https://github.com/modelcontextprotocol/servers
+    frontkeep.dev/source-repo: https://github.com/modelcontextprotocol/servers
   tags:
     - mcp
     - filesystem

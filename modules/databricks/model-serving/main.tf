@@ -1,7 +1,7 @@
 # A Databricks Model Serving endpoint serving a registered model. Provider creds
 # come from the inherited env. Tags are attached to the endpoint and, per the
 # provider, automatically propagated to billing logs. Once created, add this
-# endpoint's name to the `databricks` inference module so Asgard's gateway fronts it.
+# endpoint's name to the `databricks` inference module so Frontkeep's gateway fronts it.
 
 terraform {
   required_providers {

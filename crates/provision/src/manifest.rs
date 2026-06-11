@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn overlay_dir_adds_and_overrides_services() {
         let dir = std::env::temp_dir().join(format!(
-            "asgard-overlay-{}",
+            "frontkeep-overlay-{}",
             crate::secrets::random_secret()
         ));
         let svc = dir.join("custom-svc");

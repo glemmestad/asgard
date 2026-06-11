@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end proof against the real binary (brief §7). Boots `asgard serve`,
+# End-to-end proof against the real binary (brief §7). Boots `frontkeep serve`,
 # ingests two fixture repos, and exercises the governed onboarding loop:
 # register (the gate) -> mint key -> gateway -> policy -> guardrails -> kill ->
 # cost-by-dimension -> resource provisioning -> decommission -> audit -> GraphQL.
@@ -14,13 +14,13 @@ set -uo pipefail
 # configured" — so the default boot is genuinely offline (review gate disabled).
 # (Leave LITELLM_*/DATABRICKS_* alone: they double as provisioning-connector inputs.)
 export OPENAI_MASTER_KEY="" ANTHROPIC_MASTER_KEY=""
-unset ASGARD_REVIEW_ALLOW_MOCK 2>/dev/null || true
+unset FRONTKEEP_REVIEW_ALLOW_MOCK 2>/dev/null || true
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${PORT:-8071}"
 BASE="http://127.0.0.1:${PORT}"
 WORK="$(mktemp -d)"
-DB_URL="${DATABASE_URL:-sqlite://${WORK}/asgard.db}"
+DB_URL="${DATABASE_URL:-sqlite://${WORK}/frontkeep.db}"
 BIN="${BIN:-$ROOT/target/debug/frontkeep}"
 PASS=0
 FAIL=0
@@ -41,25 +41,25 @@ bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 jget() { python3 -c "import sys,json;d=json.load(open('$1'));print(eval(\"d$2\"))" 2>/dev/null; }
 
-echo "== Asgard e2e =="
+echo "== Frontkeep e2e =="
 echo "db: $DB_URL"
-[[ -x "$BIN" ]] || { echo "building binary..."; (cd "$ROOT" && cargo build -p asgard >/dev/null 2>&1); }
+[[ -x "$BIN" ]] || { echo "building binary..."; (cd "$ROOT" && cargo build -p frontkeep >/dev/null 2>&1); }
 
 # Two fixture repos, each with one Agent manifest.
 mkdir -p "$WORK/repoA" "$WORK/repoB"
 cat > "$WORK/repoA/agent.yaml" <<'YAML'
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Agent
 metadata: { name: reviewer-a, namespace: default, title: Reviewer A }
 spec: { owner: group:default/platform, model: model:default/mock, dataClass: internal }
 YAML
 cat > "$WORK/repoB/agent.yaml" <<'YAML'
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Agent
 metadata: { name: reviewer-b, namespace: default, title: Reviewer B }
 spec: { owner: group:default/platform, model: model:default/mock, dataClass: internal }
 YAML
-cat > "$WORK/asgard.yaml" <<YAML
+cat > "$WORK/frontkeep.yaml" <<YAML
 reconcile_secs: 3600
 sources:
   - { provider: fixture, path: "$WORK/repoA" }
@@ -75,7 +75,7 @@ YAML
 # the loopback-only dev escape hatch on so those routes are reachable without a
 # session; /mcp stays project-key-gated regardless (asserted below), and the
 # auth ladder itself is proven against a second, enforcing server at the end.
-ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/asgard.yaml" \
+FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/frontkeep.yaml" \
   >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 
@@ -252,12 +252,12 @@ KEY=$(jget "$WORK/key.json" "['key']")
 CODE=$(curl -s -o "$WORK/chat.json" -D "$WORK/chat.hdr" -w '%{http_code}' \
   -X POST "$BASE/api/gateway/chat" \
   -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
-  -H 'x-asgard-trace-id: e2e-trace-1' \
+  -H 'x-frontkeep-trace-id: e2e-trace-1' \
   -d '{"model":"model:default/mock","messages":[{"role":"user","content":"hello e2e world"}],"data_class":"internal"}')
 [[ "$CODE" == "200" ]] && ok "gateway completion 200" || bad "gateway chat status $CODE"
 COST=$(jget "$WORK/chat.json" "['cost_usd']")
 python3 -c "import sys; sys.exit(0 if float('${COST:-0}')>0 else 1)" 2>/dev/null && ok "cost attributed (\$$COST)" || bad "cost not >0 ($COST)"
-grep -qi 'x-asgard-trace-id: e2e-trace-1' "$WORK/chat.hdr" && ok "trace id propagated to response" || bad "trace id not echoed"
+grep -qi 'x-frontkeep-trace-id: e2e-trace-1' "$WORK/chat.hdr" && ok "trace id propagated to response" || bad "trace id not echoed"
 
 # 7b. MCP server (Streamable HTTP at /mcp), gated by the project virtual key —
 # independent of the dev escape hatch. Unauthenticated is refused; with the key
@@ -522,7 +522,7 @@ grep -q '"by":"group"' "$WORK/costby.json" && ok "rollup spend-by-dimension serv
 curl -fsS "$BASE/api/cost/tagged" -o "$WORK/tagged.json"
 grep -q '"tagged_pct":null' "$WORK/tagged.json" && ok "tagged-% reports n/a (no account-total source)" || bad "tagged-% not n/a"
 
-# 12f. Cost Q&A is dogfooded: routed through Asgard's own governed gateway and
+# 12f. Cost Q&A is dogfooded: routed through Frontkeep's own governed gateway and
 # grounded in the rollup store (the project's own virtual key attributes it).
 curl -fsS -X POST "$BASE/api/cost/ask" -H "authorization: Bearer $KEY" -H 'content-type: application/json' \
   -d '{"question":"what is total spend by group this month?"}' -o "$WORK/ask.json"
@@ -596,7 +596,7 @@ grep -q '"id":"ecs-service"' "$WORK/services.json" && ok "ecs-service primitive 
 # The ECR push-credential broker: lets a runner docker-push without AWS creds (the
 # control plane's role mints a short-lived token via terraform, password to the store).
 grep -q '"id":"ecr-credential"' "$WORK/services.json" && ok "ecr-credential broker present (push without AWS creds)" || bad "ecr-credential manifest missing"
-# Databricks is orchestrated through Asgard like any other catalog: an inference
+# Databricks is orchestrated through Frontkeep like any other catalog: an inference
 # module (openai-compatible plug-in) + provisionable resources behind the gate.
 grep -q '"id":"databricks"' "$WORK/services.json" && ok "databricks inference module present (plug-in, openai-compatible)" || bad "databricks inference module missing"
 grep -q '"id":"databricks-sql-warehouse"' "$WORK/services.json" \
@@ -737,7 +737,9 @@ curl -fsS "$BASE/api/skills/${SKID}/raw/scripts/run.sh?runtime=claude-code" -o "
 grep -q 'echo hi' "$WORK/raw_run.sh" && ok "raw endpoint serves a bundled script verbatim" || bad "raw script wrong"
 # The generated install.sh is a clean fetch script that puts the files in the right
 # place. Run it against a temp dir and assert the files land on disk. dev-insecure
-# ignores the token, but the script still requires ASGARD_PAT to be set.
+# ignores the token, but the script still requires a PAT to be set. Use the
+# legacy ASGARD_PAT name here on purpose: it proves the generated install.sh's
+# ${FRONTKEEP_PAT:=${ASGARD_PAT:-}} back-compat still accepts pre-rename env.
 curl -fsS "$BASE/api/skills/${SKID}/install.sh?dest=cursor" -o "$WORK/install.sh"
 grep -q 'base64' "$WORK/install.sh" && bad "install.sh must not use base64" || ok "install.sh is a clean fetch script (no base64)"
 grep -q '.cursor/skills' "$WORK/install.sh" && ok "install.sh targets the cursor skills dir" || bad "install.sh dest dir wrong"
@@ -792,8 +794,8 @@ SC=$(jget "$WORK/svc.json" "['provisioner']['connector']")
 # The human/admin surface is unauthenticated-deniable, a generated admin is
 # logged on first boot, and a valid session opens the surface.
 PORT2=$((PORT+1)); BASE2="http://127.0.0.1:${PORT2}"
-ASGARD_ADMIN_PASSWORD="e2e-admin-pw" ASGARD_DATABASE_URL="sqlite://${WORK}/auth.db" \
-  "$BIN" serve --bind "127.0.0.1:${PORT2}" --config "$WORK/asgard.yaml" >"$WORK/server2.log" 2>&1 &
+FRONTKEEP_ADMIN_PASSWORD="e2e-admin-pw" FRONTKEEP_DATABASE_URL="sqlite://${WORK}/auth.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT2}" --config "$WORK/frontkeep.yaml" >"$WORK/server2.log" 2>&1 &
 SERVER2_PID=$!
 for i in $(seq 1 50); do curl -fsS "$BASE2/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE2/api/projects")
@@ -807,7 +809,7 @@ curl -s -c "$WORK/cj.txt" -D "$WORK/login.hdr" -X POST "$BASE2/api/auth/login" -
   -d '{"username":"admin","password":"e2e-admin-pw"}' -o "$WORK/login.json"
 TOK=$(jget "$WORK/login.json" "['token']")
 [[ -n "$TOK" ]] && ok "local admin login issues a session" || bad "login failed"
-grep -qi 'set-cookie: asgard_session=' "$WORK/login.hdr" && ! grep -qi 'set-cookie: asgard_session=.*Secure' "$WORK/login.hdr" \
+grep -qi 'set-cookie: frontkeep_session=' "$WORK/login.hdr" && ! grep -qi 'set-cookie: frontkeep_session=.*Secure' "$WORK/login.hdr" \
   && ok "plain-http session cookie is set and NOT Secure (works without a proxy)" || bad "plain-http cookie wrong (Secure set, or missing)"
 CODE=$(curl -s -b "$WORK/cj.txt" -o /dev/null -w '%{http_code}' "$BASE2/api/projects")
 [[ "$CODE" == "200" ]] && ok "session cookie opens the human/admin surface over http (200)" || bad "expected 200 with cookie, got $CODE"
@@ -883,7 +885,7 @@ FMST2=$(jget "$WORK/fmcp2.json" "['status']")
 curl -s -D "$WORK/login_tls.hdr" -X POST "$BASE2/api/auth/login" \
   -H 'content-type: application/json' -H 'x-forwarded-proto: https' \
   -d '{"username":"admin","password":"e2e-admin-pw"}' -o /dev/null
-grep -qi 'set-cookie: asgard_session=.*Secure' "$WORK/login_tls.hdr" \
+grep -qi 'set-cookie: frontkeep_session=.*Secure' "$WORK/login_tls.hdr" \
   && ok "cookie becomes Secure when X-Forwarded-Proto=https (adaptive)" || bad "cookie not Secure under TLS header"
 
 # 20d. Mutation authorization (the closed gap): a signed-in user can only mutate a
@@ -913,7 +915,7 @@ FOWN=$(jget "$WORK/founder.json" "['owner']")
 curl -s -H "authorization: Bearer $MTOK" -X POST "$BASE2/api/auth/tokens" -H 'content-type: application/json' \
   -d '{"name":"finn-agent"}' -o "$WORK/pat.json"
 PAT=$(jget "$WORK/pat.json" "['token']")
-[[ "$PAT" == asg_pat_* ]] && ok "member mints a user token (asg_pat_…)" || bad "PAT mint failed (got '${PAT:0:12}')"
+[[ "$PAT" == fk_pat_* ]] && ok "member mints a user token (fk_pat_…)" || bad "PAT mint failed (got '${PAT:0:12}')"
 
 PINIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"e2e-pat","version":"0"}}}'
 curl -s -D "$WORK/pmcp.hdr" -o "$WORK/pmcp.out" -X POST "$BASE2/mcp" \
@@ -954,13 +956,13 @@ curl -s -o "$WORK/pxp.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" 
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PXP"
 grep -qi 'not authorized' "$WORK/pxp.out" && ok "PAT denied a project the user does not own/manage" || { bad "PAT cross-project was not denied"; cat "$WORK/pxp.out"; }
 
-# 20f-i-b. First-credential bootstrap: `asgard admin bootstrap` mints a PAT
+# 20f-i-b. First-credential bootstrap: `frontkeep admin bootstrap` mints a PAT
 # DB-direct (no running server needed), is idempotent, and the printed PAT
 # opens /mcp — the zero-to-agent path on a fresh deploy.
 "$BIN" --database-url "sqlite://${WORK}/auth.db" admin bootstrap >"$WORK/abootstrap.out" 2>/dev/null
 grep -q "already exists" "$WORK/abootstrap.out" && ok "admin bootstrap is idempotent against an existing admin" || { bad "admin bootstrap did not detect existing admin"; cat "$WORK/abootstrap.out"; }
 APAT=$(grep 'PAT (shown once):' "$WORK/abootstrap.out" | awk '{print $NF}')
-[[ "$APAT" == asg_pat_* ]] && ok "admin bootstrap prints a PAT (asg_pat_…)" || bad "admin bootstrap printed no PAT (got '${APAT:0:12}')"
+[[ "$APAT" == fk_pat_* ]] && ok "admin bootstrap prints a PAT (fk_pat_…)" || bad "admin bootstrap printed no PAT (got '${APAT:0:12}')"
 AINIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"e2e-bootstrap","version":"0"}}}'
 curl -s -D "$WORK/amcp.hdr" -o "$WORK/amcp.out" -X POST "$BASE2/mcp" \
   -H "authorization: Bearer $APAT" -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$AINIT"
@@ -991,10 +993,10 @@ PY
 PCRED="{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"gateway_credential\",\"arguments\":{\"project_id\":\"${PPROV_PID}\"}}}"
 curl -s -o "$WORK/pcred.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PCRED"
-grep -q 'asg_' "$WORK/pcred.out" && ok "provisional project mints a gateway key (live, not blocked)" || { bad "provisional project denied a key"; cat "$WORK/pcred.out"; }
+grep -q 'fk_' "$WORK/pcred.out" && ok "provisional project mints a gateway key (live, not blocked)" || { bad "provisional project denied a key"; cat "$WORK/pcred.out"; }
 
 # 20f-ii-c. link_resource: pre-existing infra is recorded for cost attribution
-# without Asgard managing it; deprovision merely unlinks the record.
+# without Frontkeep managing it; deprovision merely unlinks the record.
 PLINK="{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"tools/call\",\"params\":{\"name\":\"link_resource\",\"arguments\":{\"project_id\":\"${PPROV_PID}\",\"name\":\"legacy-stack\",\"cost_source\":\"flat\",\"est_monthly_usd\":120}}}"
 curl -s -o "$WORK/plink.out" -X POST "$BASE2/mcp" -H "authorization: Bearer $PAT" -H "mcp-session-id: $PSID" \
   -H 'content-type: application/json' -H "$MCP_ACCEPT" -d "$PLINK"
@@ -1079,7 +1081,7 @@ grep -q 'finn@corp.example' "$WORK/pskcat.out" && grep -q '\\"status\\":\\"commu
 # by construction — plus things the agent surface can't do (write seed files,
 # inference). Driven against the enforcing server with finn's real PAT. A scoped
 # config keeps the key cache inside $WORK (hermetic).
-export ASGARD_CONFIG="$WORK/cli-config.toml"
+export FRONTKEEP_CONFIG="$WORK/cli-config.toml"
 "$BIN" --url "$BASE2" --pat "$PAT" -o json tools >"$WORK/cli_tools.json" 2>/dev/null
 grep -q '"list_projects"' "$WORK/cli_tools.json" && grep -q '"register_project"' "$WORK/cli_tools.json" && grep -q '"deploy_image"' "$WORK/cli_tools.json" \
   && ok "CLI lists the live tool surface (incl. list_projects, deploy_image)" || { bad "CLI tools missing expected tools"; head -c 400 "$WORK/cli_tools.json"; }
@@ -1160,39 +1162,39 @@ grep -q 'echo' "$WORK/cli_chat.json" \
   && ok "CLI chat runs inference via an auto-minted key (beyond the MCP surface)" || { bad "CLI chat failed"; cat "$WORK/cli_chat.json"; }
 
 # A bad PAT fails fast with exit code 3 and the server's actionable hint on stderr.
-"$BIN" --url "$BASE2" --pat "asg_pat_bogus" call governance_metrics >/dev/null 2>"$WORK/cli_bad.err"
+"$BIN" --url "$BASE2" --pat "fk_pat_bogus" call governance_metrics >/dev/null 2>"$WORK/cli_bad.err"
 CLI_RC=$?
 { [[ "$CLI_RC" == "3" ]] && grep -qi 'mint' "$WORK/cli_bad.err"; } \
   && ok "CLI bad-PAT exits 3 and echoes the mint-a-PAT hint" || { bad "CLI bad-PAT handling wrong (rc=$CLI_RC)"; cat "$WORK/cli_bad.err"; }
-unset ASGARD_CONFIG
+unset FRONTKEEP_CONFIG
 
 # Readiness probe reports DB reachable.
 curl -fsS "$BASE2/readyz" >/dev/null 2>&1 && ok "readiness probe (/readyz) is green" || bad "/readyz not green"
 kill "$SERVER2_PID" 2>/dev/null
 
-# 21. Force-HTTPS (enterprise): with ASGARD_FORCE_HTTPS=1, the cookie is Secure
+# 21. Force-HTTPS (enterprise): with FRONTKEEP_FORCE_HTTPS=1, the cookie is Secure
 # even over plain http with no proxy header — "HTTPS required", not "if detected".
 PORT3=$((PORT+2)); BASE3="http://127.0.0.1:${PORT3}"
-ASGARD_FORCE_HTTPS=1 ASGARD_ADMIN_PASSWORD="e2e-admin-pw" ASGARD_DATABASE_URL="sqlite://${WORK}/force.db" \
-  "$BIN" serve --bind "127.0.0.1:${PORT3}" --config "$WORK/asgard.yaml" >"$WORK/server3.log" 2>&1 &
+FRONTKEEP_FORCE_HTTPS=1 FRONTKEEP_ADMIN_PASSWORD="e2e-admin-pw" FRONTKEEP_DATABASE_URL="sqlite://${WORK}/force.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT3}" --config "$WORK/frontkeep.yaml" >"$WORK/server3.log" 2>&1 &
 SERVER3_PID=$!
 for i in $(seq 1 50); do curl -fsS "$BASE3/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
 curl -s -D "$WORK/force.hdr" -X POST "$BASE3/api/auth/login" -H 'content-type: application/json' \
   -d '{"username":"admin","password":"e2e-admin-pw"}' -o /dev/null
-grep -qi 'set-cookie: asgard_session=.*Secure' "$WORK/force.hdr" \
-  && ok "ASGARD_FORCE_HTTPS forces Secure cookie even over plain http" || bad "force-https did not force Secure"
+grep -qi 'set-cookie: frontkeep_session=.*Secure' "$WORK/force.hdr" \
+  && ok "FRONTKEEP_FORCE_HTTPS forces Secure cookie even over plain http" || bad "force-https did not force Secure"
 kill "$SERVER3_PID" 2>/dev/null
 
-# 22. Disable local login (SSO-only): with ASGARD_DISABLE_LOCAL_LOGIN=1 and OIDC
+# 22. Disable local login (SSO-only): with FRONTKEEP_DISABLE_LOCAL_LOGIN=1 and OIDC
 # configured, /api/auth/config advertises local:false (UI drops the password form)
 # and POST /api/auth/login is refused (403). The dummy OIDC env only satisfies the
 # anti-lockout guard — no IdP is contacted, since login is blocked before any redirect.
 PORT4=$((PORT+3)); BASE4="http://127.0.0.1:${PORT4}"
-ASGARD_DISABLE_LOCAL_LOGIN=1 \
-  ASGARD_OIDC_DOMAIN="idp.example.com" ASGARD_OIDC_CLIENT_ID="cid" \
-  ASGARD_OIDC_CLIENT_SECRET="sec" ASGARD_OIDC_REDIRECT_URI="${BASE4}/api/auth/oidc/callback" \
-  ASGARD_ADMIN_PASSWORD="e2e-admin-pw" ASGARD_DATABASE_URL="sqlite://${WORK}/nolocal.db" \
-  "$BIN" serve --bind "127.0.0.1:${PORT4}" --config "$WORK/asgard.yaml" >"$WORK/server4.log" 2>&1 &
+FRONTKEEP_DISABLE_LOCAL_LOGIN=1 \
+  FRONTKEEP_OIDC_DOMAIN="idp.example.com" FRONTKEEP_OIDC_CLIENT_ID="cid" \
+  FRONTKEEP_OIDC_CLIENT_SECRET="sec" FRONTKEEP_OIDC_REDIRECT_URI="${BASE4}/api/auth/oidc/callback" \
+  FRONTKEEP_ADMIN_PASSWORD="e2e-admin-pw" FRONTKEEP_DATABASE_URL="sqlite://${WORK}/nolocal.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT4}" --config "$WORK/frontkeep.yaml" >"$WORK/server4.log" 2>&1 &
 SERVER4_PID=$!
 for i in $(seq 1 50); do curl -fsS "$BASE4/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
 curl -fsS "$BASE4/api/auth/config" -o "$WORK/cfg4.json"
@@ -1204,7 +1206,7 @@ CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE4/api/auth/login" -H
 [[ "$CODE" == "403" ]] && ok "disable-local-login: POST /api/auth/login is refused (403)" || bad "expected 403 for local login when disabled, got $CODE"
 kill "$SERVER4_PID" 2>/dev/null
 
-# 23. Async code-review gate (the deep reviewer). With ASGARD_REVIEW_ALLOW_MOCK=1
+# 23. Async code-review gate (the deep reviewer). With FRONTKEEP_REVIEW_ALLOW_MOCK=1
 # the gate is on (mock judge); the reviewer reads the actual repo over the Local
 # backend. A clean repo parks in `reviewing`, the background worker reads it and
 # approves; a repo carrying the review-fail marker is flagged — the gate judged the
@@ -1214,14 +1216,14 @@ mkdir -p "$WORK/repo_ok/src" "$WORK/repo_bad/src"
 printf 'fn main() {}\n' > "$WORK/repo_ok/src/main.rs"
 printf '# Clean fixture\n' > "$WORK/repo_ok/README.md"
 printf 'fn main() {}\n' > "$WORK/repo_bad/src/main.rs"
-: > "$WORK/repo_bad/.asgard-review-fail"
-ASGARD_REVIEW_ALLOW_MOCK=1 ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="sqlite://${WORK}/review.db" \
-  "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/asgard.yaml" >"$WORK/server5.log" 2>&1 &
+: > "$WORK/repo_bad/.frontkeep-review-fail"
+FRONTKEEP_REVIEW_ALLOW_MOCK=1 FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="sqlite://${WORK}/review.db" \
+  "$BIN" serve --bind "127.0.0.1:${PORT5}" --config "$WORK/frontkeep.yaml" >"$WORK/server5.log" 2>&1 &
 SERVER5_PID=$!
 for i in $(seq 1 50); do curl -fsS "$BASE5/healthz" >/dev/null 2>&1 && break; sleep 0.2; done
 curl -fsS "$BASE5/healthz" >/dev/null 2>&1 || { bad "review server did not start"; cat "$WORK/server5.log"; }
 grep -q 'review gate enabled' "$WORK/server5.log" \
-  && ok "review gate ENABLED under ASGARD_REVIEW_ALLOW_MOCK=1 (mock judge)" \
+  && ok "review gate ENABLED under FRONTKEEP_REVIEW_ALLOW_MOCK=1 (mock judge)" \
   || { bad "review gate not enabled under mock override"; cat "$WORK/server5.log"; }
 
 # Current state of a workflow request by id (scoped to its project subject).
@@ -1279,7 +1281,7 @@ OPENB=$(curl -fsS "$BASE5/api/requests?subject=$(python3 -c "import urllib.parse
 [[ "$RIDBAD2" != "$RIDBAD" && "$OPENB" == "1" ]] && ok "re-running supersedes the prior review attempt (one open)" || bad "supersede wrong (rid=$RIDBAD rid2=$RIDBAD2 open=$OPENB)"
 
 # 23b. Skills code-review assist (advisory, escalate-only). With the gate ON
-# (ASGARD_REVIEW_ALLOW_MOCK), running /review judges the bundle's files: a clean
+# (FRONTKEEP_REVIEW_ALLOW_MOCK), running /review judges the bundle's files: a clean
 # bundle passes; one carrying the review-fail marker is flagged — the assist judged
 # the code, not the form. It never changes the entry's tier (a human still approves).
 python3 - <<'PY' > "$WORK/skclean.json"
@@ -1298,7 +1300,7 @@ import json, base64
 md = "---\nname: Marked Skill\ndescription: carries a review-fail marker\n---\nDo the thing.\n"
 print(json.dumps({"name":"Marked Skill","bundle":[
   {"path":"SKILL.md","content_b64":base64.b64encode(md.encode()).decode()},
-  {"path":".asgard-review-fail","content_b64":base64.b64encode(b"").decode()}]}))
+  {"path":".frontkeep-review-fail","content_b64":base64.b64encode(b"").decode()}]}))
 PY
 curl -fsS -X POST "$BASE5/api/skills" -H 'content-type: application/json' -d @"$WORK/skbad.json" -o "$WORK/skbad_put.json"
 SKB=$(jget "$WORK/skbad_put.json" "['id']")
@@ -1313,8 +1315,8 @@ kill "$SERVER5_PID" 2>/dev/null
 # design (one file, one writer), so this is skipped there.
 if [[ "$DB_URL" == postgres* ]]; then
   PORT6=$((PORT+5)); BASE6="http://127.0.0.1:${PORT6}"
-  ASGARD_DEV_INSECURE=1 ASGARD_DATABASE_URL="$DB_URL" \
-    "$BIN" serve --bind "127.0.0.1:${PORT6}" --config "$WORK/asgard.yaml" >"$WORK/server6.log" 2>&1 &
+  FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="$DB_URL" \
+    "$BIN" serve --bind "127.0.0.1:${PORT6}" --config "$WORK/frontkeep.yaml" >"$WORK/server6.log" 2>&1 &
   SERVER6_PID=$!
   for _ in $(seq 1 50); do curl -fsS "$BASE6/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
   curl -fsS "$BASE6/readyz" >/dev/null 2>&1 \

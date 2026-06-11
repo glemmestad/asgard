@@ -3,22 +3,22 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}
   labels:
-    app.kubernetes.io/name: asgard
+    app.kubernetes.io/name: frontkeep
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: asgard
+      app.kubernetes.io/name: frontkeep
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: asgard
+        app.kubernetes.io/name: frontkeep
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       containers:
-        - name: asgard
+        - name: frontkeep
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["serve"]
@@ -26,9 +26,9 @@ spec:
             - name: http
               containerPort: 8080
           env:
-            - name: ASGARD_DATABASE_URL
+            - name: FRONTKEEP_DATABASE_URL
               value: {{ .Values.databaseUrl | quote }}
-            - name: ASGARD_BIND
+            - name: FRONTKEEP_BIND
               value: "0.0.0.0:8080"
           {{- if .Values.envSecretName }}
           envFrom:

@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Project
 metadata:
   name: ingestion-pipeline
@@ -11,7 +11,7 @@ metadata:
     domain: data
     tier: gold
   annotations:
-    asgard.dev/source-repo: https://github.com/example-org/ingestion-pipeline
+    frontkeep.dev/source-repo: https://github.com/example-org/ingestion-pipeline
   tags:
     - streaming
     - kafka

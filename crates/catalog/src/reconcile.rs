@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use asgard_storage::audit::{self, AuditRecord};
+use frontkeep_storage::audit::{self, AuditRecord};
 
 use crate::entity::{Entity, Origin};
 use crate::error::CatalogError;
@@ -111,7 +111,7 @@ pub async fn reconcile(
     Ok(report)
 }
 
-async fn audit_entity(db: &asgard_storage::Db, action: &str, entity_ref: &str, outcome: &str) {
+async fn audit_entity(db: &frontkeep_storage::Db, action: &str, entity_ref: &str, outcome: &str) {
     let _ = audit::append(
         db,
         &AuditRecord::new("reconciler", action)
@@ -125,11 +125,11 @@ async fn audit_entity(db: &asgard_storage::Db, action: &str, entity_ref: &str, o
 mod tests {
     use super::*;
     use crate::repo::ListFilter;
-    use asgard_storage::Db;
+    use frontkeep_storage::Db;
 
     async fn fresh_db() -> Db {
         let path =
-            std::env::temp_dir().join(format!("asgard-cat-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-cat-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -147,17 +147,18 @@ mod tests {
         let repo = CatalogRepo::new(db.clone());
         let registry = SchemaRegistry::embedded().unwrap();
 
-        let dir = std::env::temp_dir().join(format!("asgard-fix-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-fix-{}", frontkeep_storage::new_uid()));
         std::fs::create_dir_all(&dir).unwrap();
         write(
             &dir,
             "agent.yaml",
-            "apiVersion: asgard.dev/v1\nkind: Agent\nmetadata:\n  name: reviewer\nspec:\n  owner: group:default/platform\n  model: model:default/gpt\n",
+            "apiVersion: frontkeep.dev/v1\nkind: Agent\nmetadata:\n  name: reviewer\nspec:\n  owner: group:default/platform\n  model: model:default/gpt\n",
         );
         write(
             &dir,
             "prompt.yaml",
-            "apiVersion: asgard.dev/v1\nkind: Prompt\nmetadata:\n  name: sys\nspec:\n  owner: group:default/platform\n  template: hello\n",
+            "apiVersion: frontkeep.dev/v1\nkind: Prompt\nmetadata:\n  name: sys\nspec:\n  owner: group:default/platform\n  template: hello\n",
         );
 
         let provider = crate::ingest::FixtureProvider::with_id(&dir, "test-source");
@@ -176,7 +177,7 @@ mod tests {
         write(
             &dir,
             "agent.yaml",
-            "apiVersion: asgard.dev/v1\nkind: Agent\nmetadata:\n  name: reviewer\n  title: Reviewer\nspec:\n  owner: group:default/platform\n  model: model:default/claude\n",
+            "apiVersion: frontkeep.dev/v1\nkind: Agent\nmetadata:\n  name: reviewer\n  title: Reviewer\nspec:\n  owner: group:default/platform\n  model: model:default/claude\n",
         );
         let r3 = reconcile(&repo, &registry, &provider).await.unwrap();
         assert_eq!(r3.updated, 1);
@@ -209,13 +210,14 @@ mod tests {
         let db = fresh_db().await;
         let repo = CatalogRepo::new(db.clone());
         let registry = SchemaRegistry::embedded().unwrap();
-        let dir = std::env::temp_dir().join(format!("asgard-fix-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-fix-{}", frontkeep_storage::new_uid()));
         std::fs::create_dir_all(&dir).unwrap();
         // Agent missing required spec.model.
         write(
             &dir,
             "agent.yaml",
-            "apiVersion: asgard.dev/v1\nkind: Agent\nmetadata:\n  name: broken\nspec:\n  owner: group:default/platform\n",
+            "apiVersion: frontkeep.dev/v1\nkind: Agent\nmetadata:\n  name: broken\nspec:\n  owner: group:default/platform\n",
         );
         let provider = crate::ingest::FixtureProvider::with_id(&dir, "bad-source");
         let r = reconcile(&repo, &registry, &provider).await.unwrap();

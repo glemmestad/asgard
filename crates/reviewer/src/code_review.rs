@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use asgard_gateway::{run_tool_loop, Gateway, ToolDef, ToolExecutor};
+use frontkeep_gateway::{run_tool_loop, Gateway, ToolDef, ToolExecutor};
 
 use crate::manifest::ReviewerManifest;
 use crate::repo::RepoReader;
@@ -113,11 +113,11 @@ pub trait StandardsSource: Send + Sync {
 /// store. Holds the shared `Db` directly (not the registry) to avoid an `Arc`
 /// cycle registry → reviewer → registry; the reviewer only reads.
 pub struct RegistryStandards {
-    db: asgard_storage::Db,
+    db: frontkeep_storage::Db,
 }
 
 impl RegistryStandards {
-    pub fn new(db: asgard_storage::Db) -> Self {
+    pub fn new(db: frontkeep_storage::Db) -> Self {
         RegistryStandards { db }
     }
 }
@@ -125,7 +125,7 @@ impl RegistryStandards {
 #[async_trait]
 impl StandardsSource for RegistryStandards {
     async fn standard(&self, id: &str) -> Option<String> {
-        asgard_registry::standards::get(&self.db, id)
+        frontkeep_registry::standards::get(&self.db, id)
             .await
             .ok()
             .flatten()
@@ -170,9 +170,9 @@ impl CodeReview {
 }
 
 /// Marker a repo can carry to deterministically fail the offline review (a file
-/// named `.asgard-review-fail`, or any path containing `REVIEW_FAIL`). Lets tests
+/// named `.frontkeep-review-fail`, or any path containing `REVIEW_FAIL`). Lets tests
 /// and the offline e2e drive a concern on an otherwise machine-clean repo.
-pub(crate) const FAIL_MARKER: &str = ".asgard-review-fail";
+pub(crate) const FAIL_MARKER: &str = ".frontkeep-review-fail";
 
 /// Offline/mock judgment: read the repo (proving the read path) and judge it
 /// *independently* of the machine verdict — a clean tree passes; a tree carrying
@@ -430,7 +430,7 @@ impl ToolExecutor for CodeReviewTools {
 mod tests {
     use super::*;
     use crate::Disposition;
-    use asgard_registry::EvidenceVerdict;
+    use frontkeep_registry::EvidenceVerdict;
 
     fn req(repo: &str, complete: bool) -> ReviewRequest {
         ReviewRequest {
@@ -468,7 +468,7 @@ mod tests {
     // echoing the machine verdict. Exercised over a local fixture repo, no gateway.
     #[tokio::test]
     async fn stub_reads_repo_and_judges_independently() {
-        let dir = std::env::temp_dir().join(format!("asgard-cr-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("frontkeep-cr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("main.rs"), b"fn main() {}\n").unwrap();
         let reader = RepoReader::from_url(dir.to_str().unwrap()).unwrap();

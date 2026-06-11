@@ -16,7 +16,7 @@ members = [
     "crates/api",
     "crates/cli",
     "crates/mcp",
-    "crates/asgard",
+    "crates/frontkeep",
 ]
 
 [workspace.package]
@@ -24,7 +24,7 @@ version = "0.25.0"
 edition = "2021"
 license = "Apache-2.0"
 authors = ["The Frontkeep Authors"]
-repository = "https://github.com/asgard/asgard"
+repository = "https://github.com/glemmestad/frontkeep"
 rust-version = "1.82"
 
 [workspace.dependencies]
@@ -88,21 +88,21 @@ mime_guess = "2"
 aes-gcm = "0.10"
 
 # internal crates
-asgard-storage = { path = "crates/storage" }
-asgard-catalog = { path = "crates/catalog" }
-asgard-policy = { path = "crates/policy" }
-asgard-identity = { path = "crates/identity" }
-asgard-gateway = { path = "crates/gateway" }
-asgard-registry = { path = "crates/registry" }
-asgard-reviewer = { path = "crates/reviewer" }
-asgard-skills = { path = "crates/skills" }
-asgard-provision = { path = "crates/provision" }
-asgard-workflow = { path = "crates/workflow" }
-asgard-eval = { path = "crates/eval" }
-asgard-runtime = { path = "crates/runtime" }
-asgard-api = { path = "crates/api" }
-asgard-mcp = { path = "crates/mcp" }
-asgard-cli = { path = "crates/cli" }
+frontkeep-storage = { path = "crates/storage" }
+frontkeep-catalog = { path = "crates/catalog" }
+frontkeep-policy = { path = "crates/policy" }
+frontkeep-identity = { path = "crates/identity" }
+frontkeep-gateway = { path = "crates/gateway" }
+frontkeep-registry = { path = "crates/registry" }
+frontkeep-reviewer = { path = "crates/reviewer" }
+frontkeep-skills = { path = "crates/skills" }
+frontkeep-provision = { path = "crates/provision" }
+frontkeep-workflow = { path = "crates/workflow" }
+frontkeep-eval = { path = "crates/eval" }
+frontkeep-runtime = { path = "crates/runtime" }
+frontkeep-api = { path = "crates/api" }
+frontkeep-mcp = { path = "crates/mcp" }
+frontkeep-cli = { path = "crates/cli" }
 
 [profile.dev]
 # Debuginfo off: large dependencies (e.g. cedar-policy) have a much smaller

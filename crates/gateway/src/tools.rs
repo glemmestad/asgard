@@ -170,8 +170,8 @@ mod tests {
     use super::*;
     use crate::provider::{ChatResponse, Provider, ProviderError};
     use crate::{GatewayRepo, ModelInfo, ModelRegistry};
-    use asgard_policy::{CedarEngine, PolicyEngine};
-    use asgard_storage::Db;
+    use frontkeep_policy::{CedarEngine, PolicyEngine};
+    use frontkeep_storage::Db;
     use std::collections::HashMap;
     use std::sync::Arc;
     use std::sync::Mutex;
@@ -252,7 +252,8 @@ mod tests {
     }
 
     async fn gateway_with(provider: Arc<dyn Provider>) -> (Gateway, String) {
-        let path = std::env::temp_dir().join(format!("asgard-tl-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-tl-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

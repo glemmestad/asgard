@@ -1,11 +1,11 @@
 variable "name" {
   type    = string
-  default = "asgard"
+  default = "frontkeep"
 }
 
 variable "image_repository" {
   type    = string
-  default = "ghcr.io/asgard/asgard"
+  default = "ghcr.io/glemmestad/frontkeep"
 }
 
 variable "image_tag" {
@@ -15,8 +15,8 @@ variable "image_tag" {
 
 variable "database_url" {
   type        = string
-  description = "sqlite:///data/asgard.db by default; set a postgres:// DSN to scale out."
-  default     = "sqlite:///data/asgard.db"
+  description = "sqlite:///data/frontkeep.db by default; set a postgres:// DSN to scale out."
+  default     = "sqlite:///data/frontkeep.db"
 }
 
 variable "git_token" {

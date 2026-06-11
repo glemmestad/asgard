@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/prompt.schema.json",
-  "title": "Asgard Prompt",
-  "description": "A reusable LLM prompt template registered in the Asgard entity catalog, including its variables, owning team, and associated evaluations.",
+  "$id": "https://frontkeep.dev/schemas/prompt.schema.json",
+  "title": "Frontkeep Prompt",
+  "description": "A reusable LLM prompt template registered in the Frontkeep entity catalog, including its variables, owning team, and associated evaluations.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,8 +13,8 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1",
-      "description": "API version of the Asgard manifest envelope."
+      "const": "frontkeep.dev/v1",
+      "description": "API version of the Frontkeep manifest envelope."
     },
     "kind": {
       "const": "Prompt",
@@ -26,7 +26,7 @@
       "required": [
         "name"
       ],
-      "description": "Catalog metadata shared by all Asgard entities.",
+      "description": "Catalog metadata shared by all Frontkeep entities.",
       "properties": {
         "name": {
           "type": "string",

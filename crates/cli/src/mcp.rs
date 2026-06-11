@@ -1,7 +1,7 @@
 //! PAT-authenticated MCP client over Streamable HTTP (`/mcp`). This is the CLI's
 //! parity engine: the generic `call` and every typed subcommand reach the server
 //! through the exact same tool path the agent-facing MCP uses, authed by the same
-//! `asg_pat_…` token. New server tools are reachable here with no CLI change.
+//! `fk_pat_…` token. New server tools are reachable here with no CLI change.
 
 use rmcp::model::{CallToolRequestParams, JsonObject};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -31,8 +31,8 @@ pub struct McpClient {
 }
 
 impl McpClient {
-    /// `base` is the server origin (e.g. `https://asgard.example`); `/mcp` is
-    /// appended. `pat` is the bare `asg_pat_…` token (no `Bearer ` prefix).
+    /// `base` is the server origin (e.g. `https://frontkeep.example`); `/mcp` is
+    /// appended. `pat` is the bare `fk_pat_…` token (no `Bearer ` prefix).
     pub fn new(base: impl AsRef<str>, pat: impl Into<String>) -> Self {
         let base = base.as_ref().trim_end_matches('/');
         McpClient {

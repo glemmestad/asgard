@@ -34,7 +34,7 @@ impl StubProvisioner {
 
     async fn record_run(&self, req: &ProvisionRequest, action: &str, output: &str) {
         if let (Some(store), Some(rid)) = (&self.run_log, &req.resource_id) {
-            let now = asgard_storage::now();
+            let now = frontkeep_storage::now();
             let _ = store
                 .append(rid, &req.ctx.project_id, action, true, output, &now, &now)
                 .await;

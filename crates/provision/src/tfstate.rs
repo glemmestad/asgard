@@ -8,7 +8,7 @@ use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use sqlx::Row;
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 
 use crate::ProvisionError;
 
@@ -64,7 +64,7 @@ impl TfStateStore {
             .map_err(|e| ProvisionError::Backend(format!("encrypt tf state: {e}")))?;
         let ct_hex = to_hex(&ct);
         let nonce_hex = to_hex(nonce.as_slice());
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let affected = match expected {
             Some(v) => sqlx::query(&self.db.q(
                 "UPDATE tf_state SET ciphertext = ?, nonce = ?, updated_at = ?, \
@@ -142,7 +142,7 @@ mod tests {
 
     async fn store() -> TfStateStore {
         let path =
-            std::env::temp_dir().join(format!("asgard-tfs-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-tfs-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

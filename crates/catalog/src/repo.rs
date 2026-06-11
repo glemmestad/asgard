@@ -1,7 +1,7 @@
 //! Catalog persistence over the shared `Db`. Portable SQL (`?` placeholders,
 //! TEXT columns) so SQLite and Postgres behave identically.
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde_json::Value;
 use sqlx::Row;
 
@@ -75,7 +75,7 @@ impl CatalogRepo {
             )
         });
 
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
 
         match existing {
             Some((uid, hash, deleted_at)) => {
@@ -255,8 +255,8 @@ impl CatalogRepo {
                 .db
                 .q("UPDATE entities SET deleted_at = ?, updated_at = ? WHERE uid = ?"),
         )
-        .bind(asgard_storage::now())
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(uid)
         .execute(self.db.pool())
         .await?;
@@ -270,7 +270,7 @@ impl CatalogRepo {
                 .q("UPDATE entities SET lifecycle = ?, updated_at = ? WHERE uid = ?"),
         )
         .bind(lifecycle.as_str())
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(uid)
         .execute(self.db.pool())
         .await?;

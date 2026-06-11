@@ -2,7 +2,7 @@
 //! (MCP) and read by both. Advisory and runtime-editable — distinct from the
 //! embedded `standards` (normative) and the agent-seed (repo bootstrap).
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -164,7 +164,7 @@ pub async fn put(
         )));
     }
     let tags_s = tags.join(",");
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     let status = if published { "published" } else { "pending" };
     sqlx::query(&db.q(
         "INSERT INTO guidance (slug, title, summary, body, tags, author, status, category, updated_at) \
@@ -202,8 +202,10 @@ mod tests {
     use super::*;
 
     async fn db() -> Db {
-        let path =
-            std::env::temp_dir().join(format!("asgard-guid-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-guid-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

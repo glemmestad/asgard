@@ -24,7 +24,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'src', 'content', 'docs');
 const LOCAL = join(HERE, '..', '..', 'docs', 'docs');
 
-const REPO = process.env.DOCS_REPO ?? 'glemmestad/asgard';
+const REPO = process.env.DOCS_REPO ?? 'glemmestad/frontkeep';
 const REF = process.env.DOCS_REF ?? 'main';
 
 function adapt(md) {
@@ -53,7 +53,7 @@ function writeAll(files) {
 }
 
 async function fromRemote() {
-  const headers = { 'User-Agent': 'asgard-build-site' };
+  const headers = { 'User-Agent': 'frontkeep-build-site' };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   const res = await fetch(`https://api.github.com/repos/${REPO}/contents/docs/docs?ref=${REF}`, { headers });
   if (!res.ok) throw new Error(`GitHub contents ${res.status}`);

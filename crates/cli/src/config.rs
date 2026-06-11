@@ -1,6 +1,6 @@
-//! CLI profile config (`~/.config/asgard/config.toml`) and the connection
+//! CLI profile config (`~/.config/frontkeep/config.toml`) and the connection
 //! resolver. Precedence is flag/env > selected profile > built-in default. The
-//! `asgard` binary's clap globals already fold flags over their env vars, so the
+//! `frontkeep` binary's clap globals already fold flags over their env vars, so the
 //! values passed to `resolve` are "flag-or-env"; this layer adds the profile and
 //! the default.
 
@@ -41,7 +41,7 @@ const DEFAULT_URL: &str = "http://localhost:8080";
 
 /// The directory holding `config.toml` and the `keys/` cache. `$FRONTKEEP_CONFIG`
 /// points at the config *file*; its parent is the directory. When neither env
-/// var is set, prefer `<base>/frontkeep` but fall back to `<base>/asgard` if
+/// var is set, prefer `<base>/frontkeep` but fall back to `<base>/frontkeep` if
 /// only the legacy directory exists — that way an upgrade from the previous
 /// binary keeps the user's profiles and PATs.
 pub fn config_dir() -> PathBuf {
@@ -58,7 +58,7 @@ pub fn config_dir() -> PathBuf {
     if new_dir.exists() {
         return new_dir;
     }
-    let legacy = base.join("asgard");
+    let legacy = base.join("frontkeep");
     if legacy.exists() {
         return legacy;
     }
@@ -174,7 +174,7 @@ mod tests {
             "prod".to_string(),
             Profile {
                 url: Some("https://prod.example".into()),
-                pat: Some("asg_pat_prod".into()),
+                pat: Some("fk_pat_prod".into()),
                 output: Some("json".into()),
             },
         );
@@ -192,7 +192,7 @@ mod tests {
             .resolve(Some("https://flag.example".into()), None, None, None)
             .unwrap();
         assert_eq!(r.url, "https://flag.example");
-        assert_eq!(r.pat.as_deref(), Some("asg_pat_prod")); // from default profile
+        assert_eq!(r.pat.as_deref(), Some("fk_pat_prod")); // from default profile
         assert_eq!(r.output, Output::Json); // from default profile
     }
 

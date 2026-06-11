@@ -1,6 +1,6 @@
 //! The Frontkeep gateway: every model call routes through here. Per-project virtual
 //! keys, budgets, kill switch, data-class×model policy, regex guardrails, full
-//! audit with a propagated `x-asgard-trace-id`, and cost attribution (brief §4.2).
+//! audit with a propagated `x-frontkeep-trace-id`, and cost attribution (brief §4.2).
 //! Non-optional, non-pluggable spine.
 
 pub mod error;
@@ -14,8 +14,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use asgard_policy::{PolicyEngine, Request as PolicyRequest};
-use asgard_storage::audit::{self, AuditRecord};
+use frontkeep_policy::{PolicyEngine, Request as PolicyRequest};
+use frontkeep_storage::audit::{self, AuditRecord};
 use serde::Serialize;
 
 pub use error::GatewayError;
@@ -28,7 +28,7 @@ pub use provider::{
 pub use registry::{ModelInfo, ModelRegistry};
 pub use tools::{run_tool_loop, ToolDef, ToolExecutor, ToolLoopOutcome};
 
-pub const TRACE_HEADER: &str = "x-asgard-trace-id";
+pub const TRACE_HEADER: &str = "x-frontkeep-trace-id";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GatewayResponse {
@@ -89,7 +89,7 @@ impl Gateway {
         trace_id: Option<String>,
         data_class: Option<String>,
     ) -> Result<GatewayResponse, GatewayError> {
-        let trace = trace_id.unwrap_or_else(|| format!("tr_{}", asgard_storage::new_uid()));
+        let trace = trace_id.unwrap_or_else(|| format!("tr_{}", frontkeep_storage::new_uid()));
 
         // One round-trip resolves the key and the project runtime together.
         let rt = match self.repo.resolve_key(virtual_key).await? {
@@ -285,11 +285,12 @@ impl Gateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_policy::CedarEngine;
-    use asgard_storage::Db;
+    use frontkeep_policy::CedarEngine;
+    use frontkeep_storage::Db;
 
     async fn setup() -> (Gateway, String, String) {
-        let path = std::env::temp_dir().join(format!("asgard-gw-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-gw-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -350,7 +351,8 @@ mod tests {
 
     #[tokio::test]
     async fn forwards_project_as_downstream_attribution() {
-        let path = std::env::temp_dir().join(format!("asgard-gw-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-gw-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -409,7 +411,7 @@ mod tests {
     #[tokio::test]
     async fn unauthorized_key_rejected() {
         let (gw, _pid, _key) = setup().await;
-        let e = gw.complete("asg_bogus", req("hi"), None, None).await;
+        let e = gw.complete("fk_bogus", req("hi"), None, None).await;
         assert!(matches!(e, Err(GatewayError::Unauthorized)));
     }
 

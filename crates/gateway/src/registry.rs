@@ -50,8 +50,8 @@ impl ModelRegistry {
     }
 
     /// Build from `Model` entities in the catalog.
-    pub async fn from_catalog(repo: &asgard_catalog::CatalogRepo) -> Result<Self, GatewayError> {
-        let filter = asgard_catalog::ListFilter {
+    pub async fn from_catalog(repo: &frontkeep_catalog::CatalogRepo) -> Result<Self, GatewayError> {
+        let filter = frontkeep_catalog::ListFilter {
             kind: Some("Model".to_string()),
             ..Default::default()
         };

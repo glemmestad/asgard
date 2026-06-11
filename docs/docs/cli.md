@@ -5,9 +5,9 @@ title: Use the CLI
 
 # The Frontkeep CLI
 
-The `asgard` binary is both the server and a full command-line client. The CLI is
+The `frontkeep` binary is both the server and a full command-line client. The CLI is
 a **PAT-authenticated MCP client**: it talks to a deployment's `/mcp` endpoint
-with the same `asg_pat_…` token an agent uses, so it has **parity with the agent
+with the same `fk_pat_…` token an agent uses, so it has **parity with the agent
 surface by construction** — every MCP tool is reachable — plus things an agent
 surface can't do (run inference, write seed files to disk, shell completions).
 
@@ -17,20 +17,20 @@ and CI — composable, low-token, and instantly familiar.
 
 ## Authenticate
 
-Every control-plane command needs a **user PAT** (`asg_pat_…`). Mint one in the
+Every control-plane command needs a **user PAT** (`fk_pat_…`). Mint one in the
 dashboard under **Get Started**, then either pass it per-command or save a
 profile:
 
 ```bash
 # Save a reusable profile (prompts for the PAT if --pat is omitted):
-frontkeep --url https://asgard.example login
+frontkeep --url https://frontkeep.example login
 
 # …or pass it ad hoc / via the environment:
-frontkeep --url https://asgard.example --pat asg_pat_… project ls
-export FRONTKEEP_URL=https://asgard.example FRONTKEEP_PAT=asg_pat_…
+frontkeep --url https://frontkeep.example --pat fk_pat_… project ls
+export FRONTKEEP_URL=https://frontkeep.example FRONTKEEP_PAT=fk_pat_…
 ```
 
-Profiles live in `~/.config/asgard/config.toml`. Settings resolve in order:
+Profiles live in `~/.config/frontkeep/config.toml`. Settings resolve in order:
 **flag → environment → selected profile → built-in default**. Pick a profile with
 `--profile <name>` (or `FRONTKEEP_PROFILE`); `frontkeep login` writes the one named by
 `--profile` (default `default`).

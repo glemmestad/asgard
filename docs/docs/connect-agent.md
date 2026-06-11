@@ -14,11 +14,11 @@ fetches the credentials Frontkeep mints, all by invoking MCP tools.
 You need two things: the **base URL** of the Frontkeep instance and a credential.
 There are two kinds, and the difference matters:
 
-- **User token** (`asg_pat_…`) — a long-lived credential tied to *you*. One token
+- **User token** (`fk_pat_…`) — a long-lived credential tied to *you*. One token
   lets your agent register new projects and act on **every project you own or
   manage**. This is what you connect your agent with. Create it in the dashboard
   (Getting started → "Create a PAT", or the account/token affordance).
-- **Project key** (`asg_…`) — scoped to a *single* registered project. Use it for
+- **Project key** (`fk_…`) — scoped to a *single* registered project. Use it for
   a deployed app or CI that lives in one project. Minted per project.
 
 > **Control plane vs. service usage.** The Frontkeep MCP is the control plane:
@@ -49,14 +49,14 @@ fail with `401`:
 
 ```sh
 claude mcp add --transport http frontkeep https://<host>/mcp \
-  --header "Authorization: Bearer asg_pat_your_user_token"
+  --header "Authorization: Bearer fk_pat_your_user_token"
 ```
 
 To keep the token out of `~/.claude.json`, export it (`export
-FRONTKEEP_PAT=asg_pat_…`) and use `$FRONTKEEP_PAT` in the header instead — but only if
+FRONTKEEP_PAT=fk_pat_…`) and use `$FRONTKEEP_PAT` in the header instead — but only if
 it's set in the shell you run the command in, since it's expanded immediately.
 
-Then `claude mcp list` should show `asgard` connected, and the Frontkeep tools
+Then `claude mcp list` should show `frontkeep` connected, and the Frontkeep tools
 (`list_services`, `register_project`, `request_resource`, `seed_plan`, …) are
 available in the session.
 
@@ -66,7 +66,7 @@ Add to `~/.codex/config.toml` — `bearer_token_env_var` sources the PAT from yo
 environment at call time, so the token never lands in the file:
 
 ```toml
-[mcp_servers.asgard]
+[mcp_servers.frontkeep]
 url = "https://<host>/mcp"
 bearer_token_env_var = "FRONTKEEP_PAT"
 ```
@@ -79,7 +79,7 @@ project `.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
-    "asgard": {
+    "frontkeep": {
       "url": "https://<host>/mcp",
       "headers": { "Authorization": "Bearer ${FRONTKEEP_PAT}" }
     }
@@ -106,7 +106,7 @@ For a local instance, run the server over stdio instead of HTTP — no token nee
 FRONTKEEP_PROJECT=proj-2026-0001 frontkeep mcp
 ```
 
-Wire it as a stdio MCP server in your client (command `asgard`, args `mcp`).
+Wire it as a stdio MCP server in your client (command `frontkeep`, args `mcp`).
 
 ## Get a credential
 
@@ -181,7 +181,7 @@ plane. To call a model:
 
 ```sh
 curl -sS https://<host>/api/gateway/chat \
-  -H "Authorization: Bearer asg_your_project_llm_key" \
+  -H "Authorization: Bearer fk_your_project_llm_key" \
   -H 'content-type: application/json' \
   -d '{"model":"model:default/gpt-5","messages":[{"role":"user","content":"hi"}],"data_class":"internal"}'
 ```
@@ -193,7 +193,7 @@ a provider SDK directly.
 ## Troubleshooting
 
 - **`401` on every call** — the bearer token must be a valid **user token**
-  (`asg_pat_…`) or **project key** (`asg_…`), not a human session token. Re-mint
+  (`fk_pat_…`) or **project key** (`fk_…`), not a human session token. Re-mint
   one in the dashboard.
 - **`404` on `/mcp`** — wrong path; it's exactly `/mcp` on the Frontkeep host.
 - **"project_id is required for a user token"** — a user token isn't scoped to one

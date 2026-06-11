@@ -14,16 +14,16 @@ REQUESTS="${REQUESTS:-2000}"
 CONCURRENCY="${CONCURRENCY:-32}"
 ENTITIES="${ENTITIES:-2000}"
 WORK="$(mktemp -d)"
-DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5433/asgard}"
+DB_URL="${DATABASE_URL:-postgres://postgres:postgres@localhost:5433/frontkeep}"
 BIN="${BIN:-$ROOT/target/release/frontkeep}"
 
 cleanup() { [[ -n "${SP:-}" ]] && kill "$SP" 2>/dev/null; rm -rf "$WORK"; }
 trap cleanup EXIT
 
-[[ -x "$BIN" ]] || { echo "build release first: cargo build --release -p asgard"; exit 1; }
+[[ -x "$BIN" ]] || { echo "build release first: cargo build --release -p frontkeep"; exit 1; }
 command -v ab >/dev/null || { echo "ApacheBench (ab) required"; exit 1; }
 
-echo "== Asgard stress =="
+echo "== Frontkeep stress =="
 echo "db=$DB_URL  entities=$ENTITIES  requests=$REQUESTS  concurrency=$CONCURRENCY"
 
 mkdir -p "$WORK/repo"
@@ -31,14 +31,14 @@ python3 - "$WORK/repo/agent.yaml" "$ENTITIES" <<'PY'
 import sys
 path, n = sys.argv[1], int(sys.argv[2])
 docs = [
-    "apiVersion: asgard.dev/v1\nkind: Agent\n"
+    "apiVersion: frontkeep.dev/v1\nkind: Agent\n"
     f"metadata: {{ name: agent-{i}, namespace: default, title: Agent {i} }}\n"
     "spec: { owner: group:default/platform, model: model:default/mock, dataClass: internal }\n"
     for i in range(n)
 ]
 open(path, "w").write("\n---\n".join(docs))
 PY
-cat > "$WORK/asgard.yaml" <<YAML
+cat > "$WORK/frontkeep.yaml" <<YAML
 reconcile_secs: 86400
 sources:
   - { provider: fixture, path: "$WORK/repo" }
@@ -46,7 +46,7 @@ YAML
 
 # Startup reconcile blocks readiness, so time-to-healthz = boot + reconcile.
 t0=$(python3 -c 'import time;print(time.time())')
-ASGARD_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/asgard.yaml" \
+FRONTKEEP_DATABASE_URL="$DB_URL" "$BIN" serve --bind "127.0.0.1:${PORT}" --config "$WORK/frontkeep.yaml" \
   >"$WORK/server.log" 2>&1 &
 SP=$!
 for i in $(seq 1 600); do curl -fsS "$BASE/healthz" >/dev/null 2>&1 && break; sleep 0.5; done

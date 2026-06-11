@@ -28,20 +28,20 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 bash scripts/e2e.sh                        # SQLite
-DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5433/asgard" bash scripts/e2e.sh   # Postgres
+DATABASE_URL="postgres://postgres:postgres@127.0.0.1:5433/frontkeep" bash scripts/e2e.sh   # Postgres
 bash scripts/cleanroom-check.sh            # MUST pass before every commit
 ```
 
 Local Postgres for e2e:
 ```bash
-docker run -d --name asgard-ci-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=frontkeep -p 5433:5432 postgres:16
+docker run -d --name frontkeep-ci-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=frontkeep -p 5433:5432 postgres:16
 # reset between runs:
-docker exec asgard-ci-pg psql -U postgres -c "DROP DATABASE IF EXISTS frontkeep WITH (FORCE);" -c "CREATE DATABASE asgard;"
+docker exec frontkeep-ci-pg psql -U postgres -c "DROP DATABASE IF EXISTS frontkeep WITH (FORCE);" -c "CREATE DATABASE frontkeep;"
 ```
 
 Run it locally and browse the UI (no login on loopback):
 ```bash
-FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="sqlite:///tmp/asgard.db" \
+FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="sqlite:///tmp/frontkeep.db" \
   ./target/debug/frontkeep serve --bind 127.0.0.1:8080    # http://localhost:8080
 ```
 
@@ -83,12 +83,12 @@ FRONTKEEP_DEV_INSECURE=1 FRONTKEEP_DATABASE_URL="sqlite:///tmp/asgard.db" \
   `FRONTKEEP_DEV_INSECURE=1` (loopback only) bypasses it and makes `/api/auth/me`
   return a synthetic admin so the UI needs no login.
 - **mcp** — stdio + remote (`/mcp`, rmcp) JSON-RPC tools, the **control plane**.
-  Bearer-gated by either a **user PAT** (`asg_pat_…` → acts across every project
-  the user owns/manages; can register) or a **project key** (`asg_…` → one
+  Bearer-gated by either a **user PAT** (`fk_pat_…` → acts across every project
+  the user owns/manages; can register) or a **project key** (`fk_…` → one
   project). `McpAuth` enum carries the principal; `resolve_project` authorizes per
   variant. Inference is *not* here (service usage): mint the project LLM key and
   call `/api/gateway/chat` out-of-band.
-- **asgard** — the binary; `build_core` / `serve`; embeds `web/dist` (rust-embed)
+- **frontkeep** — the binary; `build_core` / `serve`; embeds `web/dist` (rust-embed)
   and `modules/` for container deploys.
 
 ## Authoring patterns

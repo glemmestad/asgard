@@ -22,7 +22,7 @@
 Every entity, regardless of kind, shares one envelope. This is deliberately close to Backstage so `catalog-info.yaml` round-trips, but the `spec` is ours.
 
 ```yaml
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Agent                         # one of the kinds in §3
 metadata:
   name: code-reviewer               # unique within (kind, namespace)

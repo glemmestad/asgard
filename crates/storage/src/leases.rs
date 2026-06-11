@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     async fn fresh() -> Db {
-        let path = std::env::temp_dir().join(format!("asgard-lease-{}.db", crate::new_uid()));
+        let path = std::env::temp_dir().join(format!("frontkeep-lease-{}.db", crate::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

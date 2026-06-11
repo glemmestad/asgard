@@ -1,4 +1,4 @@
-apiVersion: asgard.dev/v1
+apiVersion: frontkeep.dev/v1
 kind: Prompt
 metadata:
   name: support-ticket-summarizer
@@ -11,7 +11,7 @@ metadata:
     domain: support
     surface: internal-tooling
   annotations:
-    asgard.dev/data-class: internal
+    frontkeep.dev/data-class: internal
   tags:
     - summarization
     - support

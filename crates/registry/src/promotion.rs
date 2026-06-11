@@ -10,7 +10,7 @@
 //!
 //! Structure is in code (the four tiers, the evaluator mechanism); the
 //! *requirement table* and thresholds are the org-specific mutable layer
-//! ([`ClassificationRequirements`], operator-overridable in `asgard.yaml`,
+//! ([`ClassificationRequirements`], operator-overridable in `frontkeep.yaml`,
 //! mirroring `GroupAllowlist`'s empty=default posture).
 
 use std::collections::BTreeMap;
@@ -51,7 +51,7 @@ pub fn validate_step(current: &str, target: &str) -> Result<(), RegistryError> {
 /// The per-tier required-field table. `light`/`wide`/`critical` hold the fields
 /// that become mandatory *at* that tier (cumulative: a wide target requires the
 /// light list plus the wide list). Seeded from the policy doc's Classification
-/// Evidence Record; an operator overrides any tier's list in `asgard.yaml`.
+/// Evidence Record; an operator overrides any tier's list in `frontkeep.yaml`.
 #[derive(Debug, Clone)]
 pub struct ClassificationRequirements {
     light: Vec<String>,

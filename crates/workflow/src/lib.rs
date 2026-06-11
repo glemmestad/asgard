@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use asgard_policy::{PolicyEngine, Request as PolicyRequest};
-use asgard_storage::audit::{self, AuditRecord};
-use asgard_storage::Db;
+use frontkeep_policy::{PolicyEngine, Request as PolicyRequest};
+use frontkeep_storage::audit::{self, AuditRecord};
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -16,7 +16,7 @@ pub enum WorkflowError {
     #[error("db: {0}")]
     Sqlx(#[from] sqlx::Error),
     #[error("storage: {0}")]
-    Storage(#[from] asgard_storage::StorageError),
+    Storage(#[from] frontkeep_storage::StorageError),
     #[error("request not found: {0}")]
     NotFound(String),
     #[error("invalid transition from {from} to {to}")]
@@ -184,14 +184,14 @@ impl WorkflowEngine {
             )
         };
 
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let sla_due_at = new.sla_seconds.map(|secs| {
             (chrono::Utc::now() + chrono::Duration::seconds(secs))
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
         });
 
         let req = WorkflowRequest {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             kind: new.kind,
             requester: new.requester,
             subject: new.subject,
@@ -375,7 +375,7 @@ impl WorkflowEngine {
         id: &str,
         payload: serde_json::Value,
     ) -> Result<(), WorkflowError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         sqlx::query(
             &self
                 .db
@@ -407,7 +407,7 @@ impl WorkflowEngine {
                 to: to.as_str().to_string(),
             });
         }
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         req.state = to;
         if let Some(a) = approver {
             req.approver = Some(a.to_string());
@@ -463,10 +463,11 @@ fn row_to_request(row: sqlx::any::AnyRow) -> Result<WorkflowRequest, WorkflowErr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_policy::CedarEngine;
+    use frontkeep_policy::CedarEngine;
 
     async fn engine() -> WorkflowEngine {
-        let path = std::env::temp_dir().join(format!("asgard-wf-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-wf-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use asgard_gateway::{ChatMessage, ChatRequest, Gateway};
+use frontkeep_gateway::{ChatMessage, ChatRequest, Gateway};
 
 use crate::manifest::ReviewerManifest;
 use crate::{
@@ -88,7 +88,7 @@ impl Reviewer for LlmJudge {
 fn deterministic(
     id: &str,
     model: &str,
-    machine: &asgard_registry::EvidenceVerdict,
+    machine: &frontkeep_registry::EvidenceVerdict,
 ) -> ReviewVerdict {
     if machine.auto_approvable() {
         ReviewVerdict::pass(id, "llm-judge", 1.0, model.to_string(), 0.0)
@@ -159,7 +159,7 @@ machine_exception_signals: {signals:?}",
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_registry::EvidenceVerdict;
+    use frontkeep_registry::EvidenceVerdict;
 
     fn verdict(complete: bool, signals: Vec<&str>) -> EvidenceVerdict {
         EvidenceVerdict {

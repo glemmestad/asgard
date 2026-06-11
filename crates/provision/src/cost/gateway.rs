@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 
-use asgard_gateway::GatewayRepo;
+use frontkeep_gateway::GatewayRepo;
 
 use super::CostSource;
 use crate::{CostWindow, ProvisionError, ServiceCost};
@@ -45,13 +45,13 @@ impl CostSource for GatewaySource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_gateway::UsageEvent;
-    use asgard_storage::Db;
+    use frontkeep_gateway::UsageEvent;
+    use frontkeep_storage::Db;
 
     #[tokio::test]
     async fn reports_attributed_model_spend() {
         let path =
-            std::env::temp_dir().join(format!("asgard-gwc-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-gwc-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

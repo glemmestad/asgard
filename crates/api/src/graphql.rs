@@ -3,11 +3,11 @@
 
 use async_graphql::{Context, EmptyMutation, EmptySubscription, Object, Schema, SimpleObject};
 
-use asgard_catalog::{CatalogRepo, ListFilter};
-use asgard_storage::audit::{self, AuditQuery};
-use asgard_storage::Db;
+use frontkeep_catalog::{CatalogRepo, ListFilter};
+use frontkeep_storage::audit::{self, AuditQuery};
+use frontkeep_storage::Db;
 
-pub type AsgardSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
+pub type FrontkeepSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
 
 #[derive(SimpleObject)]
 pub struct GqlEntity {
@@ -118,7 +118,7 @@ impl QueryRoot {
     }
 }
 
-pub fn build_schema(catalog: CatalogRepo, db: Db) -> AsgardSchema {
+pub fn build_schema(catalog: CatalogRepo, db: Db) -> FrontkeepSchema {
     Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
         .data(catalog)
         .data(db)

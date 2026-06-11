@@ -10,7 +10,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use serde::Serialize;
 use sqlx::Row;
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 
 use crate::ProvisionError;
 
@@ -57,13 +57,13 @@ impl RunLogStore {
             .cipher()
             .encrypt(&nonce, output.as_bytes())
             .map_err(|e| ProvisionError::Backend(format!("encrypt run log: {e}")))?;
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         sqlx::query(&self.db.q(
             "INSERT INTO provision_runs \
              (id, resource_id, project_id, action, ok, ciphertext, nonce, started_at, finished_at, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
-        .bind(asgard_storage::new_uid())
+        .bind(frontkeep_storage::new_uid())
         .bind(resource_id)
         .bind(project_id)
         .bind(action)
@@ -137,8 +137,10 @@ mod tests {
     use super::*;
 
     async fn store() -> RunLogStore {
-        let path =
-            std::env::temp_dir().join(format!("asgard-runlog-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-runlog-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

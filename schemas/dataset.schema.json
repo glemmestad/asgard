@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://asgard.dev/schemas/dataset.schema.json",
-  "title": "Asgard Dataset",
-  "description": "Canonical schema for an Asgard Dataset entity manifest. Describes a dataset used for training, evaluation, or retrieval-augmented generation, including its owner, classification, and source location.",
+  "$id": "https://frontkeep.dev/schemas/dataset.schema.json",
+  "title": "Frontkeep Dataset",
+  "description": "Canonical schema for an Frontkeep Dataset entity manifest. Describes a dataset used for training, evaluation, or retrieval-augmented generation, including its owner, classification, and source location.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,8 +13,8 @@
   ],
   "properties": {
     "apiVersion": {
-      "const": "asgard.dev/v1",
-      "description": "Schema version of the Asgard manifest."
+      "const": "frontkeep.dev/v1",
+      "description": "Schema version of the Frontkeep manifest."
     },
     "kind": {
       "const": "Dataset",

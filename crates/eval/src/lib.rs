@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
@@ -207,9 +207,9 @@ impl EvalRunner {
             "INSERT INTO eval_runs (id, eval_ref, ts, pass_rate, avg_score, verdict, detail) \
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         ))
-        .bind(asgard_storage::new_uid())
+        .bind(frontkeep_storage::new_uid())
         .bind(&run.eval_ref)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(run.pass_rate)
         .bind(run.avg_score)
         .bind(run.verdict.as_str())
@@ -260,7 +260,8 @@ mod tests {
     }
 
     async fn runner() -> EvalRunner {
-        let path = std::env::temp_dir().join(format!("asgard-ev-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-ev-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

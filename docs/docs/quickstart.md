@@ -15,21 +15,21 @@ This is the whole loop, once: connect, pull your company's standards, register a
 project, and provision what it needs — all governed and cost-attributed.
 
 **Two front doors, one token.** Every capability is reachable two ways, and the
-same `asg_pat_…` token authenticates both:
+same `fk_pat_…` token authenticates both:
 
 - **Your agent (MCP)** — Frontkeep's capabilities are MCP tools, so you don't type
   commands, you *ask your agent* in plain English and it calls them. This is the
   primary path: the same agent building your project drives Frontkeep.
-- **The CLI** — the `asgard` binary talks to the same control plane, for humans,
+- **The CLI** — the `frontkeep` binary talks to the same control plane, for humans,
   scripts, and CI. Composable, scriptable, no agent required.
 
 Set up whichever you want in step 2 (or both). Each step after that shows **both**:
-what to *say* to your agent, and the equivalent `asgard` command.
+what to *say* to your agent, and the equivalent `frontkeep` command.
 
 ## 1. Create a token
 
 In the dashboard: **Getting started → Create a PAT**. You get a user token
-(`asg_pat_…`), shown once. It's your long-lived credential for **both** front
+(`fk_pat_…`), shown once. It's your long-lived credential for **both** front
 doors — it can register projects and act on every project you own or manage. Copy
 it; you wire it into your agent or the CLI next.
 
@@ -44,20 +44,20 @@ Add Frontkeep's MCP server, pasting your token in as the value. For Claude Code:
 
 ```sh
 claude mcp add --transport http frontkeep https://<host>/mcp \
-  --header "Authorization: Bearer asg_pat_paste_your_token_here"
+  --header "Authorization: Bearer fk_pat_paste_your_token_here"
 ```
 
 It's saved in your client's config — one-time setup, the token persists, no
-environment variable to re-export. `claude mcp list` should then show **asgard**
+environment variable to re-export. `claude mcp list` should then show **frontkeep**
 connected. (Codex, Cursor, the MCP Inspector: [Connect an agent](./connect-agent.md).)
 
 ### The CLI
 
-The `asgard` binary is the server *and* a full client. Install it — **macOS and
+The `frontkeep` binary is the server *and* a full client. Install it — **macOS and
 Linux**, in Bash:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/glemmestad/frontkeep/main/scripts/install.sh | sh
 ```
 
 That fetches the static binary for your OS/arch and drops it in `~/.local/bin`
@@ -73,7 +73,7 @@ frontkeep project ls                   # verify — lists the projects you own o
 
 ```bash
 export FRONTKEEP_URL="https://<host>"
-export FRONTKEEP_PAT="asg_pat_paste_your_token_here"
+export FRONTKEEP_PAT="fk_pat_paste_your_token_here"
 frontkeep project ls
 ```
 
@@ -86,7 +86,7 @@ Full reference: [Install the CLI](./install.md) and [Use the CLI](./cli.md).
 > **"Pull the Frontkeep seed into this repo."**
 
 In Claude Code there's a shortcut for this exact step — the slash command
-**`/mcp__asgard__bootstrap`** (other clients namespace it differently). Either way
+**`/mcp__frontkeep__bootstrap`** (other clients namespace it differently). Either way
 the agent calls the `bootstrap` tool, which returns `AGENTS.md` (the map the next
 agent reads first) and the `.agent/` coding and security standards in one shot, and
 writes them in. From here your agent builds to your company's conventions, and the
@@ -150,7 +150,7 @@ is the one thing that isn't an MCP call — it's the app *using* the service:
 
 ```sh
 curl -sS https://<host>/api/gateway/chat \
-  -H "Authorization: Bearer asg_your_project_llm_key" \
+  -H "Authorization: Bearer fk_your_project_llm_key" \
   -H 'content-type: application/json' \
   -d '{"model":"model:default/gpt-5.1","messages":[{"role":"user","content":"hi"}],"data_class":"internal"}'
 ```
@@ -206,14 +206,14 @@ up, Frontkeep is a single binary; the default path needs only a Git token and SQ
 
 ```sh
 # Docker (SQLite, embedded UI)
-docker run -p 8080:8080 -e FRONTKEEP_GIT_TOKEN=ghp_xxx ghcr.io/asgard/asgard:latest
+docker run -p 8080:8080 -e FRONTKEEP_GIT_TOKEN=ghp_xxx ghcr.io/glemmestad/frontkeep:latest
 
 # native binary — same install one-liner as the CLI above (macOS/Linux), then run it
-curl -fsSL https://raw.githubusercontent.com/glemmestad/asgard/main/scripts/install.sh | sh
-frontkeep serve --database-url sqlite://asgard.db
+curl -fsSL https://raw.githubusercontent.com/glemmestad/frontkeep/main/scripts/install.sh | sh
+frontkeep serve --database-url sqlite://frontkeep.db
 
 # or from source
-cargo run -p asgard -- serve --database-url sqlite://asgard.db
+cargo run -p frontkeep -- serve --database-url sqlite://frontkeep.db
 ```
 
 Open `http://localhost:8080` for the UI, then come back to step 1. For a real

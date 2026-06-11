@@ -11,7 +11,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IdentityError {
@@ -205,9 +205,19 @@ pub struct Pat {
     pub revoked_at: Option<String>,
 }
 
-/// PAT plaintext prefix — distinct from a project virtual key (`asg_…`) so the
-/// MCP/REST bearer branch can tell a user credential from a project one.
-pub const PAT_PREFIX: &str = "asg_pat_";
+/// PAT plaintext prefix for newly minted tokens — distinct from a project
+/// virtual key (`fk_…`) so the MCP/REST bearer branch can tell a user credential
+/// from a project one.
+pub const PAT_PREFIX: &str = "fk_pat_";
+
+/// Pre-rename PAT prefix. Still accepted on the validation path so tokens minted
+/// before the rename keep working; never minted anew.
+pub const LEGACY_PAT_PREFIX: &str = "asg_pat_";
+
+/// True if `token` looks like a user PAT (current or legacy prefix).
+pub fn is_pat(token: &str) -> bool {
+    token.starts_with(PAT_PREFIX) || token.starts_with(LEGACY_PAT_PREFIX)
+}
 
 fn sha256_hex(s: &str) -> String {
     let mut h = Sha256::new();
@@ -258,8 +268,8 @@ impl IdentityService {
         if self.get_user_by_username(username).await?.is_some() {
             return Err(IdentityError::UserExists(username.to_string()));
         }
-        let id = asgard_storage::new_uid();
-        let created_at = asgard_storage::now();
+        let id = frontkeep_storage::new_uid();
+        let created_at = frontkeep_storage::now();
         let hash = hash_password(password)?;
         let is_admin = role.is_admin();
         sqlx::query(&self.db.q(
@@ -289,7 +299,7 @@ impl IdentityService {
         })
     }
 
-    /// First-boot admin, shared by `serve` and `asgard admin bootstrap`. Ensures
+    /// First-boot admin, shared by `serve` and `frontkeep admin bootstrap`. Ensures
     /// `username` exists as a local Admin: returns the existing user untouched,
     /// or creates one — with `password_override` when given, otherwise a
     /// generated password returned once in `generated_password`.
@@ -308,7 +318,11 @@ impl IdentityService {
         let (pw, generated) = match password_override {
             Some(p) if !p.is_empty() => (p, false),
             _ => (
-                format!("{}{}", asgard_storage::new_uid(), asgard_storage::new_uid()),
+                format!(
+                    "{}{}",
+                    frontkeep_storage::new_uid(),
+                    frontkeep_storage::new_uid()
+                ),
                 true,
             ),
         };
@@ -446,8 +460,8 @@ impl IdentityService {
         }
         let role = target_role.unwrap_or(Role::Member);
         let is_admin = role.is_admin();
-        let id = asgard_storage::new_uid();
-        let created_at = asgard_storage::now();
+        let id = frontkeep_storage::new_uid();
+        let created_at = frontkeep_storage::now();
         sqlx::query(&self.db.q(
             "INSERT INTO users (id, username, email, display_name, password_hash, provider, is_admin, role, active, created_at) \
              VALUES (?, ?, ?, ?, NULL, 'oidc', ?, ?, 1, ?)",
@@ -487,7 +501,7 @@ impl IdentityService {
         ))
         .bind(sha256_hex(&token))
         .bind(user_id)
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(&expires_at)
         .execute(self.db.pool())
         .await?;
@@ -511,7 +525,7 @@ impl IdentityService {
         .ok_or(IdentityError::InvalidSession)?;
         let user_id: String = row.get("user_id");
         let expires_at: String = row.get("expires_at");
-        if expires_at.as_str() < asgard_storage::now().as_str() {
+        if expires_at.as_str() < frontkeep_storage::now().as_str() {
             return Err(IdentityError::InvalidSession);
         }
         let user = self
@@ -542,8 +556,8 @@ impl IdentityService {
     ) -> Result<Pat, IdentityError> {
         let token = format!("{PAT_PREFIX}{}{}", uuid_simple(), uuid_simple());
         let suffix = token[token.len().saturating_sub(8)..].to_string();
-        let id = asgard_storage::new_uid();
-        let created_at = asgard_storage::now();
+        let id = frontkeep_storage::new_uid();
+        let created_at = frontkeep_storage::now();
         let expires_at = ttl_seconds.map(|s| {
             (chrono::Utc::now() + chrono::Duration::seconds(s))
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -587,7 +601,7 @@ impl IdentityService {
         }
         let expires_at: Option<String> = row.get("expires_at");
         if let Some(exp) = expires_at {
-            if exp.as_str() < asgard_storage::now().as_str() {
+            if exp.as_str() < frontkeep_storage::now().as_str() {
                 return Err(IdentityError::InvalidSession);
             }
         }
@@ -633,7 +647,7 @@ impl IdentityService {
                 .db
                 .q("UPDATE personal_access_tokens SET revoked_at = ? WHERE id = ? AND user_id = ?"),
         )
-        .bind(asgard_storage::now())
+        .bind(frontkeep_storage::now())
         .bind(id)
         .bind(user_id)
         .execute(self.db.pool())
@@ -691,7 +705,8 @@ mod tests {
     use super::*;
 
     async fn svc() -> IdentityService {
-        let path = std::env::temp_dir().join(format!("asgard-id-{}.db", asgard_storage::new_uid()));
+        let path =
+            std::env::temp_dir().join(format!("frontkeep-id-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();

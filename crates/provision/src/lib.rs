@@ -33,10 +33,10 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use serde::Serialize;
 
-use asgard_registry::{ProjectRegistry, Registration, RegistryError};
-use asgard_storage::audit::{self, AuditRecord};
-use asgard_storage::Db;
-use asgard_workflow::{
+use frontkeep_registry::{ProjectRegistry, Registration, RegistryError};
+use frontkeep_storage::audit::{self, AuditRecord};
+use frontkeep_storage::Db;
+use frontkeep_workflow::{
     NewRequest, RequestFilter, State, WorkflowEngine, WorkflowError, WorkflowRequest,
 };
 
@@ -175,7 +175,7 @@ impl ResourceContext {
         t.insert("environment".into(), self.environment.clone());
         t.insert("cloud".into(), self.cloud.clone());
         t.insert("account".into(), self.account.clone());
-        t.insert("managed-by".into(), "asgard".into());
+        t.insert("managed-by".into(), "frontkeep".into());
         t
     }
 }
@@ -436,7 +436,7 @@ impl ProvisionService {
             forecast_window_days: 60,
             anomaly_z: 3.0,
             workflow: None,
-            instance_id: asgard_storage::new_uid(),
+            instance_id: frontkeep_storage::new_uid(),
             wait_budget: Duration::from_secs(5),
             run_log: None,
             max_retries: MAX_RETRIES,
@@ -901,7 +901,7 @@ impl ProvisionService {
     #[allow(clippy::too_many_arguments)]
     pub async fn cost_qa(
         &self,
-        gateway: &asgard_gateway::Gateway,
+        gateway: &frontkeep_gateway::Gateway,
         virtual_key: &str,
         model: &str,
         data_class: Option<String>,
@@ -1348,9 +1348,9 @@ impl ProvisionService {
         let mut tags = ctx.tags();
         tags.insert("managed-by".into(), "external".into());
         tags.extend(extra_tags);
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let rec = ProvisionedRecord {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             project_id: reg.project_id.clone(),
             rtype: "external".into(),
             name: name.to_string(),
@@ -1369,9 +1369,9 @@ impl ProvisionService {
             next_retry_at: None,
         };
         self.repo.record(&rec).await?;
-        let _ = asgard_storage::audit::append(
+        let _ = frontkeep_storage::audit::append(
             self.repo.db(),
-            &asgard_storage::audit::AuditRecord::new(&reg.owner, "resource.linked")
+            &frontkeep_storage::audit::AuditRecord::new(&reg.owner, "resource.linked")
                 .entity(format!("project:{}", reg.project_id))
                 .outcome("linked")
                 .data(serde_json::json!({
@@ -1730,9 +1730,9 @@ impl ProvisionService {
             .map(|m| m.resolve(&spec).estimated_monthly_usd)
             .unwrap_or(0.0);
         let ctx = ResourceContext::from_registration(reg, &cloud, &account);
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let rec = ProvisionedRecord {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             project_id: reg.project_id.clone(),
             rtype: resource_type,
             name,
@@ -1831,8 +1831,8 @@ impl ProvisionService {
                 let policy = self.retry_policy_for(&rec.rtype);
                 let attempts = rec.attempts + 1;
                 let next = ((attempts as u32) < policy.max_attempts).then(|| {
-                    asgard_storage::plus_seconds(
-                        &asgard_storage::now(),
+                    frontkeep_storage::plus_seconds(
+                        &frontkeep_storage::now(),
                         backoff_secs(attempts, &policy),
                     )
                 });
@@ -1980,7 +1980,7 @@ impl ProvisionService {
         }
         // Sweep 1b: auto-retry failed rows whose backoff has elapsed (capped rows
         // have next_retry_at = NULL and are excluded). dispatch → drive_core re-drives.
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         for rec in self.repo.list_retryable(&now, &stale, 50).await? {
             let _ = self.dispatch(&rec.id).await;
             n += 1;
@@ -2094,7 +2094,7 @@ impl ProvisionService {
     /// Rotate every secret past its `rotation_interval_days`. Returns the count
     /// rotated. Driven by the periodic reconcile loop.
     pub async fn rotate_due_secrets(&self) -> Result<usize, ProvisionError> {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let due = self.secrets.due_for_rotation(&now).await?;
         let mut n = 0;
         for sref in due {
@@ -2200,7 +2200,7 @@ fn is_work_state(state: &str) -> bool {
 
 /// The heartbeat cutoff before which a claimed row is considered abandoned.
 fn stale_cutoff() -> String {
-    asgard_storage::plus_seconds(&asgard_storage::now(), -STALE_SECS)
+    frontkeep_storage::plus_seconds(&frontkeep_storage::now(), -STALE_SECS)
 }
 
 /// A service's resolved auto-retry policy (manifest over deployment defaults).
@@ -2251,15 +2251,17 @@ fn ctx_from_record(rec: &ProvisionedRecord) -> ResourceContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use asgard_catalog::CatalogRepo;
-    use asgard_gateway::GatewayRepo;
-    use asgard_policy::{CedarEngine, PolicyEngine};
-    use asgard_registry::{GroupAllowlist, GroupEntry, RegisterInput, RegistrationPolicy};
-    use asgard_storage::Db;
+    use frontkeep_catalog::CatalogRepo;
+    use frontkeep_gateway::GatewayRepo;
+    use frontkeep_policy::{CedarEngine, PolicyEngine};
+    use frontkeep_registry::{GroupAllowlist, GroupEntry, RegisterInput, RegistrationPolicy};
+    use frontkeep_storage::Db;
 
     async fn harness() -> (WorkflowEngine, ProjectRegistry, ProvisionService, String) {
-        let path =
-            std::env::temp_dir().join(format!("asgard-prov-{}.db", asgard_storage::new_uid()));
+        let path = std::env::temp_dir().join(format!(
+            "frontkeep-prov-{}.db",
+            frontkeep_storage::new_uid()
+        ));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -2407,9 +2409,9 @@ mod tests {
         name: &str,
         outputs: serde_json::Value,
     ) -> String {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let rec = ProvisionedRecord {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             project_id: pid.to_string(),
             rtype: rtype.to_string(),
             name: name.to_string(),
@@ -3286,9 +3288,9 @@ mod tests {
     }
 
     fn provisioning_row(pid: &str, name: &str) -> ProvisionedRecord {
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         ProvisionedRecord {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             project_id: pid.to_string(),
             rtype: "s3-bucket".into(),
             name: name.into(),
@@ -3324,9 +3326,9 @@ mod tests {
         let (_wf, _reg, svc, pid) = harness().await;
         let rec = provisioning_row(&pid, "c");
         svc.repo().record(&rec).await.unwrap();
-        let now = asgard_storage::now();
-        let past = asgard_storage::plus_seconds(&now, -600);
-        let future = asgard_storage::plus_seconds(&now, 600);
+        let now = frontkeep_storage::now();
+        let past = frontkeep_storage::plus_seconds(&now, -600);
+        let future = frontkeep_storage::plus_seconds(&now, 600);
         // Unclaimed → first owner wins; a live claim blocks a second owner.
         assert!(svc
             .repo()
@@ -3371,7 +3373,7 @@ mod tests {
         let (_wf, _reg, svc, pid) = harness().await;
         let rec = provisioning_row(&pid, "stale");
         svc.repo().record(&rec).await.unwrap();
-        let future = asgard_storage::plus_seconds(&asgard_storage::now(), 600);
+        let future = frontkeep_storage::plus_seconds(&frontkeep_storage::now(), 600);
         let rows = svc.repo().list_reclaimable(&future, 50).await.unwrap();
         assert!(rows.iter().any(|r| r.id == rec.id));
     }
@@ -3607,9 +3609,9 @@ mod tests {
         assert!(err.contains("image"), "got: {err}");
 
         // A live image-bearing resource that isn't `provisioned` → rejected.
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let failed = ProvisionedRecord {
-            id: asgard_storage::new_uid(),
+            id: frontkeep_storage::new_uid(),
             project_id: pid.clone(),
             rtype: "ecs-task".into(),
             name: "broken".into(),
@@ -3691,7 +3693,7 @@ mod tests {
     impl FlakyProvisioner {
         async fn record(&self, req: &ProvisionRequest, ok: bool, output: &str) {
             if let (Some(store), Some(rid)) = (&self.run_log, &req.resource_id) {
-                let now = asgard_storage::now();
+                let now = frontkeep_storage::now();
                 let _ = store
                     .append(rid, &req.ctx.project_id, "apply", ok, output, &now, &now)
                     .await;
@@ -3792,9 +3794,9 @@ mod tests {
     #[tokio::test]
     async fn list_retryable_respects_the_backoff_window() {
         let (_wf, _reg, svc, pid) = harness().await;
-        let now = asgard_storage::now();
-        let past = asgard_storage::plus_seconds(&now, -10);
-        let future = asgard_storage::plus_seconds(&now, 600);
+        let now = frontkeep_storage::now();
+        let past = frontkeep_storage::plus_seconds(&now, -10);
+        let future = frontkeep_storage::plus_seconds(&now, 600);
         let due = failed_row(&pid, "due", Some(&past));
         let pending = failed_row(&pid, "pending", Some(&future));
         let capped = failed_row(&pid, "capped", None);
@@ -3835,7 +3837,7 @@ mod tests {
         let r2 = svc.repo().get(&rec.id).await.unwrap().unwrap();
         assert_eq!(r2.attempts, 2);
         assert!(r2.next_retry_at.is_none());
-        let now = asgard_storage::now();
+        let now = frontkeep_storage::now();
         let rows = svc.repo().list_retryable(&now, &now, 50).await.unwrap();
         assert!(!rows.iter().any(|r| r.id == rec.id));
     }
@@ -3843,7 +3845,8 @@ mod tests {
     #[tokio::test]
     async fn per_service_retry_policy_overrides_the_default() {
         let (_wf, _reg, mut svc, pid) = harness().await;
-        let dir = std::env::temp_dir().join(format!("asgard-svc-{}", asgard_storage::new_uid()));
+        let dir =
+            std::env::temp_dir().join(format!("frontkeep-svc-{}", frontkeep_storage::new_uid()));
         std::fs::create_dir_all(dir.join("zero-retry-svc")).unwrap();
         std::fs::write(
             dir.join("zero-retry-svc").join("service.yaml"),
@@ -3930,7 +3933,7 @@ mod tests {
         let (_wf, _reg, svc, pid) = harness().await;
         let rec = provisioning_row(&pid, "live");
         svc.repo().record(&rec).await.unwrap();
-        let past = asgard_storage::plus_seconds(&asgard_storage::now(), -600);
+        let past = frontkeep_storage::plus_seconds(&frontkeep_storage::now(), -600);
         assert!(svc
             .repo()
             .claim(&rec.id, "provisioning", "live-worker", &past)
@@ -3952,9 +3955,9 @@ mod tests {
         let (_wf, _reg, svc, pid) = harness().await;
         let rec = provisioning_row(&pid, "rc");
         svc.repo().record(&rec).await.unwrap();
-        let now = asgard_storage::now();
-        let past = asgard_storage::plus_seconds(&now, -600);
-        let future = asgard_storage::plus_seconds(&now, 600);
+        let now = frontkeep_storage::now();
+        let past = frontkeep_storage::plus_seconds(&now, -600);
+        let future = frontkeep_storage::plus_seconds(&now, 600);
         assert!(svc
             .repo()
             .claim(&rec.id, "provisioning", "owner-1", &past)

@@ -10,7 +10,7 @@
 //! catalog is multi-owner, so entries are keyed by a generated id: publishing
 //! creates a new entry, editing updates one by id (owner/admin only).
 
-use asgard_storage::Db;
+use frontkeep_storage::Db;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -41,7 +41,7 @@ pub struct McpServer {
     #[serde(default)]
     pub tags: Vec<String>,
     /// The submitter's identity (email when known) — the contact point. Seeded
-    /// company entries use `asgard`.
+    /// company entries use `frontkeep`.
     #[serde(default)]
     pub owner: String,
     /// Trust tier: `community` (user-submitted) | `approved` (company-sanctioned).
@@ -183,8 +183,8 @@ pub async fn create(
     approved: bool,
 ) -> Result<McpServer, RegistryError> {
     validate(input)?;
-    let id = asgard_storage::new_uid();
-    let now = asgard_storage::now();
+    let id = frontkeep_storage::new_uid();
+    let now = frontkeep_storage::now();
     let status = if approved { "approved" } else { "community" };
     let approved_at = approved.then(|| now.clone());
     let approved_by = approved.then(|| owner.to_string());
@@ -239,7 +239,7 @@ pub async fn update(
     input: &McpServerInput,
 ) -> Result<Option<McpServer>, RegistryError> {
     validate(input)?;
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     let tags_s = input.tags.join(",");
     let install_s = serde_json::to_string(&input.install).unwrap_or_else(|_| "{}".into());
     sqlx::query(&db.q(
@@ -269,7 +269,7 @@ pub async fn set_status(
     status: &str,
     approver: Option<&str>,
 ) -> Result<(), RegistryError> {
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     if status == "approved" {
         sqlx::query(&db.q(
             "UPDATE mcp_servers SET status = 'approved', approved_at = ?, approved_by = ?, \
@@ -303,7 +303,7 @@ pub async fn set_state(db: &Db, id: &str, state: &str) -> Result<(), RegistryErr
             STATES.join(", ")
         )));
     }
-    let now = asgard_storage::now();
+    let now = frontkeep_storage::now();
     sqlx::query(&db.q("UPDATE mcp_servers SET state = ?, updated_at = ? WHERE id = ?"))
         .bind(state)
         .bind(&now)
@@ -327,7 +327,7 @@ mod tests {
 
     async fn db() -> Db {
         let path =
-            std::env::temp_dir().join(format!("asgard-mcp-{}.db", asgard_storage::new_uid()));
+            std::env::temp_dir().join(format!("frontkeep-mcp-{}.db", frontkeep_storage::new_uid()));
         let db = Db::connect(&format!("sqlite://{}", path.display()))
             .await
             .unwrap();
@@ -367,7 +367,7 @@ mod tests {
         create(&db, "u", &input("community-one"), false)
             .await
             .unwrap();
-        create(&db, "asgard", &input("approved-one"), true)
+        create(&db, "frontkeep", &input("approved-one"), true)
             .await
             .unwrap();
         // Default list shows both tiers (no status hiding).
