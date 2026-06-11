@@ -10,6 +10,7 @@
       --line:#1a1e25; --line2:#252b34; --fg:#e8ebf1; --muted:#727885; --muted2:#525861;
       --teal:#818cf8; --teal2:#a5b4fc; --purple:#a78bfa; --blue:#60a5fa;
       --green:#34d399; --amber:#fbbf24; --red:#f87171;
+      --on-teal:#04201d;  /* text on a --teal fill: near-black reads on the light-indigo dark-mode accent */
       /* semantic surfaces (overridden in light mode) */
       --chip:#161a21; --hover:#12161d; --code:#0b0e13; --codefg:#cdd6e3; --input:#0a0c10; --track:#171b22;
       --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -19,6 +20,7 @@
       --line:#e4e8ee; --line2:#d3d9e2; --fg:#1a1f27; --muted:#5b6370; --muted2:#888f9b;
       --teal:#4f46e5; --teal2:#4338ca; --purple:#7c3aed; --blue:#2563eb;
       --green:#059669; --amber:#b45309; --red:#dc2626;
+      --on-teal:#ffffff;  /* the light-mode accent is dark indigo — white text, not near-black */
       --chip:#eef1f5; --hover:#f0f3f7; --code:#f3f5f9; --codefg:#1a1f27; --input:#ffffff; --track:#e4e8ee;
     }
     [data-theme=light] .banner { background:#fdecec; border-color:#f3c7c7; }
@@ -96,7 +98,7 @@
     .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
     input, select { background:var(--input); border:1px solid var(--line2); color:var(--fg);
       padding:8px 10px; border-radius:8px; font-family:inherit; font-size:13px; }
-    button.act { background:var(--teal); border:0; color:#04201d; padding:8px 13px; border-radius:8px;
+    button.act { background:var(--teal); border:0; color:var(--on-teal); padding:8px 13px; border-radius:8px;
       cursor:pointer; font-weight:700; font-family:inherit; }
     button.danger { background:#2a1416; color:var(--red); border:1px solid #50272b; padding:5px 10px;
       border-radius:7px; cursor:pointer; font-size:12px; }
@@ -541,7 +543,7 @@
       about:    { label: 'About', ic: 'ⓘ', render: renderAbout },
     };
     let active = 'start';
-    let SYS_NAME = 'Frontkeep';
+    const SYS_NAME = 'Frontkeep';
     // Deep-link target: when set, the projects tab opens straight to this detail
     // (used by the governance scorecard's offender drill-in).
     let focusProject = null;
@@ -750,7 +752,7 @@
         <div id="g-root">${loading('Loading guidance…')}</div>`;
       const root = () => document.getElementById('g-root');
       const CATS = [['', 'All'], ['best-practice', 'Best practice'], ['guide', 'Guides'], ['reference', 'Reference']];
-      const facet = (k, l) => `<button data-cat="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${cat === k ? 'var(--teal)' : 'var(--line)'};background:${cat === k ? 'var(--teal)' : 'transparent'};color:${cat === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${cat === k ? 700 : 400}">${l}</button>`;
+      const facet = (k, l) => `<button data-cat="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${cat === k ? 'var(--teal)' : 'var(--line)'};background:${cat === k ? 'var(--teal)' : 'transparent'};color:${cat === k ? 'var(--on-teal)' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${cat === k ? 700 : 400}">${l}</button>`;
       let cat = '', all = [];
       // Server-side category + full-text filter (?category / ?q); the client-side
       // box stays as an instant-narrowing nicety over what the server returned.
@@ -951,7 +953,7 @@
       const root = () => document.getElementById('m-root');
       const VIEWS = [['all', 'All'], ['approved', 'Company-approved'], ['community', 'User-submitted'], ['disabled', 'Disabled'], ['archived', 'Archived']];
       let view = 'all', all = [];
-      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
+      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? 'var(--on-teal)' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
       const tierBadge = (m) => m.status === 'approved' ? pill('company-approved', 'green') : pill('user-submitted', 'blue');
       const stateBadge = (m) => (m.state && m.state !== 'active') ? pill(m.state, m.state === 'archived' ? 'red' : 'amber') : '';
       const transportPill = (m) => { const t = (m.install || {}).transport; return t ? pill(t, '') : ''; };
@@ -1177,7 +1179,7 @@
       const root = () => document.getElementById('s-root');
       const VIEWS = [['all', 'All'], ['approved', 'Company-approved'], ['community', 'User-submitted'], ['disabled', 'Disabled'], ['archived', 'Archived']];
       let view = 'all', all = [];
-      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
+      const facet = (k, l) => `<button data-view="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? 'var(--on-teal)' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${l}</button>`;
       const tierBadge = (s) => s.status === 'approved' ? pill('company-approved', 'green') : pill('user-submitted', 'blue');
       const stateBadge = (s) => (s.state && s.state !== 'active') ? pill(s.state, s.state === 'archived' ? 'red' : 'amber') : '';
       const portBadge = (s) => s.portability ? pill(s.portability, s.portability === 'portable' ? 'green' : 'amber') : '';
@@ -1290,7 +1292,7 @@
         if (mine && s.state !== 'archived') actions.push(`<button class="pbtn" data-act="archive">Archive</button>`);
         if (mine && s.state === 'archived') actions.push(`<button class="act" data-act="unarchive">Unarchive</button>`);
         if (mine) actions.push(`<button class="danger" data-act="delete">Delete</button>`);
-        const rtBtn = (k, l) => `<button data-rt="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${rt === k ? 'var(--teal)' : 'var(--line)'};background:${rt === k ? 'var(--teal)' : 'transparent'};color:${rt === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px">${l}</button>`;
+        const rtBtn = (k, l) => `<button data-rt="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${rt === k ? 'var(--teal)' : 'var(--line)'};background:${rt === k ? 'var(--teal)' : 'transparent'};color:${rt === k ? 'var(--on-teal)' : 'var(--fg)'};cursor:pointer;font-size:12px">${l}</button>`;
 
         root().innerHTML = `<button class="crumb">← all skills</button>
           <div class="row" style="justify-content:space-between;align-items:flex-start">
@@ -2408,7 +2410,7 @@
       const v = document.getElementById('view');
       let view = 'requested';
       const FACETS = [['requested', 'Pending'], ['approved', 'Awaiting provision'], ['', 'All']];
-      const facet = (k, l) => `<button data-af="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? '#04201d' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${esc(l)}</button>`;
+      const facet = (k, l) => `<button data-af="${k}" style="padding:4px 11px;border-radius:999px;border:1px solid ${view === k ? 'var(--teal)' : 'var(--line)'};background:${view === k ? 'var(--teal)' : 'transparent'};color:${view === k ? 'var(--on-teal)' : 'var(--fg)'};cursor:pointer;font-size:12px;font-weight:${view === k ? 700 : 400}">${esc(l)}</button>`;
       const actor = () => meEmail || 'admin';
       v.innerHTML = `<h1 class="pagehead">Approvals</h1>
         <p class="pagesub">The exception queue. In-policy requests (within budget, at an auto-approvable classification) provision without stopping here — only the residue lands: over budget, above the self-service tier, or credential-minting. Approve and the resource joins the deployment queue automatically.</p>
@@ -2512,7 +2514,6 @@
         ${note}
         <p class="err" id="loginerr" style="min-height:1em;margin-bottom:0"></p>
       </div>`;
-      applyBranding(cfg.system_name);
       if (bounced) document.getElementById('loginerr').textContent = "Sign-in didn't complete — try again.";
       if (cfg.oidc) document.getElementById('sso').onclick = () => {
         sessionStorage.setItem('fk_sso_ts', String(Date.now()));
@@ -2531,15 +2532,8 @@
 
     // boot: require a session, then preload per-project series so sparklines
     // render on first paint. Falls back to the sign-in view when unauthenticated.
-    function applyBranding(name) {
-      name = (name && String(name).trim()) || 'Frontkeep';
-      SYS_NAME = name;
-      document.title = name;
-      document.querySelectorAll('.brand').forEach(e => e.textContent = name);
-      document.querySelectorAll('.logo').forEach(e => e.textContent = name[0].toUpperCase());
-    }
     async function boot() {
-      try { APP_CFG = await api('/api/auth/config'); applyBranding(APP_CFG.system_name); } catch {}
+      try { APP_CFG = await api('/api/auth/config'); } catch {}
       let me;
       try { me = await api('/api/auth/me'); }
       catch { return showLogin(); }
