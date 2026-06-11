@@ -54,10 +54,12 @@ frontkeep cost report --by group                                        # spend 
 frontkeep validate services/s3-bucket/service.yaml                      # offline manifest check
 ```
 
-> The default SQLite filename is still `frontkeep.db` so an existing deploy's data
-> survives an in-place upgrade. Override it with `--database-url` if you'd
-> rather start fresh on `frontkeep.db`. Legacy `ASGARD_*` env vars continue to
-> work transparently — set either name; the new one wins when both are set.
+> **Upgrading from Asgard?** The rename is non-breaking: legacy `ASGARD_*` env
+> vars are still read, `asg_…`/`asg_pat_…` tokens still authenticate, and an
+> existing `asgard.yaml` is still auto-loaded. The one thing that changed default
+> is the bare SQLite filename (`asgard.db` → `frontkeep.db`); point at the old one
+> with `--database-url sqlite://asgard.db` if you relied on it. Full checklist:
+> [Upgrade — Asgard → Frontkeep](docs/docs/upgrade.md).
 
 See [`docs/docs/`](docs/docs/) for [installing the CLI](docs/docs/install.md), [using the CLI](docs/docs/cli.md), the [onboarding loop](docs/docs/onboarding-loop.md), [connecting an agent](docs/docs/connect-agent.md), [deploying Frontkeep](docs/docs/deploy.md), [inference backends](docs/docs/inference-backends.md), and the [architecture](docs/docs/architecture.md).
 

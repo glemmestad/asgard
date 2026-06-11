@@ -49,6 +49,6 @@ recipes, served to humans in the UI and to agents over MCP.
 - **Open core with honest seams.** The governance core is OSS; enterprise
   features (SAML/SCIM, multi-tenant, SIEM streaming) sit behind clear trait seams.
 
-> The default SQLite filename is still `frontkeep.db` so an existing deploy's data
-> survives an in-place upgrade. Legacy `ASGARD_*` env vars continue to work
-> transparently — set either name; the new one wins when both are set.
+> **Upgrading from Asgard?** The rename is non-breaking — legacy `ASGARD_*` env
+> vars, `asg_…` tokens, and an existing `asgard.yaml` all keep working. See
+> [Upgrade — Asgard → Frontkeep](./upgrade.md) for the full checklist.
