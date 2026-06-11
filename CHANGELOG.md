@@ -1,3 +1,10 @@
+# [0.23.0](https://github.com/glemmestad/asgard/compare/v0.22.0...v0.23.0) (2026-06-11)
+
+
+### Features
+
+* **site:** rebrand marketing site to Frontkeep — The Agent Control Plane ([#47](https://github.com/glemmestad/asgard/issues/47)) ([773d323](https://github.com/glemmestad/asgard/commit/773d323a8252041f5cd5a7848be84f0f3faaf726))
+
 # [0.22.0](https://github.com/glemmestad/asgard/compare/v0.21.0...v0.22.0) (2026-06-10)
 
 
