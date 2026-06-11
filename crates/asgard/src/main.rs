@@ -2667,12 +2667,26 @@ fn build_provision(db: Db, config: &Config, leases: Option<(Leases, i64)>) -> Pr
             db.clone(),
             master_key.unwrap_or(DEV_SECRET_KEY),
         ));
+        // One shared provider cache for all resources — without it each per-resource
+        // `init` carries its own ~600 MB provider copy and the work dirs accumulate
+        // until the volume fills. Dot-prefixed so the startup reclaim skips it.
+        let plugin_cache = work.join(".plugin-cache");
+        if let Err(e) = std::fs::create_dir_all(&plugin_cache) {
+            tracing::warn!(
+                "tf plugin cache {} could not be created ({e}); providers will not be shared",
+                plugin_cache.display()
+            );
+        }
         let mut connector = TerraformConnector::new(tf.bin.clone(), tf.modules_dir.clone(), work)
             .with_state(tf_state)
-            .with_run_log(run_log.clone());
+            .with_run_log(run_log.clone())
+            .with_plugin_cache(plugin_cache);
         if let Some((leases, ttl)) = &leases {
             connector = connector.with_leases(leases.clone(), *ttl);
         }
+        // Reclaim disk left by orphaned/pre-cache work dirs now that state is
+        // durable and a shared provider cache exists; each is rebuilt on demand.
+        connector.prune_work_root();
         svc.register_backend("terraform", Arc::new(connector));
         tracing::info!(
             "terraform connector registered (modules={}, durable state in DB)",

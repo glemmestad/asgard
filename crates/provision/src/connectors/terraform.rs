@@ -11,6 +11,18 @@
 //! via an attached [`TfStateStore`], so it survives an ephemeral `work_root`; the
 //! work dir under `work_root/<project>/<type>/<name>` is just scratch. Without a
 //! store attached (tests) state stays local to the work dir.
+//!
+//! Disk is bounded two ways so the control-plane volume can't fill as resources
+//! accumulate. First, a shared `TF_PLUGIN_CACHE_DIR` ([`with_plugin_cache`]) means
+//! one provider copy serves every working dir instead of each `init` carrying its
+//! own ~600 MB download. Second, with a durable state store attached the scratch
+//! work dir is removed after every apply/destroy ([`gc_work_dir`]) — state lives
+//! in the DB, so each dir is rebuilt on its next run. Together these cap usage at
+//! the single cache plus whatever is actively running, regardless of how many
+//! distinct resource names (e.g. per-pipeline credentials) are ever provisioned.
+//!
+//! [`with_plugin_cache`]: TerraformConnector::with_plugin_cache
+//! [`gc_work_dir`]: TerraformConnector::gc_work_dir
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -96,6 +108,13 @@ pub struct TerraformConnector {
     /// Captures the full plan+apply / destroy log per resource for operator audit.
     /// `None` keeps runs unlogged (tests).
     run_log: Option<Arc<RunLogStore>>,
+    /// Shared provider plugin cache exported as `TF_PLUGIN_CACHE_DIR` to every
+    /// terraform run, so one ~600 MB provider download is symlinked into all
+    /// working dirs instead of each `init` fetching its own. `None` leaves
+    /// terraform's per-workdir default (tests). The cache is concurrency-safe for
+    /// reads; the only race is the first fetch of a given provider version (rare,
+    /// and terraform retries) — a non-issue against a volume that fills otherwise.
+    plugin_cache: Option<PathBuf>,
 }
 
 impl TerraformConnector {
@@ -109,6 +128,7 @@ impl TerraformConnector {
             leases: None,
             tf_lease_ttl: 600,
             run_log: None,
+            plugin_cache: None,
         }
     }
 
@@ -124,6 +144,60 @@ impl TerraformConnector {
     pub fn with_run_log(mut self, store: Arc<RunLogStore>) -> Self {
         self.run_log = Some(store);
         self
+    }
+
+    /// Point every terraform run at a shared provider plugin cache so providers
+    /// are downloaded once and symlinked into each working dir, rather than every
+    /// resource carrying its own ~600 MB copy. The directory must already exist
+    /// (terraform silently skips caching otherwise) — the caller creates it.
+    pub fn with_plugin_cache(mut self, dir: PathBuf) -> Self {
+        self.plugin_cache = Some(dir);
+        self
+    }
+
+    /// One-shot startup sweep: drop the per-resource scratch dirs left under
+    /// `work_root` (keeping any dot-prefixed internals such as the plugin cache).
+    /// Safe only with a durable state store — there the dirs are reconstructable
+    /// from the DB on their next run, so this reclaims the disk that orphaned or
+    /// pre-cache work dirs (each historically pinning its own provider copy) would
+    /// otherwise hold until the volume fills. No-op without a store (tests).
+    pub fn prune_work_root(&self) {
+        if self.state.is_none() {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(&self.work_root) else {
+            return;
+        };
+        let mut reclaimed = 0u32;
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            if std::fs::remove_dir_all(entry.path()).is_ok() {
+                reclaimed += 1;
+            }
+        }
+        if reclaimed > 0 {
+            tracing::info!(
+                "tf startup reclaim: removed {reclaimed} stale work dir(s) under {}",
+                self.work_root.display()
+            );
+        }
+    }
+
+    /// Remove a resource's scratch working dir once its state is safely in the DB.
+    /// Without this every distinct resource name leaves a dir behind forever; with
+    /// it, disk is bounded to the shared plugin cache plus what is actively
+    /// running. No-op without a durable state store — there the dir *is* the state.
+    fn gc_work_dir(&self, wd: &Path) {
+        if self.state.is_none() {
+            return;
+        }
+        if let Err(e) = std::fs::remove_dir_all(wd) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("tf work dir gc {}: {e}", wd.display());
+            }
+        }
     }
 
     /// Attach a cross-instance lease so multiple replicas serialize applies for
@@ -232,20 +306,19 @@ impl TerraformConnector {
         req: &ProvisionRequest,
         plan: &Plan,
         overrides: &Value,
-    ) -> Result<(PathBuf, Option<i64>), ProvisionError> {
+        wd: &Path,
+    ) -> Result<Option<i64>, ProvisionError> {
         let module = self.module_path(&req.config)?;
-        let wd = self.work_dir(req);
-        copy_module(&module, &wd)?;
+        copy_module(&module, wd)?;
         let vars = tfvars(req, plan, overrides);
         std::fs::write(
             wd.join("asgard.auto.tfvars.json"),
             serde_json::to_vec_pretty(&vars).unwrap_or_default(),
         )
         .map_err(|e| ProvisionError::Backend(format!("write tfvars: {e}")))?;
-        let version = self.hydrate(&Self::state_id(req), &wd).await?;
-        self.run(&wd, &["init", "-input=false", "-no-color"])
-            .await?;
-        Ok((wd, version))
+        let version = self.hydrate(&Self::state_id(req), wd).await?;
+        self.run(wd, &["init", "-input=false", "-no-color"]).await?;
+        Ok(version)
     }
 
     fn module_path(&self, config: &Value) -> Result<PathBuf, ProvisionError> {
@@ -298,13 +371,26 @@ impl TerraformConnector {
         overrides: &Value,
         id: &str,
     ) -> Result<Provisioned, ProvisionError> {
-        let (wd, version) = self.prepare(req, plan, overrides).await?;
+        let wd = self.work_dir(req);
+        let result = self.apply_in_dir(req, plan, overrides, id, &wd).await;
+        // Scratch dir served its purpose; state is in the DB. Reclaim on every
+        // path so live-but-never-destroyed resources don't accumulate on disk.
+        self.gc_work_dir(&wd);
+        result
+    }
+
+    async fn apply_in_dir(
+        &self,
+        req: &ProvisionRequest,
+        plan: &Plan,
+        overrides: &Value,
+        id: &str,
+        wd: &Path,
+    ) -> Result<Provisioned, ProvisionError> {
+        let version = self.prepare(req, plan, overrides, wd).await?;
         let started = asgard_storage::now();
         let (log, applied) = self
-            .run_capture(
-                &wd,
-                &["apply", "-auto-approve", "-input=false", "-no-color"],
-            )
+            .run_capture(wd, &["apply", "-auto-approve", "-input=false", "-no-color"])
             .await;
         // Capture the full plan+apply log against the resource for operator audit,
         // success or failure, before anything else can short-circuit.
@@ -313,12 +399,12 @@ impl TerraformConnector {
         // Persist whatever state exists — even after a partial-apply failure —
         // before surfacing the apply error, or we'd lose track of created
         // resources and orphan them.
-        if let Err(e) = self.persist(id, &wd, version).await {
+        if let Err(e) = self.persist(id, wd, version).await {
             applied?;
             return Err(e);
         }
         applied?;
-        let out = self.run(&wd, &["output", "-json", "-no-color"]).await?;
+        let out = self.run(wd, &["output", "-json", "-no-color"]).await?;
         let raw: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
 
         let mut outputs = Map::new();
@@ -345,24 +431,40 @@ impl TerraformConnector {
             Some(s) => s.exists(id).await?,
             None => false,
         };
+        let wd = self.work_dir(req);
         // Nothing was ever provisioned: no local working dir and no stored state.
-        if !self.work_dir(req).exists() && !has_stored {
+        if !wd.exists() && !has_stored {
             return Ok(());
         }
+        let result = self.destroy_in_dir(req, id, &wd).await;
+        // Reclaim the scratch dir whether destroy succeeded or failed: state stays
+        // in the DB on failure so a retry rebuilds the dir, and a self-deadlocked
+        // host can't destroy at all if every teardown first stages a fresh ~600 MB
+        // workspace it has no room for.
+        self.gc_work_dir(&wd);
+        result
+    }
+
+    async fn destroy_in_dir(
+        &self,
+        req: &ProvisionRequest,
+        id: &str,
+        wd: &Path,
+    ) -> Result<(), ProvisionError> {
         // Rebuild the working dir from the module + hydrated state — after a
         // restart the dir is gone but the state lives in the DB.
         let plan = self.plan(req).await?;
-        let (wd, version) = self.prepare(req, &plan, &Value::Null).await?;
+        let version = self.prepare(req, &plan, &Value::Null, wd).await?;
         let started = asgard_storage::now();
         let (log, destroyed) = self
             .run_capture(
-                &wd,
+                wd,
                 &["destroy", "-auto-approve", "-input=false", "-no-color"],
             )
             .await;
         self.record_run(req, "destroy", destroyed.is_ok(), &log, &started)
             .await;
-        let _ = self.persist(id, &wd, version).await;
+        let _ = self.persist(id, wd, version).await;
         destroyed?;
         if let Some(s) = &self.state {
             let _ = s.delete(id).await;
@@ -426,12 +528,16 @@ impl TerraformConnector {
     /// [`MAX_CAPTURE_BYTES`] of each. Bounds the blast radius of a runaway apply to
     /// an `Err` (→ `mark_failed`) instead of an OOM that takes the control plane down.
     async fn run_bounded(&self, args: &[&str]) -> Result<std::process::Output, ProvisionError> {
-        let mut child = Command::new(&self.bin)
-            .args(args)
+        let mut cmd = Command::new(&self.bin);
+        cmd.args(args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        if let Some(cache) = &self.plugin_cache {
+            cmd.env("TF_PLUGIN_CACHE_DIR", cache);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| ProvisionError::Backend(format!("spawn terraform: {e}")))?;
         let mut stdout = child.stdout.take().expect("piped stdout");
@@ -816,6 +922,76 @@ mod tests {
             std::fs::read(wd.join("terraform.tfstate")).unwrap(),
             b"{\"serial\":7}"
         );
+    }
+
+    /// The startup reclaim drops orphaned per-resource scratch dirs (the disk a
+    /// self-deadlocking pileup would pin) but keeps the shared `.plugin-cache`.
+    /// Gated on a durable store: without one the work dir *is* the state.
+    #[tokio::test]
+    async fn prune_work_root_clears_orphans_but_keeps_cache() {
+        use asgard_storage::Db;
+
+        let work_root =
+            std::env::temp_dir().join(format!("asgard-tfprune-{}", asgard_storage::new_uid()));
+        let orphan = work_root.join("proj-2026-0003").join("ecr-credential");
+        let cache = work_root.join(".plugin-cache");
+        std::fs::create_dir_all(orphan.join("ci-push-42")).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("provider.bin"), b"x").unwrap();
+
+        // No store → no-op: the local work dirs are the only copy of state.
+        let no_store =
+            TerraformConnector::new("terraform", PathBuf::from("/modules"), work_root.clone());
+        no_store.prune_work_root();
+        assert!(orphan.exists(), "without a store nothing is reclaimed");
+
+        let dbpath =
+            std::env::temp_dir().join(format!("asgard-tfprune-{}.db", asgard_storage::new_uid()));
+        let db = Db::connect(&format!("sqlite://{}", dbpath.display()))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        let conn = TerraformConnector::new("terraform", PathBuf::from("/modules"), work_root)
+            .with_state(Arc::new(TfStateStore::new(db, [0x33; 32])));
+        conn.prune_work_root();
+        assert!(!orphan.exists(), "orphaned scratch dir reclaimed");
+        assert!(
+            cache.join("provider.bin").exists(),
+            "the shared plugin cache is preserved"
+        );
+    }
+
+    /// `gc_work_dir` removes a finished resource's scratch dir when state is
+    /// durable, and leaves it alone otherwise (tests keep state in the dir).
+    #[tokio::test]
+    async fn gc_work_dir_removes_scratch_only_with_durable_state() {
+        use asgard_storage::Db;
+
+        let work_root =
+            std::env::temp_dir().join(format!("asgard-tfgc-{}", asgard_storage::new_uid()));
+        let r = req();
+
+        let no_store =
+            TerraformConnector::new("terraform", PathBuf::from("/modules"), work_root.clone());
+        let wd = no_store.work_dir(&r);
+        std::fs::create_dir_all(&wd).unwrap();
+        no_store.gc_work_dir(&wd);
+        assert!(wd.exists(), "without a store the work dir is left in place");
+
+        let dbpath =
+            std::env::temp_dir().join(format!("asgard-tfgc-{}.db", asgard_storage::new_uid()));
+        let db = Db::connect(&format!("sqlite://{}", dbpath.display()))
+            .await
+            .unwrap();
+        db.migrate().await.unwrap();
+        let conn = TerraformConnector::new("terraform", PathBuf::from("/modules"), work_root)
+            .with_state(Arc::new(TfStateStore::new(db, [0x33; 32])));
+        let wd = conn.work_dir(&r);
+        std::fs::create_dir_all(&wd).unwrap();
+        conn.gc_work_dir(&wd);
+        assert!(!wd.exists(), "durable state → scratch dir reclaimed");
+        // Idempotent: a missing dir is not an error.
+        conn.gc_work_dir(&wd);
     }
 
     /// When another replica holds a resource's lease, this connector refuses to
