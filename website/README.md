@@ -1,7 +1,7 @@
 # asgard.build
 
-Marketing site for Asgard. Astro, static output, deploys to Vercel's free tier.
-This is Vercel-hosted marketing — **not** part of the Asgard product binary.
+Marketing site for Frontkeep. Astro, static output, deploys to Vercel's free tier.
+This is Vercel-hosted marketing — **not** part of the Frontkeep product binary.
 
 ## Edit content (the common case)
 

@@ -2,7 +2,7 @@
 interface Props { size?: number; withWordmark?: boolean; }
 const { size = 28, withWordmark = true } = Astro.props;
 ---
-<a href="/" class="logo" aria-label="Asgard home">
+<a href="/" class="logo" aria-label="Frontkeep home">
   <svg width={size} height={size} viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
     <defs>
       <linearGradient id="lg" x1="4" y1="4" x2="28" y2="28" gradientUnits="userSpaceOnUse">
@@ -16,7 +16,7 @@ const { size = 28, withWordmark = true } = Astro.props;
     <path d="M16 9.5 L16 22.5" stroke="#04201d" stroke-width="2.4" stroke-linecap="round" />
     <circle cx="16" cy="9.5" r="2" fill="#04201d" />
   </svg>
-  {withWordmark && <span class="wordmark">Asgard</span>}
+  {withWordmark && <span class="wordmark">Frontkeep</span>}
 </a>
 
 <style>

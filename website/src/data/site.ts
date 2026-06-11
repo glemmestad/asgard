@@ -4,7 +4,7 @@
    ============================================================ */
 
 export const site = {
-  name: 'Asgard',
+  name: 'Frontkeep',
   tagline: 'The control plane for building with AI inside your company.',
   domain: 'asgard.build',
   github: 'https://github.com/glemmestad/asgard',
@@ -131,7 +131,7 @@ export const openCore = {
       'Multi-tenant isolation',
       'Priority support & SLAs',
     ],
-    cta: { label: 'Register interest', href: 'mailto:hello@asgard.build?subject=Asgard%20Enterprise' },
+    cta: { label: 'Register interest', href: 'mailto:hello@asgard.build?subject=Frontkeep%20Enterprise' },
     note: 'Enterprise licensing isn’t generally available yet. Contact us to register interest.',
   },
 };
@@ -139,11 +139,11 @@ export const openCore = {
 export const faqs = [
   {
     q: 'What about the agent work already happening on my teams?',
-    a: 'That’s exactly the point. Shadow agentic AI development, people quietly building real tools with agents, is already underway in most companies. Asgard doesn’t stop it; it gives it a front door, so the same work reads your standards, registers, gets scoped credentials, and shows up attributed and auditable instead of on a mystery bill.',
+    a: 'That’s exactly the point. Shadow agentic AI development, people quietly building real tools with agents, is already underway in most companies. Frontkeep doesn’t stop it; it gives it a front door, so the same work reads your standards, registers, gets scoped credentials, and shows up attributed and auditable instead of on a mystery bill.',
   },
   {
     q: 'Isn’t this just an LLM gateway?',
-    a: 'No. The gateway is one component. Asgard is the front door you point agents at for the whole journey, reading standards, registering the project, provisioning real infrastructure, and attributing cost, from the first prompt all the way to wide production use across the company.',
+    a: 'No. The gateway is one component. Frontkeep is the front door you point agents at for the whole journey, reading standards, registering the project, provisioning real infrastructure, and attributing cost, from the first prompt all the way to wide production use across the company.',
   },
   {
     q: 'How do agents use it?',
@@ -151,7 +151,7 @@ export const faqs = [
   },
   {
     q: 'How is it deployed?',
-    a: 'One static Rust binary with an embedded UI. docker run asgard and you’re productive in an afternoon. SQLite needs zero external services; switch the database URL to Postgres and add stateless replicas to scale out. Kubernetes is supported, never required.',
+    a: 'One static Rust binary with an embedded UI. docker run frontkeep and you’re productive in an afternoon. SQLite needs zero external services; switch the database URL to Postgres and add stateless replicas to scale out. Kubernetes is supported, never required.',
   },
   {
     q: 'How do we add our own services?',
@@ -159,6 +159,6 @@ export const faqs = [
   },
   {
     q: 'Can teams share their own MCP servers?',
-    a: 'Yes. Asgard ships an MCP catalog: a publishable registry of MCP servers, kept separate from the provisioning catalog because it’s opt-in sharing, not derived from what a project built. Company-approved and user-submitted servers sit side by side, each with an owner as contact and a ready-to-paste install snippet for Claude Code, Codex or Cursor. An agent browses it over MCP; a user publishes one with their token.',
+    a: 'Yes. Frontkeep ships an MCP catalog: a publishable registry of MCP servers, kept separate from the provisioning catalog because it’s opt-in sharing, not derived from what a project built. Company-approved and user-submitted servers sit side by side, each with an owner as contact and a ready-to-paste install snippet for Claude Code, Codex or Cursor. An agent browses it over MCP; a user publishes one with their token.',
   },
 ];
