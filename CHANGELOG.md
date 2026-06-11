@@ -1,3 +1,10 @@
+## [0.26.1](https://github.com/glemmestad/frontkeep/compare/v0.26.0...v0.26.1) (2026-06-11)
+
+
+### Bug Fixes
+
+* white button text on the dark-indigo light-mode accent (was unreadable near-black) ([ce197bb](https://github.com/glemmestad/frontkeep/commit/ce197bb0bf88c6a6a05ecefea6b0af7099a8ce42))
+
 # [0.26.0](https://github.com/glemmestad/asgard/compare/v0.25.1...v0.26.0) (2026-06-11)
 
 
