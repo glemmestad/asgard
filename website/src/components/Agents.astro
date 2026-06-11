@@ -1,34 +1,29 @@
 ---
 import { mcpTools } from '../data/site';
 ---
-<section class="agents section-pad" id="agents">
-  <div class="bridge-rule top-rule" aria-hidden="true"></div>
+<section class="section agents" id="agents">
   <div class="container">
-    <div class="agents-grid">
-      <div class="agents-copy">
-        <span class="eyebrow" data-reveal>Agents first, humans second</span>
-        <h2 data-reveal>Every capability is an<br /><span class="grad-text">MCP tool</span>, not just a button.</h2>
-        <p class="lede" data-reveal>
+    <div class="grid">
+      <div class="copy">
+        <span class="eyebrow">Agents first, humans second</span>
+        <h2>Every capability is an MCP tool, not just a button.</h2>
+        <p class="lede">
           Most platforms bolt an API onto a human UI. Frontkeep is built the other way around:
           the control plane <em>is</em> the agent interface. Discover services, register projects,
-          fetch credentials, read standards, request resources, all as tools an agent can call,
+          fetch credentials, read standards, request resources — all as tools an agent can call,
           with the same authority a human gets in the dashboard.
         </p>
-        <div class="tools" data-reveal>
-          {mcpTools.map((t) => <code class="mcp-chip">{t}</code>)}
-          <span class="mcp-more">+ more</span>
+        <div class="tools">
+          {mcpTools.map((t) => <code class="chip">{t}</code>)}
+          <span class="more">+ more</span>
         </div>
       </div>
 
-      <div class="connect" data-reveal>
-        <div class="code">
-          <div class="code-bar">
-            <span class="dot" style="background:#f87171"></span>
-            <span class="dot" style="background:#fbbf24"></span>
-            <span class="dot" style="background:#34d399"></span>
-            <span class="code-title">~/.claude/mcp.json</span>
-          </div>
-          <pre>{`{
+      <div class="code">
+        <div class="code-bar">
+          <span class="code-title">~/.claude/mcp.json</span>
+        </div>
+<pre>{`{
   `}<span class="k">"mcpServers"</span>{`: {
     `}<span class="k">"frontkeep"</span>{`: {
       `}<span class="k">"type"</span>{`: `}<span class="s">"http"</span>{`,
@@ -39,43 +34,20 @@ import { mcpTools } from '../data/site';
     }
   }
 }`}</pre>
-        </div>
-        <p class="connect-note">
-          Works with <b>Claude Code</b>, <b>Cursor</b> and <b>Codex</b>. Authenticate with a personal
-          access token, which acts across every project you own or manage, or a per-project key.
-        </p>
       </div>
     </div>
   </div>
 </section>
 
 <style>
-  .top-rule { opacity: 0.5; }
-  .agents-grid {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center;
-    margin-top: 48px;
-  }
-  .agents-copy { display: flex; flex-direction: column; gap: 20px; }
-  .agents-copy h2 { font-size: clamp(28px, 3.8vw, 46px); }
-  .agents-copy em { font-style: normal; color: var(--teal-2); }
-
-  .tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-  .mcp-chip {
-    font-size: 12.5px; color: var(--fg-dim);
-    background: var(--panel); border: 1px solid var(--line-2);
-    padding: 6px 11px; border-radius: 7px;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  .mcp-chip:hover { border-color: rgba(13, 148, 136, 0.45); color: var(--teal-2); }
-  .mcp-more { font-size: 12.5px; color: var(--muted); align-self: center; padding-left: 2px; }
-
-  .connect pre { white-space: pre; }
-  .connect .k { color: var(--c-key); }
-  .connect .s { color: var(--c-str); }
-  .connect-note { margin: 16px 2px 0; font-size: 13.5px; color: var(--muted); line-height: 1.6; }
-  .connect-note b { color: var(--fg-dim); font-weight: 600; }
+  .agents .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: start; }
+  .agents h2 { font-size: 32px; line-height: 1.15; margin: 16px 0 16px; max-width: 22ch; }
+  .agents em { font-style: normal; color: var(--brand); font-weight: 600; }
+  .tools { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tools .more { font-size: 12.5px; color: var(--fg-faint); margin-left: 4px; }
 
   @media (max-width: 900px) {
-    .agents-grid { grid-template-columns: 1fr; gap: 36px; }
+    .agents .grid { grid-template-columns: 1fr; gap: 36px; }
+    .agents h2 { font-size: 26px; }
   }
 </style>

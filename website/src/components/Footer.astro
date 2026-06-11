@@ -1,80 +1,86 @@
 ---
 import Logo from './Logo.astro';
-import { site } from '../data/site';
+import { site, nav } from '../data/site';
 
 const cols = [
   {
     title: 'Product',
-    links: [
-      { label: 'How it works', href: '#loop' },
-      { label: 'Platform', href: '#platform' },
-      { label: 'Agents', href: '#agents' },
-      { label: 'Open Core', href: '#open-core' },
-    ],
+    links: nav,
   },
   {
     title: 'Resources',
     links: [
-      { label: 'Documentation', href: site.docs },
       { label: 'GitHub', href: site.github },
-      { label: 'Quickstart', href: '#deploy' },
-    ],
-  },
-  {
-    title: 'Company',
-    links: [
+      { label: 'Docs', href: site.docs },
       { label: 'Contact', href: site.contact },
-      { label: 'Register interest', href: 'mailto:hello@asgard.build?subject=Frontkeep%20Enterprise' },
     ],
   },
 ];
 ---
 <footer class="footer">
-  <div class="container">
-    <div class="footer-top">
-      <div class="footer-brand">
-        <Logo />
-        <p>The Agent Control Plane. The open-source front door where your agents do real work, governed by your policies and accounted by project.</p>
-        <span class="lic">Apache 2.0 · Pre-1.0</span>
-      </div>
-      <div class="footer-cols">
-        {cols.map((c) => (
-          <div class="fcol">
-            <h4>{c.title}</h4>
-            {c.links.map((l) => <a href={l.href}>{l.label}</a>)}
-          </div>
-        ))}
-      </div>
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <Logo />
+      <p>The Agent Control Plane. The open-source front door where your agents do real work, governed by your policies and accounted by project.</p>
+      <span class="lic">Apache 2.0 · Pre-1.0</span>
     </div>
-    <div class="footer-bot">
-      <span>© 2026 Frontkeep. Built for agents.</span>
-      <span class="mono">asgard.build</span>
+    <div class="footer-cols">
+      {cols.map((c) => (
+        <div class="fcol">
+          <h4>{c.title}</h4>
+          {c.links.map((l) => <a href={l.href}>{l.label}</a>)}
+        </div>
+      ))}
     </div>
+  </div>
+  <div class="container footer-bottom">
+    <span>© 2026 Frontkeep · Built for agents</span>
+    <a class="mono" href={`https://${site.domain}`}>{site.domain}</a>
   </div>
 </footer>
 
 <style>
-  .footer { border-top: 1px solid var(--line); padding-block: 56px 32px; background: var(--bg-2); }
-  .footer-top { display: grid; grid-template-columns: 1.4fr 2fr; gap: 48px; }
-  .footer-brand p { margin: 16px 0 12px; color: var(--muted); font-size: 14px; max-width: 38ch; line-height: 1.6; }
-  .lic { font-family: var(--mono); font-size: 12px; color: var(--muted-2); }
-  .footer-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
-  .fcol { display: flex; flex-direction: column; gap: 11px; }
-  .fcol h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); font-weight: 500; margin-bottom: 3px; }
-  .fcol a { font-size: 14px; color: var(--fg-dim); transition: color 0.15s; }
-  .fcol a:hover { color: var(--teal-2); }
-  .footer-bot {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-top: 44px; padding-top: 22px; border-top: 1px solid var(--line);
-    font-size: 13px; color: var(--muted);
+  .footer { border-top: 1px solid var(--line); padding: 64px 0 24px; background: var(--bg); }
+  .footer-inner {
+    display: grid; grid-template-columns: 1.4fr 1fr;
+    gap: 56px;
+    padding-bottom: 40px;
   }
-  .footer-bot .mono { font-family: var(--mono); font-size: 12px; color: var(--muted-2); }
+  .footer-brand p { color: var(--fg-muted); font-size: 14.5px; line-height: 1.55; max-width: 44ch; margin: 14px 0 14px; }
+  .footer-brand .lic { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); }
+
+  .footer-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
+  .fcol h4 {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin: 0 0 14px;
+  }
+  .fcol a {
+    display: block;
+    font-size: 14.5px;
+    color: var(--fg-muted);
+    padding: 4px 0;
+    text-decoration: none;
+  }
+  .fcol a:hover { color: var(--fg); text-decoration: none; }
+
+  .footer-bottom {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    color: var(--fg-faint);
+    font-size: 13px;
+  }
+  .footer-bottom a { color: var(--fg-muted); }
+  .footer-bottom a:hover { color: var(--fg); text-decoration: none; }
+  .footer-bottom .mono { font-family: var(--mono); font-size: 12.5px; }
 
   @media (max-width: 760px) {
-    .footer-top { grid-template-columns: 1fr; gap: 32px; }
-    .footer-cols { grid-template-columns: repeat(3, 1fr); }
-  }
-  @media (max-width: 480px) {
+    .footer-inner { grid-template-columns: 1fr; gap: 36px; }
     .footer-cols { grid-template-columns: 1fr 1fr; }
   }
 </style>

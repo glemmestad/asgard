@@ -1,16 +1,16 @@
 ---
 import { site } from '../data/site';
 ---
-<section class="cta section-pad">
+<section class="section cta">
   <div class="container">
-    <div class="cta-card" data-reveal>
+    <div class="cta-card panel">
       <span class="eyebrow">Give your agents a front door</span>
-      <h2>Where your agents ship —<br />from first prompt to wide production.</h2>
+      <h2>Where your agents ship — from first prompt to wide production.</h2>
       <p class="lede">
         Open-source, agent-native, one static binary. Stand it up today; talk to us when you’re
         ready for enterprise identity and high availability.
       </p>
-      <div class="cta-row">
+      <div class="ctas">
         <a class="btn btn-primary" href={site.docs}>Read the docs</a>
         <a class="btn btn-ghost" href={site.github}>View on GitHub</a>
         <a class="btn btn-ghost" href={site.contact}>Contact us</a>
@@ -21,17 +21,18 @@ import { site } from '../data/site';
 
 <style>
   .cta-card {
-    position: relative; overflow: hidden;
-    border: 1px solid var(--line); border-radius: var(--radius);
-    background: var(--panel);
-    padding: clamp(40px, 6vw, 76px);
-    display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px;
+    padding: clamp(36px, 5vw, 56px);
+    display: flex; flex-direction: column; gap: 18px;
+    align-items: flex-start;
   }
-  .cta-card::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: var(--bifrost); opacity: 0.8;
+  .cta-card h2 {
+    font-size: 32px; line-height: 1.2;
+    max-width: 22ch;
+    margin: 4px 0 4px;
   }
-  .cta-card h2 { font-size: clamp(30px, 4.6vw, 56px); }
-  .cta-card .lede { text-align: center; max-width: 56ch; }
-  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 6px; }
+  .ctas { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+
+  @media (max-width: 600px) {
+    .cta-card h2 { font-size: 26px; }
+  }
 </style>

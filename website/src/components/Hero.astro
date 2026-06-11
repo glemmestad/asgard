@@ -2,119 +2,82 @@
 import { site } from '../data/site';
 ---
 <section class="hero">
-  <div class="container hero-inner">
-    <span class="eyebrow" data-reveal>The Agent Control Plane</span>
-    <h1 data-reveal>
-      Where your agents<br />ship at <span class="grad-text">AI speed</span>.
-    </h1>
-    <p class="lede hero-lede" data-reveal>
-      Frontkeep is the open-source front door agents work through. Point an
-      agent at it and it reads your standards, registers its project, provisions
-      real infrastructure, and accounts for every dollar — with your policies
-      and budgets built in. Not a gateway. The control plane where every
-      capability is an <span class="teal-text">MCP tool</span>.
-    </p>
-    <div class="cta-row" data-reveal>
-      <a class="btn btn-primary" href={site.docs}>Get started
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </a>
-      <a class="btn btn-ghost" href={site.github}>
-        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        Star on GitHub
-      </a>
-    </div>
-    <div class="trust" data-reveal>
-      <span><b>Apache&nbsp;2.0</b> open source</span>
-      <span class="sep"></span>
-      <span>One static <b>Rust</b> binary</span>
-      <span class="sep"></span>
-      <span><code>docker run frontkeep</code></span>
-    </div>
-  </div>
-
   <div class="container">
-    <div class="console panel" data-reveal>
-      <div class="console-bar">
-        <span class="dot" style="background:#f87171"></span>
-        <span class="dot" style="background:#fbbf24"></span>
-        <span class="dot" style="background:#34d399"></span>
-        <span class="console-title">agent ▸ frontkeep mcp · /mcp</span>
-        <span class="console-badge">live session</span>
+    <span class="eyebrow">The Agent Control Plane</span>
+    <h1>Where your agents ship at AI speed.</h1>
+    <p class="lede hero-lede">
+      Frontkeep is the open-source front door agents work through. Point an agent
+      at it and it reads your standards, registers its project, provisions real
+      infrastructure, and accounts for every dollar — with your policies and
+      budgets built in.
+    </p>
+    <div class="ctas">
+      <a class="btn btn-primary" href={site.docs}>Get started →</a>
+      <a class="btn btn-ghost" href={site.github}>View on GitHub</a>
+    </div>
+    <div class="trust">
+      <span><b>Apache 2.0</b> · open source</span>
+      <span class="sep" aria-hidden="true"></span>
+      <span>One static <b>Rust</b> binary</span>
+      <span class="sep" aria-hidden="true"></span>
+      <code>docker run frontkeep</code>
+    </div>
+
+    <div class="code">
+      <div class="code-bar">
+        <span class="code-title">agent ▸ frontkeep mcp · /mcp</span>
+        <span class="code-spacer"></span>
+        <span class="code-badge">live session</span>
       </div>
-      <div class="console-body">
-        <pre><span class="c"># the agent connects to Frontkeep's MCP control plane</span>
+<pre><span class="c"># the agent connects to Frontkeep's MCP control plane</span>
 <span class="p">→</span> <span class="k">get_standards</span>            <span class="c">read company standards before writing a line</span>
 <span class="o">  ✓ STANDARDS.md, SECURITY.md, WORKFLOW.md (v14)</span>
 
-<span class="p">→</span> <span class="k">register_project</span>  <span class="s">&#123; name: "Fraud Detection", owner, manager, group, class: poc &#125;</span>
-<span class="o">  ✓ gate passed · minted</span> <span class="teal">proj-2026-0042</span>
+<span class="p">→</span> <span class="k">register_project</span>  <span class="s">{`{ name: "Fraud Detection", owner, manager, group, class: poc }`}</span>
+<span class="o">  ✓ gate passed · minted</span> <span class="t">proj-2026-0042</span>
 
-<span class="p">→</span> <span class="k">gateway_credential</span>  <span class="s">&#123; project: "proj-2026-0042" &#125;</span>
+<span class="p">→</span> <span class="k">gateway_credential</span>  <span class="s">{`{ project: "proj-2026-0042" }`}</span>
 <span class="o">  ✓ virtual key issued · budget $100 · models scoped to class</span>
 
-<span class="p">→</span> <span class="k">request_resource</span>   <span class="s">&#123; type: "s3-bucket", name: "training-data" &#125;</span>
+<span class="p">→</span> <span class="k">request_resource</span>   <span class="s">{`{ type: "s3-bucket", name: "training-data" }`}</span>
 <span class="o">  ✓ auto-approved · tagged project=proj-2026-0042</span>
 
-<span class="p">→</span> <span class="k">cost_report</span>        <span class="s">&#123; by: "group" &#125;</span>
+<span class="p">→</span> <span class="k">cost_report</span>        <span class="s">{`{ by: "group" }`}</span>
 <span class="o">  platform  $41.20   research  $12.80   → every $ attributed</span></pre>
-      </div>
     </div>
   </div>
-
 </section>
 
 <style>
-  .hero { padding-top: clamp(56px, 9vw, 110px); padding-bottom: clamp(40px, 6vw, 80px); }
-  .hero-inner { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 26px; }
-  h1 {
-    font-size: clamp(40px, 7.2vw, 84px);
-    font-weight: 800;
-    letter-spacing: -0.035em;
-    line-height: 0.98;
+  .hero { padding: 96px 0 80px; }
+  .hero h1 {
+    font-size: 56px;
+    line-height: 1.05;
+    font-weight: 700;
+    margin: 18px 0 22px;
+    max-width: 14ch;
   }
-  .hero-lede { text-align: center; max-width: 62ch; }
-  .cta-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .hero-lede { font-size: 18px; margin-bottom: 30px; }
+  .ctas { display: flex; gap: 12px; flex-wrap: wrap; }
   .trust {
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap; justify-content: center;
-    font-size: 13.5px; color: var(--muted);
+    margin-top: 22px;
+    font-size: 13.5px;
+    color: var(--fg-faint);
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
   }
-  .trust b { color: var(--fg-dim); font-weight: 600; }
-  .trust code { color: var(--teal-2); font-size: 12.5px; }
-  .trust .sep { width: 4px; height: 4px; border-radius: 50%; background: var(--line-2); }
+  .trust b { color: var(--fg-muted); font-weight: 600; }
+  .trust .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--fg-faint); }
+  .trust code {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--fg);
+  }
+  .code { margin-top: 48px; }
 
-  .console {
-    margin-top: clamp(40px, 6vw, 72px);
-    overflow: hidden;
-    background: var(--c-bg);
-    border-color: #1c2027;
-    box-shadow: 0 24px 60px -28px rgba(21, 24, 29, 0.35);
-  }
-  .console-bar {
-    display: flex; align-items: center; gap: 8px;
-    padding: 12px 16px;
-    border-bottom: 1px solid #1c2027;
-    background: var(--c-bar);
-  }
-  .console-bar .dot { width: 11px; height: 11px; border-radius: 50%; }
-  .console-title { margin-left: 10px; font-family: var(--mono); font-size: 12px; color: #8b93a1; }
-  .console-badge {
-    margin-left: auto; font-family: var(--mono); font-size: 11px; letter-spacing: 0.05em;
-    color: var(--c-prompt); border: 1px solid rgba(45, 212, 191, 0.3); background: rgba(45, 212, 191, 0.08);
-    padding: 2px 9px; border-radius: 999px;
-  }
-  .console-body { padding: 18px 20px; overflow-x: auto; }
-  .console-body pre {
-    margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.85;
-    color: var(--c-fg); white-space: pre;
-  }
-  .console-body .c { color: var(--c-comment); }
-  .console-body .k { color: var(--c-key); }
-  .console-body .s { color: #9aa6b6; }
-  .console-body .p { color: var(--c-prompt); font-weight: 600; }
-  .console-body .o { color: var(--c-out); }
-  .console-body .teal { color: var(--c-str); font-weight: 600; }
-
-  @media (max-width: 600px) {
-    .console-body pre { font-size: 11px; line-height: 1.7; }
+  @media (max-width: 760px) {
+    .hero { padding: 56px 0 48px; }
+    .hero h1 { font-size: 40px; max-width: 18ch; }
   }
 </style>

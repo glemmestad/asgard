@@ -1,30 +1,18 @@
 ---
 import { pillars } from '../data/site';
-
-const icons: Record<string, string> = {
-  catalog: '<path d="M4 6h16M4 12h16M4 18h10"/><circle cx="19" cy="18" r="2"/>',
-  gate: '<path d="M5 21V5a2 2 0 0 1 2-2h6l6 6v12"/><path d="M13 3v6h6"/><path d="M9 14l2 2 4-4"/>',
-  gateway: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="4"/>',
-  policy: '<path d="M12 3l8 3v6c0 4-3.4 7.4-8 9-4.6-1.6-8-5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
-  cost: '<path d="M3 20V4M3 20h18"/><path d="M7 16l4-5 3 3 5-7"/>',
-  knowledge: '<path d="M4 5a2 2 0 0 1 2-2h6v18H6a2 2 0 0 1-2-2z"/><path d="M20 5a2 2 0 0 0-2-2h-6v18h6a2 2 0 0 0 2-2z"/>',
-};
 ---
-<section class="platform section-pad" id="platform">
+<section class="section platform" id="platform">
   <div class="container">
-    <div class="head">
-      <span class="eyebrow" data-reveal>The platform</span>
-      <h2 data-reveal>Six load-bearing parts. One static binary.</h2>
-      <p class="lede" data-reveal>
-        The governance spine (catalog, gate, gateway, policy, cost and knowledge) exposed over
-        CLI, MCP, REST + GraphQL and an embedded UI. SQLite by default, Postgres when you scale.
-      </p>
-    </div>
+    <span class="eyebrow">The platform</span>
+    <h2>Six load-bearing parts. One static binary.</h2>
+    <p class="lede">
+      The governance spine — catalog, gate, gateway, policy, cost and knowledge — exposed over
+      CLI, MCP, REST + GraphQL and an embedded UI. SQLite by default, Postgres when you scale.
+    </p>
 
-    <div class="grid pillars">
-      {pillars.map((p, i) => (
-        <article class="pillar panel" data-reveal style={`transition-delay:${(i % 3) * 80}ms`}>
-          <span class="ic" set:html={`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icons[p.icon]}</svg>`} />
+    <div class="pillars">
+      {pillars.map((p) => (
+        <article class="pillar">
           <h3>{p.title}</h3>
           <p>{p.body}</p>
         </article>
@@ -34,26 +22,38 @@ const icons: Record<string, string> = {
 </section>
 
 <style>
-  .head { max-width: 680px; display: flex; flex-direction: column; gap: 16px; margin-bottom: 48px; }
-  .head h2 { font-size: clamp(30px, 4.4vw, 52px); }
+  .platform h2 { font-size: 36px; line-height: 1.15; margin: 16px 0 16px; max-width: 24ch; }
 
-  .pillars { grid-template-columns: repeat(3, 1fr); }
+  .pillars {
+    margin-top: 48px;
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
   .pillar {
-    padding: 26px 24px 28px;
-    transition: border-color 0.2s, transform 0.2s, opacity 0.7s var(--ease);
+    padding: 26px 26px 28px;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
-  .pillar:hover { border-color: var(--line-2); transform: translateY(-3px); }
-  .pillar.in:hover { transform: translateY(-3px); }
-  .ic {
-    width: 42px; height: 42px; border-radius: 11px;
-    display: grid; place-items: center; color: var(--teal);
-    border: 1px solid rgba(45, 212, 191, 0.22); background: rgba(45, 212, 191, 0.05);
-    margin-bottom: 18px;
-  }
-  .ic :global(svg) { width: 21px; height: 21px; }
-  .pillar h3 { font-size: 20px; margin-bottom: 9px; }
-  .pillar p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.58; }
+  .pillar:nth-child(3n) { border-right: 0; }
+  .pillar:nth-last-child(-n+3) { border-bottom: 0; }
+  .pillar h3 { font-size: 17px; margin: 0 0 8px; font-weight: 600; }
+  .pillar p { margin: 0; color: var(--fg-muted); font-size: 14.5px; line-height: 1.55; }
 
-  @media (max-width: 920px) { .pillars { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 560px) { .pillars { grid-template-columns: 1fr; } }
+  @media (max-width: 920px) {
+    .pillars { grid-template-columns: 1fr 1fr; }
+    .pillar { border-right: 1px solid var(--line); }
+    .pillar:nth-child(3n) { border-right: 1px solid var(--line); }
+    .pillar:nth-child(2n) { border-right: 0; }
+    .pillar:nth-last-child(-n+3) { border-bottom: 1px solid var(--line); }
+    .pillar:nth-last-child(-n+2) { border-bottom: 0; }
+  }
+  @media (max-width: 560px) {
+    .platform h2 { font-size: 28px; }
+    .pillars { grid-template-columns: 1fr; }
+    .pillar, .pillar:nth-child(3n), .pillar:nth-child(2n) { border-right: 0; }
+    .pillar { border-bottom: 1px solid var(--line); }
+    .pillar:last-child { border-bottom: 0; }
+  }
 </style>

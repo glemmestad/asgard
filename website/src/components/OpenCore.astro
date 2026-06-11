@@ -1,53 +1,41 @@
 ---
 import { openCore } from '../data/site';
 const { oss, enterprise } = openCore;
-
-const check = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3.2L13 5"/></svg>';
 ---
-<section class="oc section-pad" id="open-core">
+<section class="section oc" id="open-core">
   <div class="container">
-    <div class="head">
-      <span class="eyebrow" data-reveal>Open core</span>
-      <h2 data-reveal>The whole spine is open source.</h2>
-      <p class="lede" data-reveal>
-        The governance core is Apache&nbsp;2.0, free to self-host, forever. Enterprise features sit
-        behind clean trait seams in the same binary, so there’s no fork and no second product to run.
-      </p>
-    </div>
+    <span class="eyebrow">Open core</span>
+    <h2>The whole spine is open source.</h2>
+    <p class="lede">
+      The governance core is Apache&nbsp;2.0, free to self-host, forever. Enterprise features sit
+      behind clean trait seams in the same binary, so there’s no fork and no second product to run.
+    </p>
 
     <div class="plans">
-      <article class="plan panel" data-reveal>
+      <article class="plan">
         <div class="plan-head">
-          <div>
-            <span class="plan-label">{oss.label}</span>
-            <span class="plan-price">{oss.price}</span>
-          </div>
-          <span class="tag teal">Free forever</span>
+          <span class="plan-label">{oss.label}</span>
+          <span class="plan-price">{oss.price}</span>
+          <span class="tag brand"><span class="dot"></span>Free forever</span>
         </div>
         <p class="plan-blurb">{oss.blurb}</p>
         <ul class="feat">
-          {oss.features.map((f) => (
-            <li><span class="ck on" set:html={check} />{f}</li>
-          ))}
+          {oss.features.map((f) => <li>{f}</li>)}
         </ul>
-        <a class="btn btn-primary full" href={oss.cta.href}>{oss.cta.label}</a>
+        <a class="btn btn-primary btn-full" href={oss.cta.href}>{oss.cta.label}</a>
       </article>
 
-      <article class="plan panel ent" data-reveal style="transition-delay:90ms">
+      <article class="plan">
         <div class="plan-head">
-          <div>
-            <span class="plan-label">{enterprise.label}</span>
-            <span class="plan-price">{enterprise.price}</span>
-          </div>
-          <span class="tag violet">Coming soon</span>
+          <span class="plan-label">{enterprise.label}</span>
+          <span class="plan-price">{enterprise.price}</span>
+          <span class="tag"><span class="dot"></span>Coming soon</span>
         </div>
         <p class="plan-blurb">{enterprise.blurb}</p>
         <ul class="feat">
-          {enterprise.features.map((f) => (
-            <li><span class="ck ent-ck" set:html={check} />{f}</li>
-          ))}
+          {enterprise.features.map((f) => <li>{f}</li>)}
         </ul>
-        <a class="btn btn-ghost full" href={enterprise.cta.href}>{enterprise.cta.label}</a>
+        <a class="btn btn-ghost btn-full" href={enterprise.cta.href}>{enterprise.cta.label}</a>
         <p class="ent-note">{enterprise.note}</p>
       </article>
     </div>
@@ -55,32 +43,44 @@ const check = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke
 </section>
 
 <style>
-  .head { max-width: 640px; display: flex; flex-direction: column; gap: 16px; margin-bottom: 48px; }
-  .head h2 { font-size: clamp(30px, 4.4vw, 52px); }
+  .oc h2 { font-size: 36px; line-height: 1.15; margin: 16px 0 16px; max-width: 24ch; }
 
-  .plans { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
-  .plan { padding: 30px 28px; display: flex; flex-direction: column; gap: 18px; }
-  .plan.ent { position: relative; }
-  .plan.ent { border-color: rgba(124, 58, 237, 0.28); }
-  .plan.ent::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: linear-gradient(90deg, var(--violet), var(--blue)); opacity: 0.6;
-    border-radius: var(--radius) var(--radius) 0 0; pointer-events: none;
+  .plans {
+    margin-top: 48px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
   }
-  .plan-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-  .plan-label { display: block; font-family: var(--display); font-weight: 700; font-size: 22px; }
-  .plan-price { display: block; font-family: var(--mono); font-size: 13px; color: var(--muted); margin-top: 4px; }
-  .plan-blurb { margin: 0; color: var(--fg-dim); font-size: 15px; line-height: 1.55; }
+  .plan {
+    padding: 28px 28px 30px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .plan + .plan { border-left: 1px solid var(--line); }
+  .plan-head {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--line);
+  }
+  .plan-label { font-family: var(--display); font-weight: 700; font-size: 20px; color: var(--fg); }
+  .plan-price { font-family: var(--mono); font-size: 13px; color: var(--fg-muted); }
+  .plan-head .tag { margin-left: auto; }
+  .plan-blurb { margin: 0; color: var(--fg-muted); font-size: 15px; line-height: 1.55; }
 
-  .feat { list-style: none; margin: 4px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; flex: 1; }
-  .feat li { display: flex; gap: 11px; font-size: 14.5px; color: var(--fg-dim); line-height: 1.5; }
-  .ck { flex: none; width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; margin-top: 1px; }
-  .ck :global(svg) { width: 11px; height: 11px; }
-  .ck.on { color: var(--teal); background: rgba(45, 212, 191, 0.1); }
-  .ck.ent-ck { color: var(--violet); background: rgba(167, 139, 250, 0.1); }
+  .feat { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; flex: 1; }
+  .feat li {
+    padding: 10px 0;
+    color: var(--fg-muted);
+    font-size: 14.5px;
+    line-height: 1.5;
+    border-bottom: 1px solid var(--line);
+  }
+  .feat li:last-child { border-bottom: 0; }
+  .feat li::before { content: '— '; color: var(--fg-faint); font-family: var(--mono); }
+  .ent-note { margin: 4px 0 0; font-size: 12.5px; color: var(--fg-faint); text-align: center; line-height: 1.5; }
 
-  .btn.full { width: 100%; justify-content: center; margin-top: 6px; }
-  .ent-note { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); text-align: center; line-height: 1.5; }
-
-  @media (max-width: 760px) { .plans { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) {
+    .oc h2 { font-size: 28px; }
+    .plans { grid-template-columns: 1fr; }
+    .plan + .plan { border-left: 0; border-top: 1px solid var(--line); }
+  }
 </style>

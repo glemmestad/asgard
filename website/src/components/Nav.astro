@@ -10,7 +10,7 @@ import { nav, site } from '../data/site';
     </nav>
     <div class="actions">
       <a class="ghost-link" href={site.github}>GitHub</a>
-      <a class="btn btn-primary sm" href={site.docs}>Get started</a>
+      <a class="btn btn-primary btn-sm" href={site.docs}>Get started</a>
     </div>
   </div>
 </header>
@@ -21,33 +21,28 @@ import { nav, site } from '../data/site';
     top: 0;
     z-index: 50;
     border-bottom: 1px solid var(--line);
-    background: color-mix(in srgb, var(--bg) 72%, transparent);
-    backdrop-filter: blur(14px) saturate(140%);
-    -webkit-backdrop-filter: blur(14px) saturate(140%);
+    background: var(--bg);
   }
   .nav-inner {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 62px;
     gap: 24px;
+    padding-top: 14px;
+    padding-bottom: 14px;
   }
-  .links { display: flex; gap: 26px; }
+  .links { display: flex; gap: 22px; }
   .links a {
     font-size: 14px;
-    color: var(--muted);
-    transition: color 0.15s;
+    font-weight: 500;
+    color: var(--fg-muted);
+    transition: color 0.1s;
   }
-  .links a:hover { color: var(--fg); }
+  .links a:hover { color: var(--fg); text-decoration: none; }
   .actions { display: flex; align-items: center; gap: 16px; }
-  .ghost-link { font-size: 14px; color: var(--fg-dim); }
-  .ghost-link:hover { color: var(--fg); }
-  .btn.sm { padding: 0.5em 0.95em; font-size: 14px; }
+  .ghost-link { font-size: 14px; color: var(--fg-muted); }
+  .ghost-link:hover { color: var(--fg); text-decoration: none; }
 
-  @media (max-width: 880px) {
-    .links { display: none; }
-  }
-  @media (max-width: 480px) {
-    .ghost-link { display: none; }
-  }
+  @media (max-width: 880px) { .links { display: none; } }
+  @media (max-width: 480px) { .ghost-link { display: none; } }
 </style>

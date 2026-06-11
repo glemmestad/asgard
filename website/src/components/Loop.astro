@@ -1,29 +1,27 @@
 ---
 import { loop } from '../data/site';
 ---
-<section class="loop section-pad" id="loop">
+<section class="section loop" id="how">
   <div class="container">
-    <div class="loop-head">
-      <span class="eyebrow" data-reveal>The governed onboarding loop</span>
-      <h2 data-reveal>One loop, from first prompt to production.</h2>
-      <p class="lede" data-reveal>
-        The headline workflow, designed agents-first. Every move below is an MCP tool, not a
-        UI button. Frontkeep serves the guidance and mints the credentials; the agent does the work.
-      </p>
-    </div>
+    <span class="eyebrow">The governed onboarding loop</span>
+    <h2>One loop, from first prompt to production.</h2>
+    <p class="lede">
+      The headline workflow, designed agent-first. Every move below is an MCP tool, not a UI
+      button. Frontkeep serves the guidance and mints the credentials; the agent does the work.
+    </p>
 
-    <div class="rail" aria-hidden="true"><span class="rail-line"></span></div>
-
-    <ol class="steps">
-      {loop.map((s, i) => (
-        <li class="step panel" data-reveal style={`transition-delay:${i * 90}ms`}>
-          <div class="step-top">
-            <span class="step-n">{s.n}</span>
-            {s.key === 'register' && <span class="tag teal">the gate</span>}
+    <ol class="steps panel">
+      {loop.map((s) => (
+        <li class="step">
+          <span class="step-n">{s.n}</span>
+          <div class="step-body">
+            <div class="step-head">
+              <h3>{s.title}</h3>
+              {s.key === 'register' && <span class="tag brand"><span class="dot"></span>the gate</span>}
+            </div>
+            <p>{s.body}</p>
+            <code class="chip">{s.tool}</code>
           </div>
-          <h3>{s.title}</h3>
-          <p>{s.body}</p>
-          <code class="tool"><span class="tool-dot"></span>{s.tool}</code>
         </li>
       ))}
     </ol>
@@ -31,43 +29,35 @@ import { loop } from '../data/site';
 </section>
 
 <style>
-  .loop-head { max-width: 720px; display: flex; flex-direction: column; gap: 18px; }
-  .loop-head h2 { font-size: clamp(30px, 4.4vw, 52px); }
-
-  .rail { position: relative; height: 0; margin-top: 56px; }
-  .rail-line {
-    position: absolute; left: 12.5%; right: 12.5%; top: 0; height: 2px;
-    background: var(--bifrost); opacity: 0.55; border-radius: 2px;
-  }
+  .loop h2 { font-size: 36px; line-height: 1.15; margin: 16px 0 16px; max-width: 24ch; }
 
   .steps {
-    list-style: none; margin: 0; padding: 0;
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px;
-    margin-top: -1px;
+    list-style: none; margin: 48px 0 0; padding: 0;
+    overflow: hidden;
   }
-  .step { padding: 24px 22px 22px; display: flex; flex-direction: column; gap: 12px; }
-  .step-top { display: flex; align-items: center; justify-content: space-between; }
+  .step {
+    display: grid;
+    grid-template-columns: 80px 1fr;
+    gap: 24px;
+    padding: 28px 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .step:last-child { border-bottom: 0; }
   .step-n {
-    font-family: var(--mono); font-size: 13px; font-weight: 600;
-    color: var(--teal); width: 40px; height: 40px; border-radius: 11px;
-    display: grid; place-items: center;
-    border: 1px solid rgba(45, 212, 191, 0.3); background: rgba(45, 212, 191, 0.06);
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--brand);
+    padding-top: 4px;
   }
+  .step-body { display: flex; flex-direction: column; gap: 10px; }
+  .step-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .step h3 { font-size: 19px; }
-  .step p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.55; flex: 1; }
-  .tool {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-size: 12.5px; color: var(--fg-dim);
-    background: var(--bg-2); border: 1px solid var(--line);
-    padding: 7px 11px; border-radius: 7px; width: fit-content;
-  }
-  .tool-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--teal); }
+  .step p { margin: 0; color: var(--fg-muted); font-size: 15px; line-height: 1.55; }
+  .step .chip { align-self: flex-start; margin-top: 4px; }
 
-  @media (max-width: 980px) {
-    .steps { grid-template-columns: 1fr 1fr; }
-    .rail { display: none; }
-  }
-  @media (max-width: 540px) {
-    .steps { grid-template-columns: 1fr; }
+  @media (max-width: 760px) {
+    .loop h2 { font-size: 28px; }
+    .step { grid-template-columns: 60px 1fr; gap: 16px; padding: 20px 20px; }
   }
 </style>
