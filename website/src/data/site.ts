@@ -5,7 +5,7 @@
 
 export const site = {
   name: 'Frontkeep',
-  tagline: 'The control plane for building with AI inside your company.',
+  tagline: 'The Agent Control Plane.',
   domain: 'asgard.build',
   github: 'https://github.com/glemmestad/asgard',
   docs: '/docs',
@@ -139,7 +139,7 @@ export const openCore = {
 export const faqs = [
   {
     q: 'What about the agent work already happening on my teams?',
-    a: 'That’s exactly the point. Shadow agentic AI development, people quietly building real tools with agents, is already underway in most companies. Frontkeep doesn’t stop it; it gives it a front door, so the same work reads your standards, registers, gets scoped credentials, and shows up attributed and auditable instead of on a mystery bill.',
+    a: 'Exactly. People are already pointing agents at real problems and shipping software faster than any roadmap can. Frontkeep doesn’t stop the momentum — it gives it a workplace, so the same work reads your standards, registers the project, gets scoped credentials, and shows up attributed and auditable instead of on a mystery bill.',
   },
   {
     q: 'Isn’t this just an LLM gateway?',

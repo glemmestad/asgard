@@ -10,7 +10,7 @@ interface Props {
 
 const {
   title = `${site.name} · ${site.tagline}`,
-  description = 'Frontkeep turns shadow agentic AI development into governed AI. An open-source, agents-first control plane for building with AI inside a company: manifest-driven service catalog, governed model gateway, policy, cost attribution and registry, over MCP, in one static binary.',
+  description = 'Frontkeep is the Agent Control Plane — the open-source front door where your agents do real work, governed by your policies and accounted by project. One static Rust binary: manifest-driven service catalog, model gateway, Cedar policy, cost attribution and registry, all reachable over MCP.',
 } = Astro.props;
 
 const canonical = new URL(Astro.url.pathname, site.domain.startsWith('http') ? site.domain : `https://${site.domain}`).href;
