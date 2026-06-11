@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1242,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-api"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -1266,7 +1266,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-catalog"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-cli"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "base64",
  "comfy-table",
@@ -1304,7 +1304,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-eval"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "frontkeep-storage",
@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-gateway"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1340,7 +1340,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-identity"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "argon2",
  "chrono",
@@ -1358,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-mcp"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "axum",
  "frontkeep-catalog",
@@ -1381,7 +1381,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-policy"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "cedar-policy",
@@ -1394,7 +1394,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-provision"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-registry"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "frontkeep-catalog",
@@ -1438,7 +1438,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-reviewer"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "frontkeep-gateway",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-runtime"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "serde",
@@ -1467,7 +1467,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-skills"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "base64",
  "schemars 1.2.1",
@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-storage"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1495,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "frontkeep-workflow"
-version = "0.25.0"
+version = "0.25.1"
 dependencies = [
  "chrono",
  "frontkeep-policy",
